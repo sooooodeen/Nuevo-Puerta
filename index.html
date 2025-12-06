@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Nuevo Puerta Real Estate</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        /* General Styles */
+      /* ---------------------------------- */
+/* 1. General Styles and Font Imports */
+/* ---------------------------------- */
+body {
+    font-family: 'Poppins', sans-serif; /* Use Poppins */
+    font-size: 16px; 
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    background-color: #f8f8f8; /* Light background for contrast */
+    color: #333;
+}
+
+/* ---------------------------------- */
+/* 2. Navigation */
+/* ---------------------------------- */
+.main-nav {
+    background: #2d4e1e;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px; 
+    height: 80px; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+    z-index: 1000;
+}
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.nav-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: contain;
+    background: transparent;
+    padding: 4px;
+    margin-right: 0;
+}
+.company-name {
+    font-size: 1.5rem; 
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.nav-links {
+    display: flex;
+    gap: 30px; 
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 8px 0;
+    transition: color 0.18s;
+    position: relative;
+}
+.nav-links a:hover {
+    color: #f4d03f;
+}
+.nav-links a::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: -5px;
+    left: 0;
+    background-color: #f4d03f;
+    transition: width 0.3s ease-out;
+}
+.nav-links a:hover::after {
+    width: 100%;
+}
+.login-btn {
+    background: #ffffff;
+    color: #2d4e1e;
+    font-weight: 600;
+    border-radius: 20px; 
+    padding: 10px 25px;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    border: none;
+    box-shadow: 0 4px 12px rgba(44,62,80,0.1);
+}
+.login-btn:hover {
+    background: #f4d03f;
+    color: #2d4e1e;
+    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+}
+
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - ADJUSTED HEIGHT */
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - MAX HEIGHT GUARANTEED */
+/* ---------------------------------- */
+header {
+    text-align: center;
+    color: white; 
+    position: relative;
+    /* Use min-height to force the header to occupy at least 70% of the screen height */
+    min-height: 40vh; 
+    
+    /* Ensure content is centered vertically within this large space */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    
+    /* Image and overlay properties */
+    background: url('assets/g.jpg') center/cover no-repeat; 
+    position: relative;
+    z-index: 1; 
+    padding: 20px; /* Reduced padding since min-height controls the size */
+}
+
+/* Add a subtle overlay to improve text readability */
+header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.35); /* Slightly darker overlay for contrast */
+    z-index: -1; 
+}
+
+/* Ensure the text inside the header maintains its styling */
+header h1 {
+    font-size: 2.8em; 
+    font-weight: 800; 
+    margin-bottom: 0.3em; 
+    text-shadow: 2px 2px 8px rgba(0,0,0,0.4); 
+    line-height: 1.15;
+}
+header div { /* For the sub-heading/slogan */
+    font-size: 1.5em; 
+    font-weight: 400;
+    margin-bottom: 0; /* Remove bottom margin since height is controlled by flexbox */
+    margin-top: 0.5em; 
+    text-shadow: 1px 1px 6px rgba(0,0,0,0.3);
+}
+
+/* Responsive adjustment */
+@media (max-width: 768px) {
+    header {
+        min-height: 50vh; /* Adjust height for smaller screens */
+    }
+    header h1 {
+        font-size: 2em !important; 
+    }
+    header div {
+        font-size: 1.1em !important; 
+    }
+}
+/*/* ---------------------------------- */
+/* 4. Feature Section (Offers) - COLOR EXPERIMENT */
+/* ---------------------------------- */
+.features-redesigned {
+    text-align: center;
+    padding: 60px 20px 80px 20px;
+    background-color: #f8f8f8; /* Base background remains light grey */
+}
+
+/* Wrapper for the entire card block to apply rounding and shadow */
+.features-container-wrap { 
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 60px 40px;
+    background-color: #fcfcfc; /* Slightly off-white for main card block */
+    border-radius: 25px; 
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08); /* Slightly softer shadow */
+}
+
+.features-redesigned h2 {
+    color: #2d4e1e;
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 15px;
+    letter-spacing: 0.5px;
+}
+
+.features-intro {
+    font-size: 1rem;
+    color: #666;
+    margin-bottom: 40px;
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+}
+
+.features-grid-redesigned {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); 
+    gap: 25px; 
+    margin-bottom: 40px;
+}
+
+.feature-card {
+    /* Subtle light green background for cards */
+    background: #fdfdfd; 
+    padding: 25px 20px; 
+    border-radius: 18px; 
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05); /* Individual card shadow for depth */
+    transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+    text-align: center;
+    border: 1px solid #eef2ed; /* Very light green border */
+}
+
+.feature-card:hover {
+    background: #eff5ed; /* Lighter green on hover */
+    transform: translateY(-5px); /* Gentle lift on hover */
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1); /* Enhanced shadow on hover */
+}
+
+.feature-card .icon-circle {
+    display: flex;
+    justify-content: center;
+    align-items: center; 
+    
+    width: 65px;
+    height: 65px;
+    background-color: #f4d03f; /* GOLD background */
+    color: #2d4e1e; /* DARK GREEN icon color */
+    border-radius: 50%;
+    font-size: 1.8rem;
+    margin: 0 auto 18px auto;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.feature-card h3 {
+    font-size: 1.15rem;
+    color: #2d4e1e; /* Dark green for headings */
+    font-weight: 700;
+    margin-bottom: 8px;
+    line-height: 1.2;
+}
+
+.feature-card p {
+    font-size: 0.9rem;
+    color: #555; /* Slightly darker grey for body text */
+    line-height: 1.5;
+    margin-bottom: 0;
+}
+
+.buttons {
+    margin-top: 40px;
+}
+.buttons a {
+    display: inline-block;
+    font-size: 1rem;
+    margin: 0 12px;
+    padding: 14px 30px;
+    background: #2d4e1e;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    transition: transform 0.2s ease, background 0.3s ease;
+    font-weight: 600;
+}
+.buttons a:hover {
+    transform: translateY(-3px);
+    background: #3a6c28;
+}
+
+
+
+/* ---------------------------------- */
+/*/* ---------------------------------- */
+/* 5. Founder Section (REDESIGNED) */
+/* ---------------------------------- */
+.founder-footer {
+    /* Use a slightly darker shade of green for depth and better contrast */
+    background: #395c31; 
+    padding: 80px 0; 
+    font-family: 'Poppins', sans-serif;
+    margin-bottom: 0;
+}
+
+.founder-container {
+    max-width: 1000px; /* Slightly narrower container for focus */
+    margin: 0 auto;
+    /* Use grid for better alignment control */
+    display: grid;
+    grid-template-columns: 220px 1fr; /* Fixed width for image, rest for text */
+    gap: 48px;
+    align-items: center; /* Center vertically */
+    padding: 0 20px;
+}
+
+.founder-img-wrap {
+    /* No change needed here, just holds the image */
+    display: flex;
+    justify-content: center;
+}
+
+.founder-img {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    border: 6px solid #f4d03f; /* Bold Gold Border */
+    object-fit: cover;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2); /* Stronger shadow for depth */
+    background: #fff;
+}
+
+.founder-text {
+    /* Text alignment remains left */
+    text-align: left;
+}
+
+.founder-text h2 {
+    font-size: 2.5em; 
+    font-weight: 800; /* Extra bold name */
+    margin-bottom: 0.1em; /* Reduced space below name */
+    color: #f4d03f; /* Gold color */
+    letter-spacing: 0.5px;
+}
+
+.founder-title {
+    font-size: 1em; /* Slightly smaller title */
+    color: #ccc;
+    font-weight: 500;
+    margin-bottom: 1.5em; /* Increased space below title */
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.founder-message {
+    font-size: 1.1em; /* Slightly smaller, easier to read */
+    line-height: 1.7; /* Increased line height */
+    color: #ffffff; /* Pure white for body text for better contrast */
+    margin-bottom: 1.5em;
+    font-weight: 300; /* Lighter weight for body text */
+}
+
+.founder-signature {
+    font-size: 1.1em;
+    color: #f4d03f;
+    font-weight: 600;
+    margin-top: 1.2em;
+}
+
+
+/* ---------------------------------- */
+/* Responsive Adjustments for Founder Section */
+/* ---------------------------------- */
+@media (max-width: 768px) {
+    .founder-container {
+        /* Stack the image and text vertically on smaller screens */
+        grid-template-columns: 1fr; 
+        gap: 30px;
+    }
+    .founder-text {
+        text-align: center; /* Center text when stacked */
+    }
+    .founder-footer {
+        padding: 50px 0; /* Reduced padding on mobile */
+    }
+}
+/* ---------------------------------- */
+/* 6. Social Media Section */
+/* ---------------------------------- */
+.social-media {
+    padding: 60px 20px;
+    background: #f0f0f0; 
+    text-align: center;
+}
+.social-media h2 {
+    font-size: 1.6rem;
+    color: #2d4e1e;
+    font-weight: 700;
+}
+.social-media p {
+    max-width: 700px;
+    font-size: 1.05rem;
+    color: #555;
+    margin: 0 auto 30px auto;
+}
+.icons {
+    display: flex;
+    justify-content: center;
+    gap: 25px; 
+    margin-top: 20px;
+}
+.icons a img {
+    width: 45px; 
+    height: 45px;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+.icons a img:hover {
+    transform: scale(1.15) rotate(5deg);
+}
+
+/* ---------------------------------- */
+/* 7. Responsive Design */
+/* ---------------------------------- */
+@media (max-width: 900px) {
+    .main-nav { padding: 0 15px; }
+    .nav-links { display: none; }
+    .company-name { font-size: 1.2rem; }
+    .nav-logo { width: 40px; height: 40px; }
+    
+    .features-container-wrap {
+        padding: 40px 20px;
+        border-radius: 15px;
+    }
+    /* Maintain 3 columns down to 700px */
+    .features-grid-redesigned {
+        grid-template-columns: repeat(3, 1fr); 
+    }
+    
+    .founder-container {
+        flex-direction: column;
+        gap: 30px;
+        text-align: center;
+    }
+    .founder-text {
+        text-align: center;
+    }
+}
+
+@media (max-width: 700px) { 
+    /* Stack feature cards on smaller mobile devices */
+    .features-grid-redesigned {
+        grid-template-columns: 1fr;
+    }
+}
+/* ---------------------------------- */
+/* 6. Active Navigation Indicator */
+/* ---------------------------------- */
+
+/* Active link color */
+.nav-links li.active a {
+    color: #f4d03f; /* Gold text color */
+    font-weight: 600;
+}
+
+/* Add the decorative line/bar */
+.nav-links li.active a::after {
+    content: '';
+    position: absolute;
+    bottom: -5px; /* Adjust this value to control distance from text */
+    left: 0;
+    width: 100%;
+    height: 3px; /* Thickness of the line */
+    background: #f4d03f; /* Gold line color */
+    border-radius: 2px;
+}
+    </style>
+</head>
+<body>
+    <nav class="main-nav">
+        <div class="nav-left">
+            <img src="assets/f.png" alt="Logo" class="nav-logo">
+            <span class="company-name">El Nuevo Puerta Real Estate</span>
+        </div>
+        <ul class="nav-links">
+            <li class="active"><a href="index.html">Home</a></li> <li><a href="userlot.php">View Lots</a></li>
+            <li><a href="findagent.php">Find Agent</a></li>
+            <li><a href="about.html">About</a></li>
+            <li><a href="faqs.html">FAQs</a></li>
+            <li><a href="contact.html">Contact</a></li>
+        </ul>
+        <div class="nav-right">
+            <a href="Login/login.php" class="login-btn">Login</a>
+        </div>
+    </nav>
+
+    <header style="background: url('assets/g.jpg') center/cover no-repeat; text-align: center; padding: 70px 20px 80px 20px; color: white; position: relative;">
+        <h1 style="font-size: 2.8em; font-weight: 800; margin-bottom: 0.3em; text-shadow: 2px 2px 8px rgba(0,0,0,0.4); line-height: 1.15;">
+            Discover Your Dream House and<br>Spacious Lot for Sale
+        </h1>
+        <div style="font-size: 1.5em; font-weight: 400;margin-bottom: 1.5em; margin-top: 0.5em; text-shadow: 1px 1px 6px rgba(0,0,0,0.3);">
+            Embrace the Perfect Blend of Comfort, Style, and Serenity.
+        </div>
+    </header>
+
+ <section class="features-redesigned">
+    <div class="features-container-wrap"> 
+        <div class="container">
+            <h2>El Nuevo Puerta Real Estate Offers</h2>
+            <p class="features-intro">Discover the exceptional advantages of choosing El Nuevo Puerta for your next property investment.</p>
+            
+            <div class="features-grid-redesigned">
+                <div class="feature-card">
+                    <i class="fas fa-mountain icon-circle"></i>
+                    <h3>Scenic Views</h3>
+                    <p>Enjoy breathtaking natural landscapes and serene surroundings.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-chart-line icon-circle"></i>
+                    <h3>Investment Opportunities</h3>
+                    <p>Secure your future with properties in high-growth areas.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-map-marker-alt icon-circle"></i>
+                    <h3>Prime Locations</h3>
+                    <p>Properties strategically located for convenience and value.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-hammer icon-circle"></i>
+                    <h3>Ready-to-Build Lots</h3>
+                    <p>Start construction without delay on prepared land.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-road icon-circle"></i>
+                    <h3>Prime Accessibility</h3>
+                    <p>Easy access to main roads, amenities, and city centers.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-hand-holding-usd icon-circle"></i>
+                    <h3>Unmatched Value</h3>
+                    <p>Get the best return on investment with our competitive pricing.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-expand-arrows-alt icon-circle"></i>
+                    <h3>Customizable Lot Sizes</h3>
+                    <p>Tailor your property to fit your exact needs and vision.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-leaf icon-circle"></i>
+                    <h3>Eco-Friendly Options</h3>
+                    <p>Sustainable living solutions integrated into our developments.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-handshake icon-circle"></i>
+                    <h3>Hassle-Free Transactions</h3>
+                    <p>Smooth and transparent processes from inquiry to ownership.</p>
+                </div>
+            </div>
+            
+            <div class="buttons">
+                <a href="userlot.php">Explore Lots</a>
+                <a href="findagent.php">Contact Agent</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+    <div style="width: 100%; height: 1px; background-color: #ddd;"></div>
+
+    <footer class="founder-footer">
+        <div class="founder-container">
+            <div class="founder-img-wrap">
+                <img src="assets/d.jpg" alt="Founder Image" class="founder-img">
+            </div>
+            <div class="founder-text">
+                <h2>Rosibelle G. Ituralde</h2>
+                <div class="founder-title">CEO / Founder</div>
+                <div class="founder-message">
+                    "At Nuevo Puerta Real Estate, we believe every property is a gateway to new possibilities. Our commitment is to deliver premium lots and exceptional service, empowering you to build your future with confidence—whether it's your dream home, a thriving business, or a smart investment.<br><br>
+                    Thank you for making us part of your journey."
+                </div>
+                <div class="founder-signature">
+                    — Rosibelle G. Ituralde
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <div style="width: 100%; height: 1px; background-color: #ddd;"></div>
+
+    <section class="social-media">
+        <h2>Stay Connected with Nuevo Puerta!</h2>
+        <p>Follow us on social media for the latest updates, exclusive offers, and inspiration for your next big project. Don’t miss out on exciting opportunities and tips to help you build your dreams!</p>
+        
+        <div class="icons">
+            <a href="https://www.facebook.com/nuevopuertarealestate" target="_blank">
+                <img src="assets/fb.png" alt="Facebook">
+            </a>
+            <a href="mailto:nuevopuertarealestate@gmail.com">
+                <img src="assets/email.png" alt="Email">
+            </a>
+        </div>
+    </section>
+
+</body>
+</html>

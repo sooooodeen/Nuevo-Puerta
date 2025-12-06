@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About</title>
+    <style>
+        /* General Styles */
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            background-color: #e3e2e2;
+            text-align: center;
+        }
+
+      
+  
+/* ---------------------------------- */
+/* 2. Navigation */
+/* ---------------------------------- */
+.main-nav {
+    background: #2d4e1e;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px; 
+    height: 80px; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+    z-index: 1000;
+}
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.nav-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: contain;
+    background: transparent;
+    padding: 4px;
+    margin-right: 0;
+}
+.company-name {
+    font-size: 1.5rem; 
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.nav-links {
+    display: flex;
+    gap: 30px; 
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 8px 0;
+    transition: color 0.18s;
+    position: relative;
+}
+.nav-links a:hover {
+    color: #f4d03f;
+}
+.nav-links a::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: -5px;
+    left: 0;
+    background-color: #f4d03f;
+    transition: width 0.3s ease-out;
+}
+.nav-links a:hover::after {
+    width: 100%;
+}
+.login-btn {
+    background: #ffffff;
+    color: #2d4e1e;
+    font-weight: 600;
+    border-radius: 20px; 
+    padding: 10px 25px;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    border: none;
+    box-shadow: 0 4px 12px rgba(44,62,80,0.1);
+}
+.login-btn:hover {
+    background: #f4d03f;
+    color: #2d4e1e;
+    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+}
+
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - ADJUSTED HEIGHT */
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - MAX HEIGHT GUARANTEED */
+/* ---------------------------------- */
+header {
+    text-align: center;
+    color: white; 
+    position: relative;
+    /* Use min-height to force the header to occupy at least 70% of the screen height */
+    min-height: 40vh; 
+    
+    /* Ensure content is centered vertically within this large space */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    
+    /* Image and overlay properties */
+    background: url('assets/g.jpg') center/cover no-repeat; 
+    position: relative;
+    z-index: 1; 
+    padding: 20px; /* Reduced padding since min-height controls the size */
+}
+
+/* Add a subtle overlay to improve text readability */
+header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.35); /* Slightly darker overlay for contrast */
+    z-index: -1; 
+}
+
+/* Ensure the text inside the header maintains its styling */
+header h1 {
+    font-size: 2.8em; 
+    font-weight: 800; 
+    margin-bottom: 0.3em; 
+    text-shadow: 2px 2px 8px rgba(0,0,0,0.4); 
+    line-height: 1.15;
+}
+header div { /* For the sub-heading/slogan */
+    font-size: 1.5em; 
+    font-weight: 400;
+    margin-bottom: 0; /* Remove bottom margin since height is controlled by flexbox */
+    margin-top: 0.5em; 
+    text-shadow: 1px 1px 6px rgba(0,0,0,0.3);
+}
+
+/* Responsive adjustment */
+@media (max-width: 768px) {
+    header {
+        min-height: 50vh; /* Adjust height for smaller screens */
+    }
+    header h1 {
+        font-size: 2em !important; 
+    }
+    header div {
+        font-size: 1.1em !important; 
+    }
+}
+        .center-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            text-align: center; 
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            margin: 2rem auto;
+            margin-top: -30px; /* Reduced from 110px */
+        }
+
+        .container h1 {
+            font-size: 2rem;
+            color: #333;
+        }
+
+        .container p {
+            font-size: 1rem;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        /* Active link color */
+.nav-links li.active a {
+    color: #f4d03f; /* Gold text color */
+    font-weight: 600;
+}
+
+/* Add the decorative line/bar */
+.nav-links li.active a::after {
+    content: '';
+    position: absolute;
+    bottom: -5px; /* Adjust this value to control distance from text */
+    left: 0;
+    width: 100%;
+    height: 3px; /* Thickness of the line */
+    background: #f4d03f; /* Gold line color */
+    border-radius: 2px;
+}
+    </style>
+</head>
+<body>
+
+     <nav class="main-nav">
+  <div class="nav-left">
+    <img src="assets/f.png" alt="Logo" class="nav-logo">
+    <span class="company-name">El Nuevo Puerta Real Estate</span>
+  </div>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="userlot.php">View Lots</a></li>
+    <li><a href="findagent.php">Find Agent</a></li>
+    <li class="active"><a href="about.html">About</a></li>
+    <li><a href="faqs.html">FAQs</a></li>
+    <li><a href="contact.html">Contact</a></li>
+  </ul>
+  <div class="nav-right">
+    <a href="Login/login.php" class="login-btn">Login</a>
+  </div>
+</nav>
+
+    <div class="center-content">
+        <div class="container">
+            <h1>About Nuevo Puerta Real Estate</h1>
+            <p>Founded in 2019 by Rosibelle G. Ituralde, Nuevo Puerta Real Estate began with a simple yet powerful vision — to provide accessible and high-quality real estate opportunities for individuals and businesses. What started with the sale of small residential lots in Pasonanca has grown into a trusted name in the real estate industry, offering a wide range of residential and commercial lots in prime locations.</p>
+            <p>At Nuevo Puerta, we believe that owning land is more than just a transaction — it’s a step toward building dreams, securing investments, and creating lasting legacies. Our lots are strategically located to cater to both aspiring homeowners and entrepreneurs, giving them the freedom to design and develop spaces that suit their visions.</p>
+            <p>Guided by integrity, innovation, and customer satisfaction, Nuevo Puerta Real Estate is committed to helping clients find the perfect property — whether it’s for building a dream home, starting a business, or making a solid investment.</p>
+            <p>Join us in opening doors to endless possibilities.</p>
+            <p>Nuevo Puerta Real Estate — Your Gateway to Possibilities.</p>
+        </div>
+    </div>
+
+</body>
+</html>

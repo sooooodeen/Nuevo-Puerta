@@ -1,0 +1,188 @@
+/* General Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Full-Screen Background */
+body {
+    background: url('img/bgr.png') no-repeat center center/cover;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 100vh;
+    padding: 0 8%;
+    position: relative;
+    overflow: hidden; /* Prevent scrolling */
+}
+
+/* Gradient Overlay - More Premium Look */
+body::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 70%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(229, 215, 164, 0.92), rgba(221, 224, 164, 0.75), transparent);
+    z-index: 1;
+}
+
+/* Welcome Message - Positioned Mid-Left */
+.welcome-message {
+    color: white;
+    max-width: 420px;
+    z-index: 2;
+    position: relative;
+}
+
+.welcome-message h1 {
+    font-size: 38px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    text-shadow: 15px 15px 15px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-message h2 {
+    font-size: 50px;
+    font-weight: 700;
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: #1a5e8f; /* Gold Accent */
+    text-shadow: 15px 15px 15px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-message p {
+    font-size: 17.5px ;
+    margin-top: 5px;
+    line-height: 1.5;
+    opacity: 10px;
+    text-shadow: 15px 15px 15px rgba(0, 0, 0, 0.2);
+}
+
+/* Form Container - Positioned to the Right */
+.form-container {
+    background: rgba(255, 255, 255, 0.2); /* More glassy effect */
+    backdrop-filter: blur(4px);
+    padding: 40px;
+    border-radius: 14px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+    text-align: center;
+    width: 420px; /* Slightly wider */
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Logo */
+.logo {
+    width: 180px;
+    margin-bottom: 15px;
+}
+
+/* Login Form */
+.login-form {
+    width: 100%;
+    max-width: 350px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center children horizontally */
+}
+
+.input-group {
+    width: 80%; /* Make input fields narrower than the form */
+    margin-bottom: 18px;
+    display: flex;
+    justify-content: center; /* Center the input inside the group */
+}
+
+.login-form input[type="text"],
+.login-form input[type="password"] {
+    width: 100%; /* Fill the input-group */
+    padding: 14px 20px;
+    border: none;
+    border-radius: 30px;
+    background: #fff;
+    font-size: 1rem;
+    margin-bottom: 0;
+    box-sizing: border-box;
+    outline-color: #003F6B;
+    transition: all 0.3s ease-in-out;
+    text-align: left;
+    margin-top: 0;
+}
+
+input:focus,
+.login-form input[type="text"]:focus,
+.login-form input[type="password"]:focus {
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* Password Container */
+.password-container {
+    position: relative;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Login Button */
+button,
+.login-form button[type="submit"] {
+    width: 80%;
+    padding: 12px 0;
+    background: linear-gradient(to right, #0077B6, #005F8C);
+    color: #ffffff;
+    border: none;
+    border-radius: 30px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    transition: all 0.3s ease-in-out;
+    margin-top: 10px;
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
+}
+
+button:hover,
+.login-form button[type="submit"]:hover {
+    background: linear-gradient(to right, #005F8C, #003F6B);
+    transform: scale(1.04);
+}
+
+/* Back Arrow - New Style */
+.back-arrow {
+    position: absolute;
+    top: 18px;
+    left: 18px;
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #003F6B;
+    text-decoration: none;
+    z-index: 10;
+    background: rgba(255,255,255,0.7);
+    border-radius: 50%;
+    padding: 4px 12px 4px 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    transition: color 0.2s, background 0.2s;
+    display: block; /* Ensure it's not affected by flexbox */
+}
+
+.back-arrow svg {
+    display: block; /* Prevent SVG from being centered by flexbox */
+    margin: 0;
+    padding: 0;
+}
+
+.back-arrow:hover {
+    color: #f4d03f;
+    background: #003F6B;
+}
+

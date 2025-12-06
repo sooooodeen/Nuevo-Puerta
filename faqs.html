@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQs</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+/* ==== Theme & Reset ==== */
+:root { 
+    --green: #2d4e1e; 
+    --gold: #f4d03f;
+    --ink: #333; 
+    --bg: #f8f8f8; 
+    --navH: 80px; /* Set the nav height to 80px */
+}
+
+/* Critical CSS Reset and Box Model Fix */
+*, *::before, *::after { 
+    box-sizing: border-box; 
+}
+html, body { 
+    margin: 0; 
+    padding: 0; 
+}
+
+/* ---------------------------------- */
+/* 1. General Styles and Fixed Header Compensation */
+/* ---------------------------------- */
+body {
+    font-family: 'Poppins', sans-serif; 
+    font-size: 16px; 
+    line-height: 1.6;
+    background-color: var(--bg); 
+    color: var(--ink);
+    /* FIX: Add padding-top to ensure content starts below the fixed 80px header */
+    padding-top: var(--navH); 
+}
+
+/* ---------------------------------- */
+/* 2. Navigation (FIXED/STATIC HEADER - Consistent with userlot/index) */
+/* ---------------------------------- */
+.main-nav {
+    background: var(--green);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px; 
+    height: var(--navH); 
+    /* FIX: Properties for the fixed header */
+    position: fixed; 
+    top: 0;
+    left: 0;
+    right: 0;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+    z-index: 1000;
+}
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.nav-logo {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    object-fit: contain;
+    background: transparent;
+    padding: 4px;
+    margin-right:-2px;
+    margin-left: -104px;
+    position: static;
+}
+.company-name {
+    font-size: 1.5rem; 
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-left: -20px;
+}
+.nav-links {
+    display: flex;
+    gap:10px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.03 rem;
+    font-weight: 500;
+    padding: 8px 0;
+    transition: color 0.18s;
+    position: relative;
+}
+.nav-links a:hover {
+    color: var(--gold);
+}
+.nav-links a::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: -5px;
+    left: 0;
+    background-color: var(--gold);
+    transition: width 0.3s ease-out;
+}
+.nav-links a:hover::after {
+    width: 100%;
+}
+/* Style for active link (FAQs page) */
+.nav-links li.active a {
+    color: var(--gold); 
+    font-weight: 600;
+}
+.nav-links li.active a::after {
+    width: 100%;
+}
+.login-btn {
+    background: #ffffff;
+    color: var(--green);
+    font-weight: 600;
+    border-radius: 20px; /* Use 20px as per the visible design */
+    padding: 10px 25px;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    border: none;
+    box-shadow: 0 4px 12px rgba(44,62,80,0.1);
+}
+.login-btn:hover {
+    background: var(--gold);
+    color: var(--green);
+    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+}
+
+/* ---------------------------------- */
+/* FAQ Content Styles (Retained) */
+/* ---------------------------------- */
+.faq-section {
+    max-width: 800px;
+    margin: 60px auto 40px auto; 
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(45,78,30,0.08);
+    padding: 30px 32px;
+}
+
+.faq-section h2 {
+    font-size: 1.70rem;
+    font-weight: 700;
+    color: #0f4e1a;
+    margin-bottom: 32px;
+    text-align: center;
+    letter-spacing: 1px;
+    border-bottom: 2px solid var(--gold);
+    padding-bottom: 12px;
+    margin-top: 5px;
+}
+
+.faq-item {
+    background: #f7f9fa;
+    border-radius: 14px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 8px rgba(45,78,30,0.04);
+    transition: box-shadow 0.2s, background 0.2s;
+    border: 1px solid #e3e6ea;
+}
+.faq-item:hover {
+    background: #eaf3fa;
+    box-shadow: 0 4px 16px rgba(26,94,143,0.10);
+    border-color: #1d6118;
+}
+
+.faq-question {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--green);
+    padding: 20px 28px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: color 0.2s;
+}
+.faq-item:hover .faq-question {
+    color: #127820;
+}
+
+.faq-answer {
+    font-size: 1.0rem;
+    color: #0e541a;
+    padding: 0 28px 20px 28px;
+    display: none;
+    text-align: left;
+    border-top: 1px solid #e3e6ea;
+    background: #f9fafb;
+}
+.faq-item.active .faq-answer {
+    display: block;
+    animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px);}
+    to { opacity: 1; transform: translateY(0);}
+}
+
+.faq-arrow {
+    font-size: 1rem;
+    color: #0d6809;
+    transition: transform 0.2s, color 0.2s;
+}
+.faq-item.active .faq-arrow {
+    transform: rotate(180deg);
+    color: #07562d;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .main-nav { 
+        padding: 10px 12px;
+        height: auto; /* Allow height to adjust if items wrap */
+    }
+    .nav-links { gap: 15px; }
+}
+
+@media (max-width: 600px) {
+    .faq-section {
+        width: 96%;
+        padding: 16px 6px;
+    }
+    .faq-section h2 {
+        font-size: 1.5rem;
+    }
+    .faq-question {
+        font-size: 1rem;
+        padding: 14px 10px;
+    }
+    .faq-answer {
+        font-size: 0.95rem;
+        padding: 0 10px 14px 10px;
+    }
+}
+</style>
+</head>
+<body>
+    <nav class="main-nav">
+  <div class="nav-left">
+    <img src="assets/f.png" alt="Logo" class="nav-logo">
+    <span class="company-name">El Nuevo Puerta Real Estate</span>
+  </div>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="userlot.php">View Lots</a></li>
+    <li><a href="findagent.php">Find Agent</a></li>
+    <li><a href="about.html">About</a></li>
+        <li class="active"><a href="faqs.html">FAQs</a></li>
+    <li><a href="contact.html">Contact</a></li>
+  </ul>
+  <div class="nav-right">
+    <a href="Login/login.php" class="login-btn">Login</a>
+  </div>
+</nav>
+
+    <!-- Example FAQ Section -->
+    <div class="faq-section">
+        <h2>Real Estate FAQs</h2>
+        <div class="faq-item">
+            <div class="faq-question">
+                What is real estate?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Real estate refers to land and any permanent structures attached to it, such as houses or buildings.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What are the different types of real estate?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Real estate includes residential, commercial, industrial, and land properties.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What should I consider before buying a property?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Consider location, market trends, financing options, property condition, and legal aspects before purchasing.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                How do I get a mortgage for a home purchase?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                You need to check your credit score, research lenders, get pre-approved, and submit required documents.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What is the difference between a real estate agent and a broker?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Agents help clients buy or sell properties, while brokers have additional qualifications to manage agents.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                How can I increase my home’s value before selling?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Upgrade kitchens and bathrooms, enhance curb appeal, and repair structural issues.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What is a real estate appraisal?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                An appraisal is a professional evaluation of a property's value based on market trends and conditions.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What are closing costs in a real estate transaction?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Closing costs include loan fees, title insurance, legal fees, and taxes, typically 2-5% of the property price.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                Is real estate a good investment?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Yes, real estate investments can appreciate over time and generate rental income.
+            </div>
+        </div>
+        <div class="faq-item">
+            <div class="faq-question">
+                What are common mistakes to avoid when buying real estate?
+                <span class="faq-arrow">&#9660;</span>
+            </div>
+            <div class="faq-answer">
+                Avoid skipping inspections, ignoring hidden costs, overextending your budget, and rushing decisions.
+            </div>
+        </div>
+    </div>
+
+    <script>
+document.querySelectorAll('.faq-question').forEach(q => {
+    q.addEventListener('click', function() {
+        this.parentElement.classList.toggle('active');
+    });
+});
+</script>
+</body>
+</html>

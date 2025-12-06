@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Request a Viewing</title>
+</head>
+<body>
+  <h2>Request a Viewing</h2>
+  <form method="POST" action="submit_lead.php">
+    <input type="text" name="first_name" placeholder="First Name" required>
+    <input type="text" name="last_name" placeholder="Last Name" required>
+    <input type="email" name="email" placeholder="Email" required>
+    <input type="text" name="phone" placeholder="Mobile Number" required>
+    <input type="text" name="location" placeholder="Preferred Location or Lot">
+    <input type="date" name="preferred_date" required>
+    <textarea name="note" placeholder="Notes or questions"></textarea>
+    <label>
+      <input type="checkbox" name="consent" required>
+      I agree to the privacy policy and to be contacted.
+    </label>
+    <p style="font-size:13px;color:#555;">
+      By submitting this form, you agree to our <a href="privacy.html" target="_blank">privacy policy</a>.
+    </p>
+    <input type="hidden" name="location_id" value="">
+    <input type="hidden" name="lot_id" value="">
+    <button type="submit">Submit Request</button>
+  </form>
+</body>
+</html>
