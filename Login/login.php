@@ -114,13 +114,11 @@ $conn->close();
 
     <!-- Login Form on the Right -->
     <div class="form-container">
-        <a href="../index.html" class="back-arrow" title="Back to Home">
-            <!-- SVG bold left arrow -->
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <circle cx="16" cy="16" r="16" fill="white" opacity="0.7"/>
-                <path d="M20 8L12 16L20 24" stroke="#003F6B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </a>
+       <a href="../index.html" class="back-arrow" title="Back to Home">
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+    <path d="M14 6L9 11L14 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+</a>
         <img src="img/Logo.png" alt="El Nuevo Puerta Real Estate Logo" class="logo">
         <form action="login.php" method="POST" class="login-form">
             <div class="input-group">

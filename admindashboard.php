@@ -15,18 +15,28 @@ if (!$conn) {
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'user' && isset($_GET['id'])) {
+
+// =============================================
+// FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
+// =============================================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+    isset($_GET['fetch']) && $_GET['fetch'] === 'user' &&
+    isset($_GET['id'])) {
+
     $user_id = intval($_GET['id']);
     $userQuery = "SELECT * FROM user_accounts WHERE id = $user_id LIMIT 1";
     $userResult = mysqli_query($conn, $userQuery);
     $user = $userResult ? mysqli_fetch_assoc($userResult) : null;
+
     header('Content-Type: application/json');
     echo json_encode($user);
     exit;
 }
 
-// Get admin info from session
-$admin_id = $_SESSION['admin_id'] ?? null;
+// =============================================
+// ADMIN INFO FROM SESSION
+// =============================================
+$admin_id   = $_SESSION['admin_id'] ?? null;
 $admin_name = "Admin";
 $admin_role = "Super Admin";
 
@@ -38,23 +48,54 @@ if ($admin_id) {
     }
 }
 
-// Get dashboard statistics from database
+// =============================================
+// DASHBOARD STATS (CLIENTS / LOTS / AGENTS)
+// =============================================
 $dashboard_stats = [
     'clients' => 0,
-    'lots' => 0,
-    'agents' => 0
+    'lots'    => 0,
+    'agents'  => 0
 ];
 
-// Handle fetching top agents
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'top_agents') {
-    $date_from = isset($_GET['date_from']) ? $_GET['date_from'] : null;
-    $date_to = isset($_GET['date_to']) ? $_GET['date_to'] : null;
+// total clients
+$clientQuery  = "SELECT COUNT(*) as total FROM user_accounts";
+$clientResult = mysqli_query($conn, $clientQuery);
+if ($clientResult) {
+    $clientRow = mysqli_fetch_assoc($clientResult);
+    $dashboard_stats['clients'] = (int)$clientRow['total'];
+}
+
+// total lots
+$lotsQuery  = "SELECT COUNT(*) as total FROM lots";
+$lotsResult = mysqli_query($conn, $lotsQuery);
+if ($lotsResult) {
+    $lotsRow = mysqli_fetch_assoc($lotsResult);
+    $dashboard_stats['lots'] = (int)$lotsRow['total'];
+}
+
+// total active agents
+$agentsQuery  = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
+$agentsResult = mysqli_query($conn, $agentsQuery);
+if ($agentsResult) {
+    $agentsRow = mysqli_fetch_assoc($agentsResult);
+    $dashboard_stats['agents'] = (int)$agentsRow['total'];
+}
+
+// =============================================
+// TOP AGENTS (AJAX: ?fetch=top_agents)
+// =============================================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+    isset($_GET['fetch']) && $_GET['fetch'] === 'top_agents') {
+
+    $date_from   = $_GET['date_from']   ?? null;
+    $date_to     = $_GET['date_to']     ?? null;
     $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
 
     $where = [];
-    if ($date_from) $where[] = "s.sale_date >= '" . mysqli_real_escape_string($conn, $date_from) . "'";
-    if ($date_to) $where[] = "s.sale_date <= '" . mysqli_real_escape_string($conn, $date_to) . "'";
+    if ($date_from)   $where[] = "s.sale_date >= '" . mysqli_real_escape_string($conn, $date_from) . "'";
+    if ($date_to)     $where[] = "s.sale_date <= '" . mysqli_real_escape_string($conn, $date_to) . "'";
     if ($location_id) $where[] = "s.location_id = $location_id";
+
     $whereSQL = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
     $sql = "
@@ -73,183 +114,184 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       ORDER BY total_amount DESC, sales_count DESC
       LIMIT 10
     ";
+
     $result = mysqli_query($conn, $sql);
     $agents = [];
+
     if ($result) {
         while ($row = mysqli_fetch_assoc($result)) {
             $agents[] = [
-                'id' => $row['id'],
-                'name' => $row['first_name'] . ' ' . $row['last_name'],
-                'email' => $row['email'],
-                'sales_count' => (int)$row['sales_count'],
+                'id'           => (int)$row['id'],
+                'name'         => $row['first_name'] . ' ' . $row['last_name'],
+                'email'        => $row['email'],
+                'sales_count'  => (int)$row['sales_count'],
                 'total_amount' => (float)$row['total_amount'],
-                'avg_deal_size' => (float)$row['avg_deal_size']
+                'avg_deal_size'=> (float)$row['avg_deal_size'],
             ];
         }
     }
+
     header('Content-Type: application/json');
     echo json_encode($agents);
     exit;
 }
 
+// =============================================
+// LOTS CRUD (AJAX: POST action=save/delete/bulk_delete)
+// =============================================
 
-// Get total number of clients (user accounts)
-$clientQuery = "SELECT COUNT(*) as total FROM user_accounts";
-$clientResult = mysqli_query($conn, $clientQuery);
-if ($clientResult) {
-    $clientRow = mysqli_fetch_assoc($clientResult);
-    $dashboard_stats['clients'] = $clientRow['total'];
-}
+// Save / update lot
+if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['action']) && $_POST['action'] === 'save') {
 
-// Get total number of lots
-$lotsQuery = "SELECT COUNT(*) as total FROM lots";
-$lotsResult = mysqli_query($conn, $lotsQuery);
-if ($lotsResult) {
-    $lotsRow = mysqli_fetch_assoc($lotsResult);
-    $dashboard_stats['lots'] = $lotsRow['total'];
-}
-
-// Get total number of available agents
-$agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
-$agentsResult = mysqli_query($conn, $agentsQuery);
-if ($agentsResult) {
-    $agentsRow = mysqli_fetch_assoc($agentsResult);
-    $dashboard_stats['agents'] = $agentsRow['total'];
-}
-
-// Handle LOTS operations
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save') {
     $block_number = mysqli_real_escape_string($conn, $_POST['block_number']);
-    $lot_number = mysqli_real_escape_string($conn, $_POST['lot_number']);
-    $lot_size = mysqli_real_escape_string($conn, $_POST['lot_size']);
-    $lot_price = mysqli_real_escape_string($conn, $_POST['lot_price']);
-    $location_id = mysqli_real_escape_string($conn, $_POST['location_id']);
-    $status = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
+    $lot_number   = mysqli_real_escape_string($conn, $_POST['lot_number']);
+    $lot_size     = mysqli_real_escape_string($conn, $_POST['lot_size']);
+    $lot_price    = mysqli_real_escape_string($conn, $_POST['lot_price']);
+    $location_id  = mysqli_real_escape_string($conn, $_POST['location_id']);
+    $status       = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
 
     if (!empty($_POST['lot_id'])) {
         $lot_id = intval($_POST['lot_id']);
         $updateQuery = "UPDATE lots SET
                         block_number = '$block_number',
-                        lot_number = '$lot_number',
-                        lot_size = '$lot_size',
-                        lot_price = '$lot_price',
-                        location_id = '$location_id',
-                        status = '$status'
+                        lot_number   = '$lot_number',
+                        lot_size     = '$lot_size',
+                        lot_price    = '$lot_price',
+                        location_id  = '$location_id',
+                        status       = '$status'
                         WHERE id = $lot_id";
 
         $success = mysqli_query($conn, $updateQuery);
-
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Lot updated successfully']);
-        } else {
-            $errorMsg = mysqli_error($conn);
-            echo json_encode(['success' => false, 'error' => $errorMsg]);
-        }
-        exit;
+        $msg     = $success ? 'Lot updated successfully' : mysqli_error($conn);
     } else {
-        // Insert new lot
         $insertQuery = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status)
                         VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status')";
         $success = mysqli_query($conn, $insertQuery);
-
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Lot added successfully']);
-        } else {
-            $errorMsg = mysqli_error($conn);
-            echo json_encode(['success' => false, 'error' => $errorMsg]);
-        }
-        exit;
+        $msg     = $success ? 'Lot added successfully' : mysqli_error($conn);
     }
-}
 
-// Handle deleting a lot
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete') {
-    $lot_id = intval($_POST['lot_id']);
-    $deleteQuery = "DELETE FROM lots WHERE id = $lot_id";
-
-    $success = mysqli_query($conn, $deleteQuery);
-
-    if ($success) {
-        echo json_encode(['success' => true, 'message' => 'Lot deleted successfully']);
-    } else {
-        echo json_encode(['success' => false, 'error' => mysqli_error($conn)]);
-    }
+    header('Content-Type: application/json');
+    echo json_encode(['success' => (bool)$success, 'message' => $msg]);
     exit;
 }
 
-// Handle bulk deleting lots
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'bulk_delete') {
+// Delete single lot
+if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['action']) && $_POST['action'] === 'delete') {
+
+    $lot_id      = intval($_POST['lot_id']);
+    $deleteQuery = "DELETE FROM lots WHERE id = $lot_id";
+    $success     = mysqli_query($conn, $deleteQuery);
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => (bool)$success,
+        'message' => $success ? 'Lot deleted successfully' : mysqli_error($conn)
+    ]);
+    exit;
+}
+
+// Bulk delete lots
+if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['action']) && $_POST['action'] === 'bulk_delete') {
+
     $ids = json_decode($_POST['lot_ids'], true);
     if (!is_array($ids) || empty($ids)) {
+        header('Content-Type: application/json');
         echo json_encode(['success' => false, 'error' => 'No lots selected']);
         exit;
     }
-    $idList = implode(',', array_map('intval', $ids));
-    $deleteQuery = "DELETE FROM lots WHERE id IN ($idList)";
-    $success = mysqli_query($conn, $deleteQuery);
 
-    if ($success) {
-        echo json_encode(['success' => true, 'message' => 'Lots deleted successfully']);
-    } else {
-        echo json_encode(['success' => false, 'error' => mysqli_error($conn)]);
-    }
+    $idList      = implode(',', array_map('intval', $ids));
+    $deleteQuery = "DELETE FROM lots WHERE id IN ($idList)";
+    $success     = mysqli_query($conn, $deleteQuery);
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => (bool)$success,
+        'message' => $success ? 'Lots deleted successfully' : mysqli_error($conn)
+    ]);
     exit;
 }
 
-// Handle ACCOUNT operations (ADMIN)
+// =============================================
+// ADMIN ACCOUNT CRUD (AJAX: account_action)
+// =============================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
-    header('Content-Type: application/json'); // Always return JSON for AJAX
+    header('Content-Type: application/json');
 
     if ($_POST['account_action'] === 'add') {
-        $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone = mysqli_real_escape_string($conn, $_POST['phone']);
-        $address = mysqli_real_escape_string($conn, $_POST['address']);
-        $short_description = mysqli_real_escape_string($conn, $_POST['short_description']);
+        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']);
+        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $email            = mysqli_real_escape_string($conn, $_POST['email']);
+        $phone            = mysqli_real_escape_string($conn, $_POST['phone']);
+        $address          = mysqli_real_escape_string($conn, $_POST['address']);
+        $short_description= mysqli_real_escape_string($conn, $_POST['short_description']);
         $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience']);
-        $availability = isset($_POST['availability']) ? 1 : 0;
-        $latitude = !empty($_POST['latitude']) ? (float)$_POST['latitude'] : null;
-        $longitude = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
-        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-        $role = mysqli_real_escape_string($conn, $_POST['role']);
+        $availability     = isset($_POST['availability']) ? 1 : 0;
+        $latitude         = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
+        $longitude        = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+        $password         = password_hash($_POST['password'], PASSWORD_DEFAULT);
+        $role             = mysqli_real_escape_string($conn, $_POST['role']);
 
-        // Handle photo upload
         $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        $sql = "INSERT INTO admin_accounts (first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, latitude, longitude, password, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql  = "INSERT INTO admin_accounts (first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, latitude, longitude, password, role)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
-        if ($stmt === false) {
+
+        if (!$stmt) {
             echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
-        $stmt->bind_param("sssssssssissss", $first_name, $middle_name, $last_name, $email, $phone, $address, $short_description, $years_experience, $photo_path, $availability, $latitude, $longitude, $password, $role);
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "Admin account created successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error creating admin account: " . $stmt->error]);
+
+        $stmt->bind_param(
+            "sssssssssissss",
+            $first_name, $middle_name, $last_name, $email, $phone, $address,
+            $short_description, $years_experience, $photo_path, $availability,
+            $latitude, $longitude, $password, $role
+        );
+
+        $ok = $stmt->execute();
+      // Audit log for add
+      if ($ok && isset($admin_id)) {
+        $action = 'add_admin';
+        $details = 'Added admin: ' . $first_name . ' ' . $last_name . ' (' . $email . ')';
+        $log_sql = "INSERT INTO audit_logs (admin_id, action, details, created_at) VALUES (?, ?, ?, NOW())";
+        $log_stmt = $conn->prepare($log_sql);
+        if ($log_stmt) {
+          $log_stmt->bind_param("iss", $admin_id, $action, $details);
+          $log_stmt->execute();
+          $log_stmt->close();
         }
+      }
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "Admin account created successfully!" : "Error creating admin account: " . $stmt->error
+        ]);
         $stmt->close();
         exit;
-    } elseif ($_POST['account_action'] === 'update') {
-        $account_id = intval($_POST['account_id']);
-        $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-        $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
-        $address = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-        $short_description = mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
-        $availability = isset($_POST['availability']) ? 1 : 0;
-        $role = mysqli_real_escape_string($conn, $_POST['role']);
-        $photo_path = null;
+    }
 
-        // Handle photo upload
+    if ($_POST['account_action'] === 'update') {
+        $account_id       = intval($_POST['account_id']);
+        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $email            = mysqli_real_escape_string($conn, $_POST['email']);
+        $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
+        $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+        $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
+        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
+        $availability     = isset($_POST['availability']) ? 1 : 0;
+        $role             = mysqli_real_escape_string($conn, $_POST['role']);
+
+        $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
@@ -258,310 +300,392 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
             $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
             $sql = "UPDATE admin_accounts SET first_name=?, middle_name=?, last_name=?, email=?, phone=?, address=?, short_description=?, years_experience=?, availability=?, password=?, role=?, photo_path=? WHERE id=?";
             $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
+            if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
                 exit;
             }
-            $stmt->bind_param("ssssssssissssi", $first_name, $middle_name, $last_name, $email, $phone, $address, $short_description, $years_experience, $availability, $password, $role, $photo_path, $account_id);
+            $stmt->bind_param(
+                "ssssssssissssi",
+                $first_name, $middle_name, $last_name, $email, $phone, $address,
+                $short_description, $years_experience, $availability, $password,
+                $role, $photo_path, $account_id
+            );
         } else {
             $sql = "UPDATE admin_accounts SET first_name=?, middle_name=?, last_name=?, email=?, phone=?, address=?, short_description=?, years_experience=?, availability=?, role=?, photo_path=? WHERE id=?";
             $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
+            if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
                 exit;
             }
-            $stmt->bind_param("ssssssssisssi", $first_name, $middle_name, $last_name, $email, $phone, $address, $short_description, $years_experience, $availability, $role, $photo_path, $account_id);
+            $stmt->bind_param(
+                "ssssssssisssi",
+                $first_name, $middle_name, $last_name, $email, $phone, $address,
+                $short_description, $years_experience, $availability, $role,
+                $photo_path, $account_id
+            );
         }
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "Account updated successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error updating account: " . $stmt->error]);
+        $ok = $stmt->execute();
+        // Audit log for update
+        if ($ok && isset($admin_id)) {
+          $action = 'update_admin';
+          $details = 'Updated admin: ' . $first_name . ' ' . $last_name . ' (' . $email . ')';
+          $log_sql = "INSERT INTO audit_logs (admin_id, action, details, created_at) VALUES (?, ?, ?, NOW())";
+          $log_stmt = $conn->prepare($log_sql);
+          if ($log_stmt) {
+            $log_stmt->bind_param("iss", $admin_id, $action, $details);
+            $log_stmt->execute();
+            $log_stmt->close();
+          }
         }
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "Account updated successfully!" : "Error updating account: " . $stmt->error
+        ]);
         $stmt->close();
         exit;
-    } elseif ($_POST['account_action'] === 'delete') {
+    }
+
+    if ($_POST['account_action'] === 'delete') {
         $account_id = intval($_POST['account_id']);
 
         if ($account_id == $admin_id) {
             echo json_encode(['success' => false, 'error' => "You cannot delete your own account!"]);
             exit;
-        } else {
-            $sql = "DELETE FROM admin_accounts WHERE id = ?";
-            $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
-                echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-                exit;
-            }
-            $stmt->bind_param("i", $account_id);
+        }
 
-            if ($stmt->execute()) {
-                echo json_encode(['success' => true, 'message' => "Account deleted successfully!"]);
-            } else {
-                echo json_encode(['success' => false, 'error' => "Error deleting account: " . $conn->error]);
-            }
-            $stmt->close();
+        $sql  = "DELETE FROM admin_accounts WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
+        $stmt->bind_param("i", $account_id);
+
+        $ok = $stmt->execute();
+        // Audit log for delete
+        if ($ok && isset($admin_id)) {
+          $action = 'delete_admin';
+          $details = 'Deleted admin account ID: ' . $account_id;
+          $log_sql = "INSERT INTO audit_logs (admin_id, action, details, created_at) VALUES (?, ?, ?, NOW())";
+          $log_stmt = $conn->prepare($log_sql);
+          if ($log_stmt) {
+            $log_stmt->bind_param("iss", $admin_id, $action, $details);
+            $log_stmt->execute();
+            $log_stmt->close();
+          }
+        }
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "Account deleted successfully!" : "Error deleting account: " . $conn->error
+        ]);
+        $stmt->close();
+        exit;
     }
 }
 
-
-// Handle AGENT ACCOUNT operations
+// =============================================
+// AGENT ACCOUNT CRUD (AJAX for add/update; normal form for delete)
+// ================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
-    header('Content-Type: application/json'); // Always return JSON for AJAX
 
-    if ($_POST['agent_action'] === 'add') {
-        $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $username = mysqli_real_escape_string($conn, $_POST['username']);
-        $email = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone = mysqli_real_escape_string($conn, $_POST['phone']);
-        $address = mysqli_real_escape_string($conn, $_POST['address']);
+    $action = $_POST['agent_action'];
+
+    // Only ADD & UPDATE should respond with JSON (AJAX)
+    if ($action === 'add' || $action === 'update') {
+        header('Content-Type: application/json');
+    }
+
+    // ----------------- ADD AGENT (AJAX) -----------------
+    if ($action === 'add') {
+        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']);
+        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $username          = mysqli_real_escape_string($conn, $_POST['username']);
+        $email             = mysqli_real_escape_string($conn, $_POST['email']);
+        $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
+        $address           = mysqli_real_escape_string($conn, $_POST['address']);
         $short_description = mysqli_real_escape_string($conn, $_POST['short_description']);
-        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience']);
-        $availability = isset($_POST['availability']) ? 1 : 0;
-        $latitude = !empty($_POST['latitude']) ? (float)$_POST['latitude'] : null;
-        $longitude = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
-        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+        $years_experience  = mysqli_real_escape_string($conn, $_POST['years_experience']);
+        $availability      = isset($_POST['availability']) ? 1 : 0;
+        $latitude          = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
+        $longitude         = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+        $password          = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-        // Handle photo upload
         $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        $sql = "INSERT INTO agent_accounts (first_name, middle_name, last_name, username, email, phone, address, short_description, years_experience, photo_path, availability, latitude, longitude, password, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
+        $sql = "INSERT INTO agent_accounts 
+                (first_name, middle_name, last_name, username, email, phone, address, 
+                 short_description, years_experience, photo_path, availability, latitude, 
+                 longitude, password, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
         $stmt = $conn->prepare($sql);
-        if ($stmt === false) {
+        if (!$stmt) {
             echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
-        $stmt->bind_param("ssssssssssidds", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $short_description, $years_experience, $photo_path, $availability, $latitude, $longitude, $password);
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "Agent account created successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error creating agent account: " . $stmt->error]);
-        }
+
+        $stmt->bind_param(
+            "ssssssssssidds",
+            $first_name, $middle_name, $last_name, $username, $email, $phone,
+            $address, $short_description, $years_experience, $photo_path,
+            $availability, $latitude, $longitude, $password
+        );
+
+        $ok = $stmt->execute();
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "Agent account created successfully!"
+                             : "Error creating agent account: " . $stmt->error
+        ]);
         $stmt->close();
         exit;
-    } elseif ($_POST['agent_action'] === 'update') {
-        $agent_id = intval($_POST['account_id']);
-        $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-        $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $username = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
-        $email = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
-        $address = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-        $short_description = mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
-        $availability = isset($_POST['availability']) ? 1 : 0;
-        $latitude = !empty($_POST['latitude']) ? (float)$_POST['latitude'] : null;
-        $longitude = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
-        $photo_path = null;
+    }
 
-        // Handle photo upload
+    // ----------------- UPDATE AGENT (AJAX) -----------------
+    if ($action === 'update') {
+        $agent_id         = intval($_POST['account_id']);
+        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $username         = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
+        $email            = mysqli_real_escape_string($conn, $_POST['email']);
+        $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
+        $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+        $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
+        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
+        $availability     = isset($_POST['availability']) ? 1 : 0;
+        $latitude         = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
+        $longitude        = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+
+        $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
         if (!empty($_POST['password'])) {
             $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-            $sql = "UPDATE agent_accounts SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, address=?, short_description=?, years_experience=?, availability=?, latitude=?, longitude=?, password=?, photo_path=? WHERE id=?";
+            $sql = "UPDATE agent_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                        address=?, short_description=?, years_experience=?, availability=?, 
+                        latitude=?, longitude=?, password=?, photo_path=? 
+                    WHERE id=?";
             $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
+            if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
                 exit;
             }
-            $stmt->bind_param("sssssssssiiddssi", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $short_description, $years_experience, $availability, $latitude, $longitude, $password, $photo_path, $agent_id);
+            $stmt->bind_param(
+                "sssssssssiiddssi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $short_description, $years_experience, $availability,
+                $latitude, $longitude, $password, $photo_path, $agent_id
+            );
         } else {
-            $sql = "UPDATE agent_accounts SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, address=?, short_description=?, years_experience=?, availability=?, latitude=?, longitude=?, photo_path=? WHERE id=?";
+            $sql = "UPDATE agent_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                        address=?, short_description=?, years_experience=?, availability=?, 
+                        latitude=?, longitude=?, photo_path=? 
+                    WHERE id=?";
             $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
+            if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
                 exit;
             }
-            $stmt->bind_param("sssssssssiiddsi", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $short_description, $years_experience, $availability, $latitude, $longitude, $photo_path, $agent_id);
+            $stmt->bind_param(
+                "sssssssssiiddsi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $short_description, $years_experience, $availability,
+                $latitude, $longitude, $photo_path, $agent_id
+            );
         }
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "Agent account updated successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error updating agent account: " . $stmt->error]);
-        }
-        $stmt->close();
-        exit;
-    } elseif ($_POST['agent_action'] === 'delete') {
-        $agent_id = intval($_POST['agent_id']);
-        $sql = "DELETE FROM agent_accounts WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        if ($stmt === false) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-        }
-        $stmt->bind_param("i", $agent_id);
-
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "Agent account deleted successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error deleting agent account: " . $conn->error]);
-        }
+        $ok = $stmt->execute();
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "Agent account updated successfully!"
+                             : "Error updating agent account: " . $stmt->error
+        ]);
         $stmt->close();
         exit;
     }
+
+    // ----------------- DELETE AGENT (NORMAL FORM) -----------------
+    if ($action === 'delete') {
+        // ❗ No JSON here – behave like the user delete
+        $agent_id = intval($_POST['agent_id']);
+        $sql      = "DELETE FROM agent_accounts WHERE id = ?";
+        $stmt     = $conn->prepare($sql);
+
+        if (!$stmt) {
+            $error_message = "Prepare failed: " . $conn->error;
+        } else {
+            $stmt->bind_param("i", $agent_id);
+            if ($stmt->execute()) {
+                $success_message = "Agent account deleted successfully!";
+            } else {
+                $error_message = "Error deleting agent account: " . $conn->error;
+            }
+            $stmt->close();
+        }
+        // IMPORTANT: no json_encode, no exit.
+        // Let the script continue so the page reloads and shows the alert.
+    }
 }
 
-// Handle USER ACCOUNT operations
+
+// =============================================
+// USER ACCOUNT CRUD (AJAX: user_action)
+// =============================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
-    header('Content-Type: application/json'); // Always return JSON for AJAX
+    header('Content-Type: application/json');
 
     if ($_POST['user_action'] === 'add') {
-        $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $username = mysqli_real_escape_string($conn, $_POST['username']);
-        $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email = mysqli_real_escape_string($conn, $_POST['email']);
+        $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name']);
+        $username      = mysqli_real_escape_string($conn, $_POST['username']);
+        $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $email         = mysqli_real_escape_string($conn, $_POST['email']);
         $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number']);
-        $address = mysqli_real_escape_string($conn, $_POST['address']);
-        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+        $address       = mysqli_real_escape_string($conn, $_POST['address']);
+        $password      = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-        // Handle photo upload
         $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        $sql = "INSERT INTO user_accounts (first_name, middle_name, username, last_name, email, mobile_number, address, password, photo_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql  = "INSERT INTO user_accounts (first_name, middle_name, username, last_name, email, mobile_number, address, password, photo_path)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
 
-        if ($stmt === false) {
+        if (!$stmt) {
             echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
-        $stmt->bind_param("sssssssss", $first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address, $password, $photo_path);
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "User account created successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error creating user account: " . $stmt->error]);
-        }
+        $stmt->bind_param(
+            "sssssssss",
+            $first_name, $middle_name, $username, $last_name, $email,
+            $mobile_number, $address, $password, $photo_path
+        );
+
+        $ok = $stmt->execute();
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "User account created successfully!" : "Error creating user account: " . $stmt->error
+        ]);
         $stmt->close();
         exit;
-   } elseif ($_POST['user_action'] === 'update') {
-    $user_id = intval($_POST['account_id']);
-    $first_name = mysqli_real_escape_string($conn, $_POST['first_name']);
-    $middle_name = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-    $username = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
-    $last_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-    $email = mysqli_real_escape_string($conn, $_POST['email']);
-    $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number'] ?? '');
-    $address = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-    
-    $password_hash = null;
-    $photo_path = null;
-    $update_fields = [
-        'first_name=?', 
-        'middle_name=?', 
-        'username=?', 
-        'last_name=?', 
-        'email=?', 
-        'mobile_number=?', 
-        'address=?'
-    ];
-    $bind_types = "sssssss"; // For the 7 base string fields
-    $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address];
+    }
 
-    // 1. Handle Photo Upload
-    // Check if a new file was successfully uploaded and get the new path
-    if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-        // IMPORTANT: Ensure handleFileUpload() is defined and returns a string path or null
-        $photo_path = handleFileUpload($_FILES['photo']);
-        if ($photo_path !== null) {
-            $update_fields[] = 'photo_path=?';
-            $bind_types .= 's';
-            $bind_values[] = $photo_path;
+    if ($_POST['user_action'] === 'update') {
+        $user_id       = intval($_POST['account_id']);
+        $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
+        $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+        $username      = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
+        $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
+        $email         = mysqli_real_escape_string($conn, $_POST['email']);
+        $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number'] ?? '');
+        $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+
+        $photo_path   = null;
+        $passwordHash = null;
+
+        $update_fields = [
+            'first_name=?',
+            'middle_name=?',
+            'username=?',
+            'last_name=?',
+            'email=?',
+            'mobile_number=?',
+            'address=?'
+        ];
+        $bind_types  = "sssssss";
+        $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address];
+
+        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+            $photo_path = handleFileUpload($_FILES['photo']);
+            if ($photo_path !== null) {
+                $update_fields[] = 'photo_path=?';
+                $bind_types     .= 's';
+                $bind_values[]   = $photo_path;
+            }
         }
-    }
 
-    // 2. Handle Password Change
-    if (!empty($_POST['password'])) {
-        $password_hash = password_hash($_POST['password'], PASSWORD_DEFAULT);
-        $update_fields[] = 'password=?';
-        $bind_types .= 's';
-        $bind_values[] = $password_hash;
-    }
+        if (!empty($_POST['password'])) {
+            $passwordHash    = password_hash($_POST['password'], PASSWORD_DEFAULT);
+            $update_fields[] = 'password=?';
+            $bind_types     .= 's';
+            $bind_values[]   = $passwordHash;
+        }
 
-    // 3. Finalize Query
-    $sql = "UPDATE user_accounts SET " . implode(', ', $update_fields) . " WHERE id=?";
-    $bind_types .= 'i'; // Add integer type for the user_id
-    $bind_values[] = $user_id; // Add the user_id to the bind values
+        $sql = "UPDATE user_accounts SET " . implode(', ', $update_fields) . " WHERE id=?";
+        $bind_types  .= 'i';
+        $bind_values[] = $user_id;
 
-    $stmt = $conn->prepare($sql);
-    
-    if ($stmt === false) {
-        echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+            exit;
+        }
+
+        $stmt->bind_param($bind_types, ...$bind_values);
+
+        $ok = $stmt->execute();
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "User account updated successfully!" : "Error updating user account: " . $stmt->error
+        ]);
+        $stmt->close();
         exit;
     }
 
-    // Pass the dynamic bind types and values to bind_param
-    $stmt->bind_param($bind_types, ...$bind_values);
-
-    // 4. Execute and Respond
-    if ($stmt->execute()) {
-        // Check if any rows were actually modified (optional but good practice)
-        if ($stmt->affected_rows > 0) {
-            echo json_encode(['success' => true, 'message' => "User account updated successfully!"]);
-        } else {
-            // Return success even if no rows were affected (no fields were truly changed)
-            echo json_encode(['success' => true, 'message' => "Update request processed, but no rows were modified (data unchanged)."]);
-        }
-    } else {
-        echo json_encode(['success' => false, 'error' => "Error updating user account: " . $stmt->error]);
-    }
-    $stmt->close();
-    exit;
-} elseif ($_POST['user_action'] === 'delete') {
+    if ($_POST['user_action'] === 'delete') {
         $user_id = intval($_POST['user_id']);
-        $sql = "DELETE FROM user_accounts WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        if ($stmt === false) {
+        $sql     = "DELETE FROM user_accounts WHERE id = ?";
+        $stmt    = $conn->prepare($sql);
+        if (!$stmt) {
             echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
         $stmt->bind_param("i", $user_id);
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => "User account deleted successfully!"]);
-        } else {
-            echo json_encode(['success' => false, 'error' => "Error deleting user account: " . $conn->error]);
-        }
+        $ok = $stmt->execute();
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? "User account deleted successfully!" : "Error deleting user account: " . $conn->error
+        ]);
         $stmt->close();
         exit;
     }
 }
 
-// Handle fetching operations
+// =============================================
+// GENERIC GET FETCH: lots / locations (AJAX)
+// =============================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     if ($_GET['fetch'] === 'lots') {
         $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : 0;
 
         if ($location_id > 0) {
-            $lotsQuery = "SELECT lots.*, lot_locations.location_name 
-                          FROM lots 
+            $lotsQuery = "SELECT lots.*, lot_locations.location_name
+                          FROM lots
                           LEFT JOIN lot_locations ON lots.location_id = lot_locations.id
-                          WHERE lots.location_id = $location_id ORDER BY lots.id DESC";
+                          WHERE lots.location_id = $location_id
+                          ORDER BY lots.id DESC";
         } else {
-            $lotsQuery = "SELECT lots.*, lot_locations.location_name 
-                          FROM lots 
+            $lotsQuery = "SELECT lots.*, lot_locations.location_name
+                          FROM lots
                           LEFT JOIN lot_locations ON lots.location_id = lot_locations.id
                           ORDER BY lots.id DESC";
         }
 
         $lotsResult = mysqli_query($conn, $lotsQuery);
-
-        $lots = [];
+        $lots       = [];
         if ($lotsResult) {
             while ($lot = mysqli_fetch_assoc($lotsResult)) {
                 $lots[] = $lot;
@@ -571,13 +695,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
         header('Content-Type: application/json');
         echo json_encode($lots);
         exit;
-    } elseif ($_GET['fetch'] === 'locations') {
-        $locationsQuery = "SELECT id, location_name FROM lot_locations";
-        $locationsResult = mysqli_query($conn, $locationsQuery);
+    }
 
-        $locations = [];
-        while ($row = mysqli_fetch_assoc($locationsResult)) {
-            $locations[] = $row;
+    if ($_GET['fetch'] === 'locations') {
+        $locationsQuery  = "SELECT id, location_name FROM lot_locations";
+        $locationsResult = mysqli_query($conn, $locationsQuery);
+        $locations       = [];
+        if ($locationsResult) {
+            while ($row = mysqli_fetch_assoc($locationsResult)) {
+                $locations[] = $row;
+            }
         }
 
         header('Content-Type: application/json');
@@ -586,13 +713,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     }
 }
 
-// Fetch all viewing requests
-$all_viewings = [];
+
+
+// =============================================
+// VIEWINGS: REQUEST & ASSIGN
+// =============================================
+
+// Request a viewing (public form)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'request') {
+    $user_id          = $_SESSION['user_id'] ?? null;
+    $agent_id         = null;
+    $client_first_name= mysqli_real_escape_string($conn, $_POST['client_first_name']);
+    $client_last_name = mysqli_real_escape_string($conn, $_POST['client_last_name']);
+    $client_email     = mysqli_real_escape_string($conn, $_POST['client_email']);
+    $client_phone     = mysqli_real_escape_string($conn, $_POST['client_phone']);
+    $lot_id           = mysqli_real_escape_string($conn, $_POST['lot_id']);
+    $preferred_date   = mysqli_real_escape_string($conn, $_POST['preferred_date']);
+    $status           = 'requested';
+    $client_lat       = mysqli_real_escape_string($conn, $_POST['client_lat']);
+    $client_lng       = mysqli_real_escape_string($conn, $_POST['client_lng']);
+    $location_id      = mysqli_real_escape_string($conn, $_POST['location_id']);
+
+    $insertQuery = "INSERT INTO viewings (
+                        agent_id, user_id, client_first_name, client_last_name, client_email, client_phone,
+                        lot_no, preferred_at, status, client_lat, client_lng, location_id, lot_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+
+    $stmt = $conn->prepare($insertQuery);
+    $stmt->bind_param(
+        "iissssissssss",
+        $agent_id, $user_id, $client_first_name, $client_last_name,
+        $client_email, $client_phone, $lot_id, $preferred_date,
+        $status, $client_lat, $client_lng, $location_id, $lot_id
+    );
+
+    if ($stmt->execute()) {
+        $success_message = "Viewing request submitted successfully!";
+    } else {
+        $error_message = "Error submitting request: " . $stmt->error;
+    }
+    $stmt->close();
+}
+
+// Assign agent to viewing (admin)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'assign_agent') {
+    $viewingId = intval($_POST['viewing_id']);
+    $agentId   = intval($_POST['agent_id']);
+
+    $sql  = "UPDATE viewings SET agent_id = ?, status = 'scheduled' WHERE id = ?";
+    $stmt = $conn->prepare($sql);
+    if ($stmt) {
+        $stmt->bind_param("ii", $agentId, $viewingId);
+        if ($stmt->execute()) {
+            $success_message = "Agent assigned successfully!";
+        } else {
+            $error_message = "Failed to assign agent.";
+        }
+        $stmt->close();
+    }
+    header("Location: " . $_SERVER['PHP_SELF'] . "#viewings");
+    exit;
+}
+
+// =============================================
+// FETCH VIEWINGS & ACTIVE AGENTS FOR UI
+// =============================================
+
+// Viewing list
+$all_viewings  = [];
 $viewingsQuery = "SELECT v.*, ll.location_name, l.block_number, l.lot_number, l.lot_size, l.lot_price
                   FROM viewings v
                   LEFT JOIN lot_locations ll ON v.location_id = ll.id
                   LEFT JOIN lots l ON v.lot_id = l.id
-                  ORDER BY v.created_at DESC";
+                  ORDER BY v.created_at DESC
+                  LIMIT 5";
 $viewingsResult = mysqli_query($conn, $viewingsQuery);
 if ($viewingsResult) {
     while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
@@ -600,68 +794,70 @@ if ($viewingsResult) {
     }
 }
 
-// Fetch all active agents for assignment
+// Active agents for assignment dropdown
+$agents     = [];
 $agentsQuery = "SELECT id, first_name, last_name FROM agent_accounts WHERE status = 'active'";
 $agentsResult = mysqli_query($conn, $agentsQuery);
-$agents = [];
 if ($agentsResult) {
     while ($agent = mysqli_fetch_assoc($agentsResult)) {
         $agents[] = $agent;
     }
 }
 
-// Handle viewing assignments and status updates
-if (isset($_POST['viewing_action'])) {
-    if ($_POST['viewing_action'] === 'assign_agent') {
-        $viewingId = intval($_POST['viewing_id']);
-        $agentId = intval($_POST['agent_id']);
-        
-        $sql = "UPDATE viewings SET agent_id = ?, status = 'scheduled' WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("ii", $agentId, $viewingId);
-            if ($stmt->execute()) {
-                $success_message = "Agent assigned successfully!";
-            } else {
-                $error_message = "Failed to assign agent.";
-            }
-            $stmt->close();
-        }
-    }
-    // Refresh the page to show updated data
-    header("Location: " . $_SERVER['PHP_SELF'] . "#viewings");
-    exit;
-}
+// =============================================
+// SINGLE FETCH BLOCK FOR ACCOUNTS (ADMIN UI)
+// =============================================
 
-// Fetch all admin accounts
-$adminAccounts = [];
-$accountsQuery = "SELECT id, first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, role, created_at FROM admin_accounts ORDER BY created_at DESC";
-$accountsResult = mysqli_query($conn, $accountsQuery);
+// Admin accounts
+$adminAccounts   = [];
+$accountsQuery   = "SELECT id, first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, role, created_at FROM admin_accounts ORDER BY created_at DESC";
+$accountsResult  = mysqli_query($conn, $accountsQuery);
 if ($accountsResult) {
     while ($account = mysqli_fetch_assoc($accountsResult)) {
         $adminAccounts[] = $account;
     }
 }
 
-// Fetch all agent accounts
-$agentAccounts = [];
-$agentQuery = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, short_description, years_experience, photo_path, availability, status, created_at FROM agent_accounts ORDER BY created_at DESC";
+// Agent accounts (working, matches your DB)
+$agentAccounts  = [];
+$agentQuery     = "
+    SELECT 
+        id,
+        first_name,
+        middle_name,
+        last_name,
+        username,
+        email,
+        phone,
+        address,
+        availability,
+        status,
+        created_at
+    FROM agent_accounts
+    ORDER BY created_at DESC
+";
+
 $agentResult = mysqli_query($conn, $agentQuery);
-if ($agentResult) {
-    while ($agent = mysqli_fetch_assoc($agentResult)) {
-        $agentAccounts[] = $agent;
-    }
+
+if (!$agentResult) {
+    die("Agent Query Error: " . mysqli_error($conn));
 }
 
-// Fetch all user accounts
+while ($agent = mysqli_fetch_assoc($agentResult)) {
+    $agentAccounts[] = $agent;
+}
+
+
+// User accounts
 $userAccounts = [];
-$userQuery = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts ORDER BY created_at DESC";
-$userResult = mysqli_query($conn, $userQuery);
+$userQuery    = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts ORDER BY created_at DESC LIMIT 5";
+$userResult   = mysqli_query($conn, $userQuery);
 if ($userResult) {
     while ($user = mysqli_fetch_assoc($userResult)) {
         $userAccounts[] = $user;
     }
 }
+
 
 // Handle file uploads
 function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
@@ -690,41 +886,104 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action'])) {
     if ($_POST['viewing_action'] === 'request') {
         $user_id = $_SESSION['user_id'] ?? null;
         $agent_id = null;
-        $client_first_name = mysqli_real_escape_string($conn, $_POST['client_first_name']);
-        $client_last_name = mysqli_real_escape_string($conn, $_POST['client_last_name']);
-        $client_email = mysqli_real_escape_string($conn, $_POST['client_email']);
-        $client_phone = mysqli_real_escape_string($conn, $_POST['client_phone']);
-        $lot_id = mysqli_real_escape_string($conn, $_POST['lot_id']);
-        $preferred_date = mysqli_real_escape_string($conn, $_POST['preferred_date']);
-        $status = 'requested';
-        $client_lat = mysqli_real_escape_string($conn, $_POST['client_lat']);
-        $client_lng = mysqli_real_escape_string($conn, $_POST['client_lng']);
-        $location_id = mysqli_real_escape_string($conn, $_POST['location_id']);
 
-        // Insert viewing request into the database
-        $insertQuery = "INSERT INTO viewings (
-                            agent_id, user_id, client_first_name, client_last_name, client_email, client_phone,
-                            lot_no, preferred_at, status, client_lat, client_lng, location_id, lot_id, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
-        $stmt = $conn->prepare($insertQuery);
-        $stmt->bind_param("iissssissssss", $agent_id, $user_id, $client_first_name, $client_last_name, $client_email, $client_phone, $lot_id, $preferred_date, $status, $client_lat, $client_lng, $location_id, $lot_id);
-        
-        if ($stmt->execute()) {
-            $success_message = "Viewing request submitted successfully!";
+        $client_first_name = mysqli_real_escape_string($conn, $_POST['client_first_name']);
+        $client_last_name  = mysqli_real_escape_string($conn, $_POST['client_last_name']);
+        $client_email      = mysqli_real_escape_string($conn, $_POST['client_email']);
+        $client_phone      = mysqli_real_escape_string($conn, $_POST['client_phone']);
+
+        // lot_id comes from the form (hidden input or similar)
+        $lot_id        = (int) $_POST['lot_id'];
+        $preferred_date = mysqli_real_escape_string($conn, $_POST['preferred_date']);
+        $status         = 'requested';
+        $client_lat     = mysqli_real_escape_string($conn, $_POST['client_lat']);
+        $client_lng     = mysqli_real_escape_string($conn, $_POST['client_lng']);
+        $location_id    = (int) $_POST['location_id'];
+
+        // ✅ Fetch the lot_number of the selected lot_id
+        $lot_no_query = $conn->prepare("SELECT lot_number FROM lots WHERE id = ?");
+        $lot_no_query->bind_param("i", $lot_id);
+        $lot_no_query->execute();
+        $lot_no_result = $lot_no_query->get_result();
+        $lot_row = $lot_no_result->fetch_assoc();
+        $lot_no = $lot_row ? $lot_row['lot_number'] : null;  // Real lot number
+        $lot_no_query->close();
+
+        if ($lot_no === null) {
+            // Safety check: lot_id not found
+            $error_message = "Invalid lot selected.";
         } else {
-            $error_message = "Error submitting request: " . $stmt->error;
+            // ✅ Insert viewing request into the database
+            $insertQuery = "INSERT INTO viewings (
+                                agent_id, 
+                                user_id, 
+                                client_first_name, 
+                                client_last_name, 
+                                client_email, 
+                                client_phone,
+                                lot_no,          -- real lot number (e.g. 3, 6)
+                                preferred_at, 
+                                status, 
+                                client_lat, 
+                                client_lng, 
+                                location_id, 
+                                lot_id,          -- FK to lots.id
+                                created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+
+            $stmt = $conn->prepare($insertQuery);
+            $stmt->bind_param(
+                "iissssissssss",
+                $agent_id,
+                $user_id,
+                $client_first_name,
+                $client_last_name,
+                $client_email,
+                $client_phone,
+                $lot_no,          // ✅ use lot_no here (not lot_id)
+                $preferred_date,
+                $status,
+                $client_lat,
+                $client_lng,
+                $location_id,
+                $lot_id          // ✅ FK to lots.id
+            );
+
+            if ($stmt->execute()) {
+                $success_message = "Viewing request submitted successfully!";
+            } else {
+                $error_message = "Error submitting request: " . $stmt->error;
+            }
+            $stmt->close();
         }
-        $stmt->close();
     }
 }
 
-// Fetch all viewing requests
+
+// Fetch all viewing requests except completed ones
 $all_viewings = [];
-$viewingsQuery = "SELECT v.*, ll.location_name, l.block_number, l.lot_number, l.lot_size, l.lot_price
-                  FROM viewings v
-                  LEFT JOIN lot_locations ll ON v.location_id = ll.id
-                  LEFT JOIN lots l ON v.lot_id = l.id
-                  ORDER BY v.created_at DESC";
+
+$viewingsQuery = "
+    SELECT 
+        v.*,
+        ll.location_name,
+        l.block_number,
+        l.lot_number,
+        l.lot_size,
+        l.lot_price
+    FROM viewings v
+    LEFT JOIN lots l 
+        ON (
+            v.lot_id IS NOT NULL AND l.id = v.lot_id
+        ) OR (
+            v.lot_id IS NULL AND l.lot_number = v.lot_no
+        )
+    LEFT JOIN lot_locations ll 
+        ON ll.id = l.location_id
+    WHERE v.status != 'completed'
+    ORDER BY v.created_at DESC
+";
+
 $viewingsResult = mysqli_query($conn, $viewingsQuery);
 if ($viewingsResult) {
     while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
@@ -732,15 +991,6 @@ if ($viewingsResult) {
     }
 }
 
-// Fetch all active agents for assignment
-$agentsQuery = "SELECT id, first_name, last_name FROM agent_accounts WHERE status = 'active'";
-$agentsResult = mysqli_query($conn, $agentsQuery);
-$agents = [];
-if ($agentsResult) {
-    while ($agent = mysqli_fetch_assoc($agentsResult)) {
-        $agents[] = $agent;
-    }
-}
 
 // Handle viewing assignments and status updates
 if (isset($_POST['viewing_action'])) {
@@ -2275,384 +2525,415 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- MANAGE ACCOUNTS SECTION -->
-    <div id="section-accounts" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Account Management</h2>
-          <small>Create, edit, and manage different types of accounts</small>
-        </div>
-      </div>
-
-      <div class="table-section">
-        <?php if (isset($success_message)): ?>
-          <div class="alert success"><?php echo $success_message; ?></div>
-        <?php endif; ?>
-
-        <?php if (isset($error_message)): ?>
-          <div class="alert error"><?php echo $error_message; ?></div>
-        <?php endif; ?>
-
-        <!-- Account Type Navigation -->
-        <div class="account-type-nav">
-          <a href="#" onclick="showAccountType('admin')" id="admin-tab" class="active">Admin Accounts</a>
-          <a href="#" onclick="showAccountType('agent')" id="agent-tab">Agent Accounts</a>
-          <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
-        </div>
-
-        <!-- ADMIN ACCOUNTS SECTION -->
-        <div id="admin-accounts" class="account-section active">
-          <div class="form-container">
-            <div class="form-title">Add New Admin Account</div>
-            
-            <!-- Admin Account Form -->
-            <form method="POST" enctype="multipart/form-data" id="admin-account-form">
-              <input type="hidden" name="account_action" value="add">
-              
-              <!-- Personal Information -->
-              <div class="form-section">
-                <div class="form-section-title">Personal Information</div>
-                <div class="form-row-three">
-                  <div class="form-group">
-                    <label for="first_name">First Name</label>
-                    <input type="text" id="first_name" name="first_name" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="middle_name">Middle Name (Optional)</label>
-                    <input type="text" id="middle_name" name="middle_name">
-                  </div>
-                  <div class="form-group">
-                    <label for="last_name">Last Name</label>
-                    <input type="text" id="last_name" name="last_name" required>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Contact Information -->
-              <div class="form-section">
-                <div class="form-section-title">Contact Information</div>
-                <div class="form-row">
-                  <div class="form-group">
-                    <label for="email">Email</label>
-                    <input type="email" id="email" name="email" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="phone">Phone</label>
-                    <input type="tel" id="phone" name="phone" required>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="address">Address</label>
-                  <textarea id="address" name="address" required></textarea>
-                </div>
-              </div>
-
-              <!-- Photo Upload -->
-              <div class="form-section">
-                <div class="form-section-title">Profile Photo</div>
-                <div class="photo-upload-section">
-                  <div class="photo-placeholder" id="admin-photo-preview">
-                    No Photo
-                  </div>
-                  <div class="file-input-wrapper">
-                    <input type="file" id="admin_photo" name="photo" accept="image/*" onchange="previewPhoto(this, 'admin-photo-preview')">
-                    <label for="admin_photo" class="file-input-label">Choose Photo</label>
-                  </div>
-                  <div style="font-size: 12px; color: #999; margin-top: 8px;">
-                    JPG, PNG, or GIF (Max 5MB)
-                  </div>
-                </div>
-              </div>
-
-              <!-- Professional Information -->
-              <div class="form-section">
-                <div class="form-section-title">Professional Information</div>
-                <div class="form-group">
-                  <label for="role">Role</label>
-                  <select id="role" name="role" required>
-                    <option value="">Select Role</option>
-                    <option value="Super Admin">Super Admin</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Assistant Manager">Assistant Manager</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="years_experience">Years of Experience</label>
-                  <select id="years_experience" name="years_experience" required>
-                    <option value="">Select Experience</option>
-                    <option value="0-1">0-1 Years</option>
-                    <option value="2-3">2-3 Years</option>
-                    <option value="4-5">4-5 Years</option>
-                    <option value="6-10">6-10 Years</option>
-                    <option value="10+">10+ Years</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="short_description">Description</label>
-                  <textarea id="short_description" name="short_description" placeholder="Brief description about the employee's role and expertise..."></textarea>
-                </div>
-                <div class="form-group">
-                  <label for="password">Password</label>
-                  <input type="password" id="password" name="password" required>
-                </div>
-              </div>
-
-              <!-- Availability -->
-              <div class="form-section">
-                <div class="form-section-title">Availability Status</div>
-                <div class="availability-toggle">
-                  <label class="toggle-switch">
-                    <input type="checkbox" name="availability" id="admin_availability" checked>
-                    <span class="slider"></span>
-                  </label>
-                  <span>Available for assignments</span>
-                </div>
-              </div>
-
-              <!-- Location -->
-              <div class="form-section">
-                <div class="form-section-title">Geolocation</div>
-                <div class="location-section">
-                  <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
-                    Location helps match this employee to nearby clients for optimal service.
-                  </p>
-                  
-                  <div class="form-row">
-                    <div class="form-group">
-                      <label for="latitude">Latitude</label>
-                      <input type="number" step="any" id="latitude" name="latitude" readonly>
-                    </div>
-                    <div class="form-group">
-                      <label for="longitude">Longitude</label>
-                      <input type="number" step="any" id="longitude" name="longitude" readonly>
-                    </div>
-                  </div>
-                  
-                  <div class="location-controls">
-                    <button type="button" onclick="getCurrentLocation()" class="btn-location">Get Current Location</button>
-                    <button type="button" onclick="clearLocation()" class="btn-location">Clear Location</button>
-                  </div>
-                  
-                  <div id="location-status" class="location-status"></div>
-                </div>
-              </div>
-
-              <button type="submit" class="btn-primary">Create Admin Account</button>
-              <button type="button" class="btn btn-danger" onclick="resetForm('admin-account-form')">Cancel</button>
-            </form>
-          </div>
-
-          <div class="accounts-table">
-            <h3>Existing Admin Accounts</h3>
-            <?php if (empty($adminAccounts)): ?>
-              <div class="empty-state">
-                <p>No admin accounts found in the database.</p>
-              </div>
-            <?php else: ?>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Photo</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Experience</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($adminAccounts as $account): ?>
-                  <tr>
-                    <td>
-                      <?php if ($account['photo_path']): ?>
-                        <img src="<?php echo htmlspecialchars($account['photo_path']); ?>" alt="Profile" class="profile-photo">
-                      <?php else: ?>
-                        <div class="profile-placeholder">No Photo</div>
-                      <?php endif; ?>
-                    </td>
-                    <td>
-                      <strong><?php echo htmlspecialchars($account['first_name'] . ' ' . ($account['middle_name'] ? $account['middle_name'] . ' ' : '') . $account['last_name']); ?></strong>
-                      <?php if ($account['short_description']): ?>
-                        <br><small style="color: #666;"><?php echo htmlspecialchars(substr($account['short_description'], 0, 50)); ?>...</small>
-                      <?php endif; ?>
-                    </td>
-                    <td><?php echo htmlspecialchars($account['email']); ?></td>
-                    <td><?php echo htmlspecialchars($account['role']); ?></td>
-                    <td><?php echo htmlspecialchars($account['years_experience']); ?></td>
-                    <td>
-                      <span class="<?php echo $account['availability'] ? 'status-active' : 'status-inactive'; ?>">
-                        <?php echo $account['availability'] ? 'Available' : 'Unavailable'; ?>
-                      </span>
-                    </td>
-                    <td>
-                      <button onclick="viewProfile(<?php echo $account['id']; ?>, 'admin')" class="btn-small">View</button>
-                      <button onclick="editAccount(<?php echo $account['id']; ?>, 'admin')" class="btn-small">Edit</button>
-                      <?php if ($account['id'] != $admin_id): ?>
-                        <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this account?')">
-                          <input type="hidden" name="account_action" value="delete">
-                          <input type="hidden" name="account_id" value="<?php echo $account['id']; ?>">
-                          <button type="submit" class="btn-small btn-danger">Delete</button>
-                        </form>
-                      <?php endif; ?>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            <?php endif; ?>
-          </div>
-        </div>
-
-        <!-- AGENT ACCOUNTS SECTION -->
-        <div id="agent-accounts" class="account-section">
-          <div class="form-container">
-            <div class="form-title">Create Agent Account</div>
-            
-            <form method="POST" enctype="multipart/form-data" id="agent-account-form">
-              <input type="hidden" name="agent_action" value="add">
-              
-              <!-- Personal Information -->
-              <div class="form-section">
-                <div class="form-section-title">Personal Information</div>
-                <div class="form-row-three">
-                  <div class="form-group">
-                    <label for="agent_first_name">First Name</label>
-                    <input type="text" id="agent_first_name" name="first_name" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="agent_middle_name">Middle Name (Optional)</label>
-                    <input type="text" id="agent_middle_name" name="middle_name">
-                  </div>
-                  <div class="form-group">
-                    <label for="agent_last_name">Last Name</label>
-                    <input type="text" id="agent_last_name" name="last_name" required>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="agent_username">Username</label>
-                  <input type="text" id="agent_username" name="username" required>
-                </div>
-              </div>
-
-              <!-- Contact Information -->
-              <div class="form-section">
-                <div class="form-section-title">Contact Information</div>
-                <div class="form-row">
-                  <div class="form-group">
-                    <label for="agent_email">Email</label>
-                    <input type="email" id="agent_email" name="email" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="agent_phone">Phone</label>
-                    <input type="tel" id="agent_phone" name="phone" required>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="agent_address">Address</label>
-                  <textarea id="agent_address" name="address" required></textarea>
-                </div>
-              </div>
-
-              <!-- Photo Upload -->
-              <div class="form-section">
-                <div class="form-section-title">Profile Photo</div>
-                <div class="photo-upload-section">
-                  <div class="photo-placeholder" id="agent-photo-preview">
-                    No Photo
-                  </div>
-                  <div class="file-input-wrapper">
-                    <input type="file" id="agent_photo" name="photo" accept="image/*" onchange="previewPhoto(this, 'agent-photo-preview')">
-                    <label for="agent_photo" class="file-input-label">Choose Photo</label>
-                  </div>
-                  <div style="font-size: 12px; color: #999; margin-top: 8px;">
-                    JPG, PNG, or GIF (Max 5MB)
-                  </div>
-                </div>
-              </div>
-
-              <!-- Professional Information -->
-              <div class="form-section">
-                <div class="form-section-title">Professional Information</div>
-                <div class="form-group">
-                  <label for="agent_years_experience">Years of Experience</label>
-                  <select id="agent_years_experience" name="years_experience" required>
-                    <option value="">Select Experience</option>
-                    <option value="0-1">0-1 Years (Entry Level)</option>
-                    <option value="2-3">2-3 Years (Junior Agent)</option>
-                    <option value="4-5">4-5 Years (Mid-level Agent)</option>
-                    <option value="6-10">6-10 Years (Senior Agent)</option>
-                    <option value="10+">10+ Years (Expert Agent)</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="agent_short_description">Professional Description</label>
-                  <textarea id="agent_short_description" name="short_description" required placeholder="Describe the agent's expertise, specializations, and professional background..."></textarea>
-                </div>
-                <div class="form-group">
-                  <label for="agent_password">Password</label>
-                  <input type="password" id="agent_password" name="password" required>
-                </div>
-              </div>
-
-              <!-- Availability -->
-              <div class="form-section">
-                <div class="form-section-title">Availability Status</div>
-                <div class="availability-toggle">
-                  <label class="toggle-switch">
-                    <input type="checkbox" name="availability" id="agent_availability" checked>
-                    <span class="slider"></span>
-                  </label>
-                  <span>Available for client assignments</span>
-                </div>
-              </div>
-
-              <!-- Location -->
-              <div class="form-section">
-                <div class="form-section-title">Geolocation</div>
-                <div class="location-section">
-                  <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
-                    Location is crucial for matching this agent to nearby clients for optimal service delivery.
-                  </p>
-                  
-                  <div class="form-row">
-                    <div class="form-group">
-                      <label for="agent_latitude">Latitude</label>
-                      <input type="number" step="any" id="agent_latitude" name="latitude" readonly>
-                    </div>
-                    <div class="form-group">
-                      <label for="agent_longitude">Longitude</label>
-                      <input type="number" step="any" id="agent_longitude" name="longitude" readonly>
-                    </div>
-                  </div>
-                  
-                  <div class="location-controls">
-                    <button type="button" onclick="getCurrentLocationAgent()" class="btn-location">Get Current Location</button>
-                    <button type="button" onclick="clearLocationAgent()" class="btn-location">Clear Location</button>
-                  </div>
-                  
-                  <div id="agent-location-status" class="location-status"></div>
-                </div>
-              </div>
-
-              <button type="submit" class="btn-primary">Create Agent Account</button>
-              <button type="button" class="btn btn-danger" onclick="resetForm('agent-account-form')">Cancel</button>
-            </form>
-          </div>
-
-       
-<<div id="agent-accounts" class="account-section">
-  <div class="form-container">
-    <!-- ...agent account form... -->
+   <!-- MANAGE ACCOUNTS SECTION -->
+<div id="section-accounts" class="section hidden">
+  <div class="header">
+    <div>
+      <h2>Account Management</h2>
+      <small>Create, edit, and manage different types of accounts</small>
+    </div>
   </div>
-  <div class="accounts-table">
-    <h3>Existing Agent Accounts</h3>
-    <?php if (empty($agentAccounts)): ?>
-      <div class="empty-state">
-        No agent accounts found in the database.
+
+  <div class="table-section">
+    <?php if (isset($success_message)): ?>
+      <div class="alert success"><?php echo $success_message; ?></div>
+    <?php endif; ?>
+
+    <?php if (isset($error_message)): ?>
+      <div class="alert error"><?php echo $error_message; ?></div>
+    <?php endif; ?>
+
+    <!-- Account Type Navigation -->
+    <div class="account-type-nav">
+      <a href="#" onclick="showAccountType('admin')" id="admin-tab" class="active">Admin Accounts</a>
+      <a href="#" onclick="showAccountType('agent')" id="agent-tab">Agent Accounts</a>
+      <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
+    </div>
+
+    <!-- ADMIN ACCOUNTS SECTION -->
+    <div id="admin-accounts" class="account-section active">
+      <div class="form-container">
+        <div class="form-title">Add New Admin Account</div>
+        
+        <!-- Admin Account Form -->
+        <form method="POST" enctype="multipart/form-data" id="admin-account-form">
+          <input type="hidden" name="account_action" value="add">
+          
+          <!-- Personal Information -->
+          <div class="form-section">
+            <div class="form-section-title">Personal Information</div>
+            <div class="form-row-three">
+              <div class="form-group">
+                <label for="first_name">First Name</label>
+                <input type="text" id="first_name" name="first_name" required>
+              </div>
+              <div class="form-group">
+                <label for="middle_name">Middle Name (Optional)</label>
+                <input type="text" id="middle_name" name="middle_name">
+              </div>
+              <div class="form-group">
+                <label for="last_name">Last Name</label>
+                <input type="text" id="last_name" name="last_name" required>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Information -->
+          <div class="form-section">
+            <div class="form-section-title">Contact Information</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required>
+              </div>
+              <div class="form-group">
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" name="phone" required>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="address">Address</label>
+              <textarea id="address" name="address" required></textarea>
+            </div>
+          </div>
+
+          <!-- Photo Upload -->
+          <div class="form-section">
+            <div class="form-section-title">Profile Photo</div>
+            <div class="photo-upload-section">
+              <div class="photo-placeholder" id="admin-photo-preview">
+                No Photo
+              </div>
+              <div class="file-input-wrapper">
+                <input type="file" id="admin_photo" name="photo" accept="image/*" onchange="previewPhoto(this, 'admin-photo-preview')">
+                <label for="admin_photo" class="file-input-label">Choose Photo</label>
+              </div>
+              <div style="font-size: 12px; color: #999; margin-top: 8px;">
+                JPG, PNG, or GIF (Max 5MB)
+              </div>
+            </div>
+          </div>
+
+          <!-- Professional Information -->
+          <div class="form-section">
+            <div class="form-section-title">Professional Information</div>
+            <div class="form-group">
+              <label for="role">Role</label>
+              <select id="role" name="role" required>
+                <option value="">Select Role</option>
+                <option value="Super Admin">Super Admin</option>
+                <option value="Admin">Admin</option>
+                <option value="Manager">Manager</option>
+                <option value="Assistant Manager">Assistant Manager</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="years_experience">Years of Experience</label>
+              <select id="years_experience" name="years_experience" required>
+                <option value="">Select Experience</option>
+                <option value="0-1">0-1 Years</option>
+                <option value="2-3">2-3 Years</option>
+                <option value="4-5">4-5 Years</option>
+                <option value="6-10">6-10 Years</option>
+                <option value="10+">10+ Years</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="short_description">Description</label>
+              <textarea id="short_description" name="short_description" placeholder="Brief description about the employee's role and expertise..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="password">Password</label>
+              <input type="password" id="password" name="password" required>
+            </div>
+          </div>
+
+          <!-- Availability -->
+          <div class="form-section">
+            <div class="form-section-title">Availability Status</div>
+            <div class="availability-toggle">
+              <label class="toggle-switch">
+                <input type="checkbox" name="availability" id="admin_availability" checked>
+                <span class="slider"></span>
+              </label>
+              <span>Available for assignments</span>
+            </div>
+          </div>
+
+          <!-- Location -->
+          <div class="form-section">
+            <div class="form-section-title">Geolocation</div>
+            <div class="location-section">
+              <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                Location helps match this employee to nearby clients for optimal service.
+              </p>
+              
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="latitude">Latitude</label>
+                  <input type="number" step="any" id="latitude" name="latitude" readonly>
+                </div>
+                <div class="form-group">
+                  <label for="longitude">Longitude</label>
+                  <input type="number" step="any" id="longitude" name="longitude" readonly>
+                </div>
+              </div>
+              
+              <div class="location-controls">
+                <button type="button" onclick="getCurrentLocation()" class="btn-location">Get Current Location</button>
+                <button type="button" onclick="clearLocation()" class="btn-location">Clear Location</button>
+              </div>
+              
+              <div id="location-status" class="location-status"></div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary">Create Admin Account</button>
+          <button type="button" class="btn btn-danger" onclick="resetForm('admin-account-form')">Cancel</button>
+        </form>
       </div>
-    <?php else: ?>
+
+      <div class="accounts-table">
+        <h3>Existing Admin Accounts</h3>
+        <?php if (empty($adminAccounts)): ?>
+          <div class="empty-state">
+            <p>No admin accounts found in the database.</p>
+          </div>
+        <?php else: ?>
+          <table>
+            <thead>
+              <tr>
+                <th>Photo</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Experience</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($adminAccounts as $account): ?>
+              <tr>
+                <td>
+                  <?php if ($account['photo_path']): ?>
+                    <img src="<?php echo htmlspecialchars($account['photo_path']); ?>" alt="Profile" class="profile-photo">
+                  <?php else: ?>
+                    <div class="profile-placeholder">No Photo</div>
+                  <?php endif; ?>
+                </td>
+                <td>
+                  <strong><?php echo htmlspecialchars($account['first_name'] . ' ' . ($account['middle_name'] ? $account['middle_name'] . ' ' : '') . $account['last_name']); ?></strong>
+                  <?php if ($account['short_description']): ?>
+                    <br><small style="color: #666;"><?php echo htmlspecialchars(substr($account['short_description'], 0, 50)); ?>...</small>
+                  <?php endif; ?>
+                </td>
+                <td><?php echo htmlspecialchars($account['email']); ?></td>
+                <td><?php echo htmlspecialchars($account['role']); ?></td>
+                <td><?php echo htmlspecialchars($account['years_experience']); ?></td>
+                <td>
+                  <span class="<?php echo $account['availability'] ? 'status-active' : 'status-inactive'; ?>">
+                    <?php echo $account['availability'] ? 'Available' : 'Unavailable'; ?>
+                  </span>
+                </td>
+                <td>
+                  <button onclick="viewProfile(<?php echo $account['id']; ?>, 'admin')" class="btn-small">View</button>
+                  <button onclick="editAccount(<?php echo $account['id']; ?>, 'admin')" class="btn-small">Edit</button>
+                  <?php if ($account['id'] != $admin_id): ?>
+                    <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this account?')">
+                      <input type="hidden" name="account_action" value="delete">
+                      <input type="hidden" name="account_id" value="<?php echo $account['id']; ?>">
+                      <button type="submit" class="btn-small btn-danger">Delete</button>
+                    </form>
+                  <?php endif; ?>
+                </td>
+              </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        <?php endif; ?>
+      </div>
+    </div>
+
+    <!-- AGENT ACCOUNTS SECTION -->
+    <div id="agent-accounts" class="account-section">
+      <div class="form-container">
+        <div class="form-title">Create Agent Account</div>
+        
+        <form method="POST" enctype="multipart/form-data" id="agent-account-form">
+          <input type="hidden" name="agent_action" value="add">
+          
+          <!-- Personal Information -->
+          <div class="form-section">
+            <div class="form-section-title">Personal Information</div>
+            <div class="form-row-three">
+              <div class="form-group">
+                <label for="agent_first_name">First Name</label>
+                <input type="text" id="agent_first_name" name="first_name" required>
+              </div>
+              <div class="form-group">
+                <label for="agent_middle_name">Middle Name (Optional)</label>
+                <input type="text" id="agent_middle_name" name="middle_name">
+              </div>
+              <div class="form-group">
+                <label for="agent_last_name">Last Name</label>
+                <input type="text" id="agent_last_name" name="last_name" required>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="agent_username">Username</label>
+              <input type="text" id="agent_username" name="username" required>
+            </div>
+          </div>
+
+          <!-- Contact Information -->
+          <div class="form-section">
+            <div class="form-section-title">Contact Information</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="agent_email">Email</label>
+                <input type="email" id="agent_email" name="email" required>
+              </div>
+              <div class="form-group">
+                <label for="agent_phone">Phone</label>
+                <input type="tel" id="agent_phone" name="phone" required>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="agent_address">Address</label>
+              <textarea id="agent_address" name="address" required></textarea>
+            </div>
+          </div>
+
+          <!-- Photo Upload -->
+          <div class="form-section">
+            <div class="form-section-title">Profile Photo</div>
+            <div class="photo-upload-section">
+              <div class="photo-placeholder" id="agent-photo-preview">
+                No Photo
+              </div>
+              <div class="file-input-wrapper">
+                <input type="file" id="agent_photo" name="photo" accept="image/*" onchange="previewPhoto(this, 'agent-photo-preview')">
+                <label for="agent_photo" class="file-input-label">Choose Photo</label>
+              </div>
+              <div style="font-size: 12px; color: #999; margin-top: 8px;">
+                JPG, PNG, or GIF (Max 5MB)
+              </div>
+            </div>
+          </div>
+
+          <!-- Professional Information -->
+          <div class="form-section">
+            <div class="form-section-title">Professional Information</div>
+            <div class="form-group">
+              <label for="agent_years_experience">Years of Experience</label>
+              <select id="agent_years_experience" name="years_experience" required>
+                <option value="">Select Experience</option>
+                <option value="0-1">0-1 Years (Entry Level)</option>
+                <option value="2-3">2-3 Years (Junior Agent)</option>
+                <option value="4-5">4-5 Years (Mid-level Agent)</option>
+                <option value="6-10">6-10 Years (Senior Agent)</option>
+                <option value="10+">10+ Years (Expert Agent)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="agent_short_description">Professional Description</label>
+              <textarea id="agent_short_description" name="short_description" required placeholder="Describe the agent's expertise, specializations, and professional background..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="agent_password">Password</label>
+              <input type="password" id="agent_password" name="password" required>
+            </div>
+          </div>
+
+          <!-- Availability -->
+          <div class="form-section">
+            <div class="form-section-title">Availability Status</div>
+            <div class="availability-toggle">
+              <label class="toggle-switch">
+                <input type="checkbox" name="availability" id="agent_availability" checked>
+                <span class="slider"></span>
+              </label>
+              <span>Available for client assignments</span>
+            </div>
+          </div>
+
+          <!-- Location -->
+          <div class="form-section">
+            <div class="form-section-title">Geolocation</div>
+            <div class="location-section">
+              <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                Location is crucial for matching this agent to nearby clients for optimal service delivery.
+              </p>
+              
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="agent_latitude">Latitude</label>
+                  <input type="number" step="any" id="agent_latitude" name="latitude" readonly>
+                </div>
+                <div class="form-group">
+                  <label for="agent_longitude">Longitude</label>
+                  <input type="number" step="any" id="agent_longitude" name="longitude" readonly>
+                </div>
+              </div>
+              
+              <div class="location-controls">
+                <button type="button" onclick="getCurrentLocationAgent()" class="btn-location">Get Current Location</button>
+                <button type="button" onclick="clearLocationAgent()" class="btn-location">Clear Location</button>
+              </div>
+              
+              <div id="agent-location-status" class="location-status"></div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary">Create Agent Account</button>
+          <button type="button" class="btn btn-danger" onclick="resetForm('agent-account-form')">Cancel</button>
+        </form>
+      </div>
+
+     <div class="accounts-table">
+  <h3>Existing Agent Accounts</h3>
+
+  <?php
+    // Run a fresh query just for this table
+    $agentQuery = "
+      SELECT 
+        id,
+        first_name,
+        middle_name,
+        last_name,
+        username,
+        email,
+        phone,
+        address,
+        availability,
+        status,
+        created_at
+      FROM agent_accounts
+      ORDER BY created_at DESC
+    ";
+
+    $agentResult = mysqli_query($conn, $agentQuery);
+  ?>
+
+  <?php if (!$agentResult): ?>
+      <div class="empty-state">
+        <p>Database error: <?php echo htmlspecialchars(mysqli_error($conn)); ?></p>
+      </div>
+
+  <?php elseif (mysqli_num_rows($agentResult) === 0): ?>
+     <div class="empty-state" style="
+      background: #fafafa;
+      padding: 40px;
+      text-align: center;
+      border-radius: 8px;
+      font-size: 18px;
+      color: #666;
+  ">
+      <p>No agent accounts found in the database.</p>
+  </div>
+
+  <?php else: ?>
       <table>
         <thead>
           <tr>
@@ -2667,13 +2948,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
           </tr>
         </thead>
         <tbody>
-          <?php foreach ($agentAccounts as $agent): ?>
+          <?php while ($agent = mysqli_fetch_assoc($agentResult)): ?>
             <tr>
-              <td><strong><?php echo htmlspecialchars($agent['first_name'] . ' ' . $agent['last_name']); ?></strong></td>
+              <td>
+                <strong>
+                  <?php
+                    echo htmlspecialchars(
+                      $agent['first_name'] . ' ' .
+                      (!empty($agent['middle_name']) ? $agent['middle_name'] . ' ' : '') .
+                      $agent['last_name']
+                    );
+                  ?>
+                </strong>
+              </td>
+
               <td><?php echo htmlspecialchars($agent['username']); ?></td>
               <td><?php echo htmlspecialchars($agent['email']); ?></td>
               <td><?php echo htmlspecialchars($agent['phone']); ?></td>
-              <td><?php echo htmlspecialchars($agent['address']); ?></td>
+
+              <td>
+                <?php
+                  $addr = $agent['address'] ?? '';
+                  echo htmlspecialchars(mb_strlen($addr) > 50 ? mb_substr($addr, 0, 50) . '...' : $addr);
+                ?>
+              </td>
+
               <td>
                 <?php if ($agent['status'] === 'active'): ?>
                   <span class="status-active">Active</span>
@@ -2681,130 +2980,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                   <span class="status-inactive">Inactive</span>
                 <?php endif; ?>
               </td>
+
               <td><?php echo date('M d, Y', strtotime($agent['created_at'])); ?></td>
+
               <td>
-                <button class="btn-small" onclick="editAccount(<?php echo $agent['id']; ?>, 'agent')">Edit</button>
-                <button class="btn-small btn-danger" onclick="if(confirm('Delete this agent?')){ /* add delete logic here */ }">Delete</button>
+                <button class="btn-small"
+                        onclick="editAccount(<?php echo (int)$agent['id']; ?>, 'agent')">
+                  Edit
+                </button>
+
+                <form method="POST" style="display:inline;"
+                      onsubmit="return confirm('Are you sure you want to delete this agent account?');">
+                  <input type="hidden" name="agent_action" value="delete">
+                  <input type="hidden" name="agent_id" value="<?php echo (int)$agent['id']; ?>">
+                  <button type="submit" class="btn-small btn-danger">Delete</button>
+                </form>
               </td>
             </tr>
-          <?php endforeach; ?>
+          <?php endwhile; ?>
         </tbody>
       </table>
-    <?php endif; ?>
-  </div>
+  <?php endif; ?>
+</div>
 </div>
 
 
-        <!-- USER ACCOUNTS SECTION -->
-        <div id="user-accounts" class="account-section">
-          <div class="form-container">
-            <div class="form-title">Create User Account</div>
-            
-            <form method="POST" id="user-account-form">
-              <input type="hidden" name="user_action" value="add">
-              
-              <!-- Personal Information -->
-              <div class="form-section">
-                <div class="form-section-title">PERSONAL INFORMATION</div>
-                <div class="form-row-three">
-                  <div class="form-group">
-                    <label for="user_first_name">First Name</label>
-                    <input type="text" id="user_first_name" name="first_name" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="user_middle_name">Middle Name (Optional)</label>
-                    <input type="text" id="user_middle_name" name="middle_name">
-                  </div>
-                  <div class="form-group">
-                    <label for="user_last_name">Last Name</label>
-                    <input type="text" id="user_last_name" name="last_name" required>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="user_username">Username</label>
-                  <input type="text" id="user_username" name="username" required>
-                </div>
+    <!-- USER ACCOUNTS SECTION -->
+    <div id="user-accounts" class="account-section">
+      <div class="form-container">
+        <div class="form-title">Create User Account</div>
+        
+        <form method="POST" id="user-account-form">
+          <input type="hidden" name="user_action" value="add">
+          
+          <!-- Personal Information -->
+          <div class="form-section">
+            <div class="form-section-title">PERSONAL INFORMATION</div>
+            <div class="form-row-three">
+              <div class="form-group">
+                <label for="user_first_name">First Name</label>
+                <input type="text" id="user_first_name" name="first_name" required>
               </div>
-
-              <!-- Contact Information -->
-              <div class="form-section">
-                <div class="form-section-title">Contact Information</div>
-                <div class="form-row">
-                  <div class="form-group">
-                    <label for="user_email">Email</label>
-                    <input type="email" id="user_email" name="email" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="user_mobile">Mobile Number</label>
-                    <input type="tel" id="user_mobile" name="mobile_number" required>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label for="user_address">Address</label>
-                  <textarea id="user_address" name="address" required></textarea>
-                </div>
+              <div class="form-group">
+                <label for="user_middle_name">Middle Name (Optional)</label>
+                <input type="text" id="user_middle_name" name="middle_name">
               </div>
-
-              <!-- Account Security -->
-              <div class="form-section">
-                <div class="form-section-title">Account Security</div>
-                <div class="form-group">
-                  <label for="user_password">Password</label>
-                  <input type="password" id="user_password" name="password" required>
-                </div>
+              <div class="form-group">
+                <label for="user_last_name">Last Name</label>
+                <input type="text" id="user_last_name" name="last_name" required>
               </div>
-
-              <button type="submit" class="btn-primary">Create User Account</button>
-              <button type="button" class="btn btn-danger" onclick="resetForm('user-account-form')">Cancel</button>
-            </form>
+            </div>
+            <div class="form-group">
+              <label for="user_username">Username</label>
+              <input type="text" id="user_username" name="username" required>
+            </div>
           </div>
 
-          <div class="accounts-table">
-            <h3>Existing User Accounts</h3>
-            <?php if (empty($userAccounts)): ?>
-              <div class="empty-state">
-                <p>No user accounts found in the database.</p>
+          <!-- Contact Information -->
+          <div class="form-section">
+            <div class="form-section-title">Contact Information</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="user_email">Email</label>
+                <input type="email" id="user_email" name="email" required>
               </div>
-            <?php else: ?>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Mobile</th>
-                    <th>Address</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($userAccounts as $user): ?>
-                  <tr>
-                    <td>
-                      <strong><?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']); ?></strong>
-                    </td>
-                    <td><?php echo htmlspecialchars($user['email']); ?></td>
-                    <td><?php echo htmlspecialchars($user['mobile_number']); ?></td>
-                    <td><?php echo htmlspecialchars(substr($user['address'], 0, 50)); ?>...</td>
-                    <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
-                    <td>
-                      <button onclick="viewProfile(<?php echo $user['id']; ?>, 'user')" class="btn-small">View</button>
-                      <button onclick="editAccount(<?php echo $user['id']; ?>, 'user')" class="btn-small">Edit</button>
-                      <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this user account?')">
-                        <input type="hidden" name="user_action" value="delete">
-                        <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
-                        <button type="submit" class="btn-small btn-danger">Delete</button>
-                      </form>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            <?php endif; ?>
+              <div class="form-group">
+                <label for="user_mobile">Mobile Number</label>
+                <input type="tel" id="user_mobile" name="mobile_number" required>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="user_address">Address</label>
+              <textarea id="user_address" name="address" required></textarea>
+            </div>
           </div>
-        </div>
+
+          <!-- Account Security -->
+          <div class="form-section">
+            <div class="form-section-title">Account Security</div>
+            <div class="form-group">
+              <label for="user_password">Password</label>
+              <input type="password" id="user_password" name="password" required>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary">Create User Account</button>
+          <button type="button" class="btn btn-danger" onclick="resetForm('user-account-form')">Cancel</button>
+        </form>
+      </div>
+
+      <div class="accounts-table">
+        <h3>Existing User Accounts</h3>
+        <?php if (empty($userAccounts)): ?>
+          <div class="empty-state">
+            <p>No user accounts found in the database.</p>
+          </div>
+        <?php else: ?>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Mobile</th>
+                <th>Address</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($userAccounts as $user): ?>
+              <tr>
+                <td>
+                  <strong><?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']); ?></strong>
+                </td>
+                <td><?php echo htmlspecialchars($user['email']); ?></td>
+                <td><?php echo htmlspecialchars($user['mobile_number']); ?></td>
+                <td><?php echo htmlspecialchars(substr($user['address'], 0, 50)); ?>...</td>
+                <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
+                <td>
+                  <button onclick="viewProfile(<?php echo $user['id']; ?>, 'user')" class="btn-small">View</button>
+                  <button onclick="editAccount(<?php echo $user['id']; ?>, 'user')" class="btn-small">Edit</button>
+                  <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this user account?')">
+                    <input type="hidden" name="user_action" value="delete">
+                    <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
+                    <button type="submit" class="btn-small btn-danger">Delete</button>
+                  </form>
+                </td>
+              </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        <?php endif; ?>
       </div>
     </div>
+
+  </div>
+</div>
 
     <!-- LOTS SECTION -->
     <div id="section-lots" class="section hidden">
@@ -2816,10 +3127,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
 
       <div class="table-section">
-        <div class="location-dropdown">
-          <label for="location_id">Location:</label>
-          <select id="location_id" name="location_id">
-            <option value="" disabled selected>Please select a location first</option>
+        <div class="location-dropdown" style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+  <label for="location_id" style="font-weight:500; min-width:90px;">Location:</label>
+  <select id="location_id" name="location_id" style="flex:1; min-width:250px;">
+    <option value="" disabled selected>Please select a location first</option>
           </select>
         </div>
 
@@ -2837,26 +3148,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
               <th>Action</th>
             </tr>
           </thead>
-          <tbody id="lots-table-body">
-            <tr id="new-row" class="hidden" style="display: none;">
-              <td><input type="text" id="block_number"></td>
-              <td><input type="text" id="lot_number"></td>
-              <td><input type="text" id="lot_size"></td>
-              <td><input type="text" id="lot_price"></td>
-              <td>
-                <select id="status">
-                  <option value="Available">Available</option>
-                  <option value="Sold">Sold</option>
-                  <option value="Reserved">Reserved</option>
-                </select>
-              </td>
-              <td>
-                <button onclick="saveLot()">Save</button>
-                <button onclick="cancelAdd()">Cancel</button>
-              </td>
-            </tr>
-          </tbody>
+
+         <tbody id="lots-table-body">
+  <tr id="new-row" class="hidden" style="display:none;">
+    
+    <!-- FIX: Add missing left column -->
+    <td></td>
+
+    <td><input type="text" id="block_number"></td>
+    <td><input type="text" id="lot_number"></td>
+    <td><input type="text" id="lot_size"></td>
+    <td><input type="text" id="lot_price"></td>
+
+    <td>
+      <select id="status">
+        <option value="Available">Available</option>
+        <option value="Sold">Sold</option>
+        <option value="Reserved">Reserved</option>
+      </select>
+    </td>
+
+    <td>
+      <button onclick="saveLot()">Save</button>
+      <button onclick="cancelAdd()">Cancel</button>
+    </td>
+  </tr>
+</tbody>
         </table>
+
 
         <button onclick="addNewLot()">Add New Lot</button>
         <button onclick="bulkDeleteLots()" class="btn btn-danger" style="margin-top:10px;">Delete Selected Lots</button>
@@ -3636,8 +3955,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 
   // ===========================
   // DOCUMENT REVIEW FUNCTIONS
-  // DOCUMENT REVIEW FUNCTIONS
-// ===========================
+ 
 function loadDocuments() {
   const container = document.getElementById('documents-container');
   if (!container) return;

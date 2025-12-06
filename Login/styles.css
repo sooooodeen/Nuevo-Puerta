@@ -157,22 +157,31 @@ button:hover,
     transform: scale(1.04);
 }
 
-/* Back Arrow - New Style */
 .back-arrow {
     position: absolute;
-    top: 18px;
-    left: 18px;
-    font-size: 2.5rem;
-    font-weight: bold;
+    top: 24px;
+    left: 24px;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+    border: 1.5px solid #e0e0e0;
     color: #003F6B;
+    font-size: 1.7rem;
     text-decoration: none;
     z-index: 10;
-    background: rgba(255,255,255,0.7);
-    border-radius: 50%;
-    padding: 4px 12px 4px 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    transition: color 0.2s, background 0.2s;
-    display: block; /* Ensure it's not affected by flexbox */
+    transition: box-shadow 0.2s, border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.back-arrow:hover {
+    background: #003F6B;
+    color: #fff;
+    border-color: #003F6B;
+    box-shadow: 0 6px 20px rgba(0,63,107,0.12);
 }
 
 .back-arrow svg {
@@ -181,8 +190,5 @@ button:hover,
     padding: 0;
 }
 
-.back-arrow:hover {
-    color: #f4d03f;
-    background: #003F6B;
-}
+
 

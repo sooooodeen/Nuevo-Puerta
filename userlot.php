@@ -678,86 +678,113 @@ body {
       <h2 class="viewing-modal-title">Request a Viewing</h2>
       <button class="viewing-close" onclick="closeViewingModal()">&times;</button>
     </div>
+
     <div class="viewing-modal-body">
-      <form id="viewingForm">
-  <div class="form-row">
-    <div class="form-group">
-      <label class="form-label">First Name <span class="required">*</span></label>
-      <input type="text" class="form-input" id="firstName" name="firstName" required>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Last Name <span class="required">*</span></label>
-      <input type="text" class="form-input" id="lastName" name="lastName" required>
-    </div>
-  </div>
-  
-  <div class="form-row">
-    <div class="form-group">
-      <label class="form-label">Email <span class="required">*</span></label>
-      <input type="email" class="form-input" id="email" name="email" required>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Phone <span class="required">*</span></label>
-      <input type="tel" class="form-input" id="phone" name="phone" required>
-    </div>
-  </div>
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label class="form-label">Location <span class="required">*</span></label>
-      <input type="text" class="form-input" id="user_location" name="location" placeholder="Address or Area" required>
-    </div>
-  </div>
+      <form id="viewingForm" method="POST" action="">
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label class="form-label">Geolocation</label>
-      <div style="display:flex;gap:8px;">
-        <input type="number" step="any" class="form-input" id="user_lat" name="latitude" placeholder="Latitude" readonly>
-        <input type="number" step="any" class="form-input" id="user_lng" name="longitude" placeholder="Longitude" readonly>
-      </div>
-      <div style="margin-top:10px;display:flex;gap:10px;">
-        <button type="button" onclick="getCurrentLocationUser()" class="btn-location">Get Current Location</button>
-        <button type="button" onclick="clearLocationUser()" class="btn-location">Clear Location</button>
-      </div>
-      <div id="user-location-status" class="location-status"></div>
-    </div>
-  </div>
+        <!-- Required for PHP: tells backend this is a viewing request -->
+        <input type="hidden" name="viewing_action" value="request">
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <button type="button" id="getAgentBtn" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
-      <span id="suggestedAgent" style="display:block;margin-top:8px;"></span>
-    </div>
-  </div>
+        <!-- Hidden fields required by PHP -->
+        <input type="hidden" name="location_id" id="location_id" value="">
+        <input type="hidden" name="lot_id" id="lot_id" value="">
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label class="form-label">Preferred Date & Time</label>
-      <input type="datetime-local" class="form-input" id="preferredDateTime" name="preferredDateTime" required>
-    </div>
-  </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">First Name <span class="required">*</span></label>
+            <input type="text" class="form-input" id="firstName" 
+                   name="client_first_name" required>
+          </div>
 
-  <div class="form-row">
-    <div class="form-group full-width">
-      <label class="form-label">Notes (optional)</label>
-      <textarea class="form-input form-textarea" id="notes" name="notes" placeholder="Tell us anything we should know..."></textarea>
-    </div>
-  </div>
+          <div class="form-group">
+            <label class="form-label">Last Name <span class="required">*</span></label>
+            <input type="text" class="form-input" id="lastName" 
+                   name="client_last_name" required>
+          </div>
+        </div>
 
-  <div class="form-actions">
-    <button type="button" class="btn-cancel" onclick="closeViewingModal()">Cancel</button>
-    <button type="submit" class="btn-submit">Submit Request</button>
-  </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Email <span class="required">*</span></label>
+            <input type="email" class="form-input" id="email" 
+                   name="client_email" required>
+          </div>
 
-  <!-- Hidden fields for location_id and lot_id -->
-  <input type="hidden" name="location_id" id="location_id" value="">
-  <input type="hidden" name="lot_id" id="lot_id" value="">
-</form>
+          <div class="form-group">
+            <label class="form-label">Phone <span class="required">*</span></label>
+            <input type="tel" class="form-input" id="phone" 
+                   name="client_phone" required>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full-width">
+            <label class="form-label">Location <span class="required">*</span></label>
+            <input type="text" class="form-input" id="user_location" 
+                   name="location" placeholder="Address or Area" required>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full-width">
+            <label class="form-label">Geolocation</label>
+            <div style="display:flex;gap:8px;">
+              <input type="number" step="any" class="form-input" id="user_lat" 
+                     name="client_lat" placeholder="Latitude" readonly>
+              <input type="number" step="any" class="form-input" id="user_lng" 
+                     name="client_lng" placeholder="Longitude" readonly>
+            </div>
+
+            <div style="margin-top:10px;display:flex;gap:10px;">
+              <button type="button" onclick="getCurrentLocationUser()" 
+                      class="btn-location">Get Current Location</button>
+              <button type="button" onclick="clearLocationUser()" 
+                      class="btn-location">Clear Location</button>
+            </div>
+
+            <div id="user-location-status" class="location-status"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full-width">
+            <button type="button" id="getAgentBtn" class="btn-submit" 
+                    style="padding:6px 12px;">Get Agent</button>
+            <span id="suggestedAgent" 
+                  style="display:block;margin-top:8px;"></span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full-width">
+            <label class="form-label">Preferred Date & Time</label>
+            <input type="datetime-local" class="form-input" id="preferredDateTime" 
+                   name="preferred_date" required>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group full-width">
+            <label class="form-label">Notes (optional)</label>
+            <textarea class="form-input form-textarea" id="notes" 
+                      name="notes" placeholder="Tell us anything we should know..."></textarea>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" onclick="closeViewingModal()">Cancel</button>
+          <button type="submit" class="btn-submit">Submit Request</button>
+        </div>
+
+      </form>
+
     </div>
   </div>
 </div>
 
+
+<!-- DO NOT CHANGE BELOW (your original inquire modal) -->
 <div id="inquireModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);z-index:999;align-items:flex-start;justify-content:center;">
   <div style="background:#fff;padding:32px 24px;border-radius:12px;max-width:400px;margin:10px auto 0 auto;position:relative;">
     <button onclick="closeInquireModal()" style="position:absolute;top:12px;right:12px;">&times;</button>
@@ -768,24 +795,27 @@ body {
       <input type="email" name="email" placeholder="Email" required>
       <input type="text" name="phone" placeholder="Mobile Number" required>
       
-      <!-- Location and Get Agent inside modal -->
       <label for="user_location" style="font-weight:600;">Enter Your Location</label>
       <div style="display:flex;align-items:center;gap:8px;">
         <input type="text" id="user_location" name="location" class="form-input" style="width:140px;" required>
         <button type="button" id="getAgentBtn" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
       </div>
+
       <span id="suggestedAgent" style="display:block;margin-top:8px;"></span>
       
       <input type="date" name="preferred_date" required>
       <textarea name="note" placeholder="Notes or questions"></textarea>
+
       <label>
         <input type="checkbox" name="consent" required>
         I agree to the privacy policy and to be contacted.
       </label>
+
       <button type="submit">Submit Request</button>
     </form>
   </div>
 </div>
+
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
@@ -826,15 +856,19 @@ function updateInfoPanel(data) {
       else if (lot.lot_status === 'Sold') cls = 'sold';
       else if (lot.lot_status === 'Reserved') cls = 'reserved';
 
-      rows += `
-        <tr>
-          <td>${lot.block_number}</td>
-          <td>${lot.lot_number}</td>
-          <td>${lot.lot_size} sqm</td>
-          <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
-          <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
-          <td><button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button></td>
-        </tr>`;
+        rows += `
+          <tr>
+            <td>${lot.block_number}</td>
+            <td>${lot.lot_number}</td>
+            <td>${lot.lot_size} sqm</td>
+            <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
+            <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
+            <td>
+              ${lot.lot_status === 'Sold'
+                ? `<button class=\"inquire-btn\" disabled style=\"background:#ccc;cursor:not-allowed;\">Inquire</button>`
+                : `<button class=\"inquire-btn\" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`}
+            </td>
+          </tr>`;
     });
   } else {
     rows = `<tr><td colspan="6" style="color:#b71c1c;font-weight:bold;">No lots available</td></tr>`;
@@ -923,15 +957,32 @@ function enableBlueprintZoom() {
 let currentLot = null;
 
 function openViewingModal(lot) {
+  // lot = { id, lot_number, location_id, lot_status }
   currentLot = lot || null;
+
+  // If reserved, show warning first
+  if (currentLot && currentLot.lot_status === 'Reserved') {
+    if (!confirm('Warning: This lot is reserved and may not be available. Do you want to proceed with your inquiry?')) {
+      return;
+    }
+  }
+
+  // Show modal
   document.getElementById('viewingModal').style.display = 'block';
+
+  // Reset the form
   document.getElementById('viewingForm').reset();
 
-  // Set hidden fields for location_id and lot_id
+  // Set required hidden fields for PHP
   document.getElementById('location_id').value = currentLot ? currentLot.location_id : '';
   document.getElementById('lot_id').value = currentLot ? currentLot.id : '';
 
-  // clear previously suggested agent
+  // Optional: store lot number for JS (agent suggestion)
+  if (currentLot && currentLot.lot_number) {
+    currentLot.lot_number = currentLot.lot_number;
+  }
+
+  // Clear previously suggested agent
   const ag = document.getElementById('suggestedAgent');
   ag.innerHTML = '';
   delete ag.dataset.agentId;
@@ -970,6 +1021,7 @@ function getCurrentLocationUser() {
     }
   );
 }
+
 function clearLocationUser() {
   document.getElementById('user_lat').value = '';
   document.getElementById('user_lng').value = '';
