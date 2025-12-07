@@ -444,15 +444,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
 //   – add/update: JSON (AJAX)
 //   – delete: normal form, no JSON
 // =====================================================
+// =============================================
+// AGENT ACCOUNT CRUD (AJAX for add/update; normal form for delete)
+// ================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
 
     $action = $_POST['agent_action'];
 
+    // Only ADD & UPDATE should respond with JSON (AJAX)
     if ($action === 'add' || $action === 'update') {
         header('Content-Type: application/json');
     }
 
-    // ---------- ADD AGENT (AJAX) ----------
+    // ----------------- ADD AGENT (AJAX) -----------------
     if ($action === 'add') {
         $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
         $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']);
@@ -462,7 +466,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
         $address           = mysqli_real_escape_string($conn, $_POST['address']);
         $short_description = mysqli_real_escape_string($conn, $_POST['short_description']);
-        $years_experience  = mysqli_real_escape_string($conn, $_POST['years_experience']);
+        // $years_experience  = mysqli_real_escape_string($conn, $_POST['years_experience']); // <-- removed
         $availability      = isset($_POST['availability']) ? 1 : 0;
         $latitude          = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
         $longitude         = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
@@ -473,35 +477,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
+        // NOTE: years_experience removed from the columns and values
         $sql = "INSERT INTO agent_accounts 
                 (first_name, middle_name, last_name, username, email, phone, address, 
-                 short_description, years_experience, photo_path, availability, latitude, 
+                 short_description, photo_path, availability, latitude, 
                  longitude, password, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
+
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
             echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
             exit;
         }
 
+        // 8 strings (first..short_description) + photo_path(s) = 9 's'
+        // availability (i), latitude(d), longitude(d), password(s)
         $stmt->bind_param(
-            "ssssssssssidds",
+            "sssssssssidds",
             $first_name, $middle_name, $last_name, $username, $email, $phone,
-            $address, $short_description, $years_experience, $photo_path,
+            $address, $short_description, $photo_path,
             $availability, $latitude, $longitude, $password
         );
 
         $ok = $stmt->execute();
         echo json_encode([
             'success' => $ok,
-            'message' => $ok ? "Agent account created successfully!" :
-                               "Error creating agent account: " . $stmt->error
+            'message' => $ok ? "Agent account created successfully!"
+                             : "Error creating agent account: " . $stmt->error
         ]);
         $stmt->close();
         exit;
     }
 
-    // ---------- UPDATE AGENT (AJAX) ----------
+    // ----------------- UPDATE AGENT (AJAX) -----------------
     if ($action === 'update') {
         $agent_id         = intval($_POST['account_id']);
         $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
@@ -512,7 +520,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
         $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
         $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
+        // $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? ''); // <-- removed
         $availability     = isset($_POST['availability']) ? 1 : 0;
         $latitude         = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
         $longitude        = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
@@ -523,53 +531,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         }
 
         if (!empty($_POST['password'])) {
-          $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-          $sql = "UPDATE agent_accounts 
-              SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                address=?, short_description=?, years_experience=?, availability=?, 
-                latitude=?, longitude=?, password=?, photo_path=? 
-              WHERE id=?";
-          $stmt = $conn->prepare($sql);
-          if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-          }
-          $stmt->bind_param(
-            "sssssssssiiddsss",
-            $first_name, $middle_name, $last_name, $username, $email, $phone,
-            $address, $short_description, $years_experience, $availability,
-            $latitude, $longitude, $password, $photo_path, $agent_id
-          );
+            $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+
+            $sql = "UPDATE agent_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                        address=?, short_description=?, availability=?, 
+                        latitude=?, longitude=?, password=?, photo_path=? 
+                    WHERE id=?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+                exit;
+            }
+
+            // 8 strings (first..short_description),
+            // availability(i), latitude(d), longitude(d), password(s), photo_path(s), id(i)
+            $stmt->bind_param(
+                "ssssssssiddssi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $short_description, $availability,
+                $latitude, $longitude, $password, $photo_path, $agent_id
+            );
         } else {
-          $sql = "UPDATE agent_accounts 
-              SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                address=?, short_description=?, years_experience=?, availability=?, 
-                latitude=?, longitude=?, photo_path=? 
-              WHERE id=?";
-          $stmt = $conn->prepare($sql);
-          if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-          }
-          $stmt->bind_param(
-            "sssssssssiiddss",
-            $first_name, $middle_name, $last_name, $username, $email, $phone,
-            $address, $short_description, $years_experience, $availability,
-            $latitude, $longitude, $photo_path, $agent_id
-          );
+            $sql = "UPDATE agent_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                        address=?, short_description=?, availability=?, 
+                        latitude=?, longitude=?, photo_path=? 
+                    WHERE id=?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+                exit;
+            }
+
+            $stmt->bind_param(
+                "ssssssssiddsi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $short_description, $availability,
+                $latitude, $longitude, $photo_path, $agent_id
+            );
         }
 
         $ok = $stmt->execute();
         echo json_encode([
             'success' => $ok,
-            'message' => $ok ? "Agent account updated successfully!" :
-                               "Error updating agent account: " . $stmt->error
+            'message' => $ok ? "Agent account updated successfully!"
+                             : "Error updating agent account: " . $stmt->error
         ]);
         $stmt->close();
         exit;
     }
 
-    // ---------- DELETE AGENT (normal form, no JSON) ----------
+    // ----------------- DELETE AGENT (NORMAL FORM) -----------------
     if ($action === 'delete') {
         $agent_id = intval($_POST['agent_id']);
         $sql      = "DELETE FROM agent_accounts WHERE id = ?";
@@ -586,9 +599,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             }
             $stmt->close();
         }
-        // Do NOT echo json here, let page reload and show $success_message / $error_message
+        // no JSON here, normal page reload
     }
 }
+
 
 // =====================================================
 // USER ACCOUNT CRUD (AJAX: user_action)
@@ -2811,51 +2825,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- Professional Information -->
-      <div class="form-section">
-        <div class="form-section-title">Professional Information</div>
-        <div class="form-group">
-          <label for="agent_years_experience">Years of Experience</label>
-          <select id="agent_years_experience" name="years_experience" required>
-            <option value="">Select Experience</option>
-            <option value="0-1">0-1 Years (Entry Level)</option>
-            <option value="2-3">2-3 Years (Junior Agent)</option>
-            <option value="4-5">4-5 Years (Mid-level Agent)</option>
-            <option value="6-10">6-10 Years (Senior Agent)</option>
-            <option value="10+">10+ Years (Expert Agent)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="agent_short_description">Professional Description</label>
-          <textarea id="agent_short_description" name="short_description" required
-                    placeholder="Describe the agent's expertise, specializations, and professional background..."></textarea>
-        </div>
+   <!-- Professional Information -->
+<div class="form-section">
+  <div class="form-section-title">Professional Information</div>
 
-        <!-- Password + Confirm Password -->
-        <div class="form-group">
-          <label for="agent_password">Password</label>
-          <input type="password" id="agent_password" name="password" required>
-        </div>
-        <div class="form-group">
-          <label for="agent_confirm_password">Confirm Password</label>
-          <input type="password" id="agent_confirm_password" name="confirm_password" required>
-          <small id="agent-password-error" style="color:red;display:none;">
-            Passwords do not match.
-          </small>
-        </div>
-      </div>
+  <div class="form-group">
+    <label for="agent_years_experience">Years of Experience</label>
+    <select id="agent_years_experience" name="years_experience" required>
+      <option value="">Select Experience</option>
+      <option value="0-1">0-1 Years (Entry Level)</option>
+      <option value="2-3">2-3 Years (Junior Agent)</option>
+      <option value="4-5">4-5 Years (Mid-level Agent)</option>
+      <option value="6-10">6-10 Years (Senior Agent)</option>
+      <option value="10+">10+ Years (Expert Agent)</option>
+    </select>
+  </div>
 
-      <!-- Availability -->
-      <div class="form-section">
-        <div class="form-section-title">Availability Status</div>
-        <div class="availability-toggle">
-          <label class="toggle-switch">
-            <input type="checkbox" name="availability" id="agent_availability" checked>
-            <span class="slider"></span>
-          </label>
-          <span>Available for client assignments</span>
-        </div>
-      </div>
+  <div class="form-group">
+    <label for="agent_short_description">Professional Description</label>
+    <textarea id="agent_short_description" name="short_description" required
+      placeholder="Describe the agent's expertise, specializations, and professional background..."></textarea>
+  </div>
+</div> <!-- END Professional Information -->
+
+
+<!-- ACCOUNT SECURITY (NEW, SEPARATE SECTION) -->
+<div class="form-section">
+  <div class="form-section-title">Account Security</div>
+
+  <div class="form-row">
+    <!-- Password -->
+    <div class="form-group">
+      <label for="agent_password">Password</label>
+      <input type="password" id="agent_password" name="password" required>
+    </div>
+
+    <!-- Confirm Password -->
+    <div class="form-group">
+      <label for="agent_confirm_password">Confirm Password</label>
+      <input type="password" id="agent_confirm_password" name="confirm_password" required>
+      <small id="agent-password-error" style="color:#dc3545;display:none;">
+        Passwords do not match.
+      </small>
+    </div>
+  </div>
+</div> <!-- END Account Security -->
+
+
+<!-- Availability -->
+<div class="form-section">
+  <div class="form-section-title">Availability Status</div>
+  <div class="availability-toggle">
+    <label class="toggle-switch">
+      <input type="checkbox" name="availability" id="agent_availability" checked>
+      <span class="slider"></span>
+    </label>
+    <span>Available for client assignments</span>
+  </div>
+</div>
+
 
       <!-- Geolocation (optional, can be set by admin OR agent later) -->
       <div class="form-section">
@@ -3062,20 +3090,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             </div>
           </div>
 
-          <!-- Account Security -->
-          <div class="form-section">
-            <div class="form-section-title">Account Security</div>
-            <div class="form-group">
-              <label for="user_password">Password</label>
-              <input type="password" id="user_password" name="password" required>
-            </div>
-          </div>
+        <!-- ACCOUNT SECURITY -->
+<div class="form-section">
+  <div class="form-section-title">Account Security</div>
 
-          <button type="submit" class="btn-primary">Create User Account</button>
-          <button type="button" class="btn btn-danger" onclick="resetForm('user-account-form')">Cancel</button>
+  <div class="form-row">
+    <!-- Password -->
+    <div class="form-group">
+      <label for="user_password">Password</label>
+      <input type="password" id="user_password" name="password" required>
+    </div>
+
+    <!-- Confirm Password -->
+    <div class="form-group">
+      <label for="user_confirm_password">Confirm Password</label>
+      <input type="password" id="user_confirm_password" required>
+      <small id="user-password-error"
+            style="color:#dc3545;display:none;font-size:13px;">
+        Passwords do not match.
+      </small>
+    </div>
+  </div>
+</div>
+
+<button type="submit" class="btn-primary">Create User Account</button>
+<button type="button" class="btn btn-danger" onclick="resetForm('user-account-form')">
+  Cancel
+</button>
         </form>
       </div>
-
       <div class="accounts-table">
         <h3>Existing User Accounts</h3>
         <?php if (empty($userAccounts)): ?>
