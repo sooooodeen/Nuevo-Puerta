@@ -641,6 +641,10 @@ body {
     background: #f4d03f; /* Gold line color */
     border-radius: 2px;
 }
+
+#suggestedAgent, #agentActions, #otherAgentSelect {
+  display: none;
+}
   </style>
 </head>
 <body>
@@ -751,8 +755,14 @@ body {
           <div class="form-group full-width">
             <button type="button" id="getAgentBtn" class="btn-submit" 
                     style="padding:6px 12px;">Get Agent</button>
-            <span id="suggestedAgent" 
-                  style="display:block;margin-top:8px;"></span>
+            <div id="agentActions" style="margin-top:10px;display:none;">
+              <button type="button" id="pickSuggestedAgentBtn" style="background:#23613b;color:#fff;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;margin-right:8px;">Pick This Agent</button>
+              <button type="button" id="chooseOtherAgentBtn" style="background:#e6e6e6;color:#23613b;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;">Choose Other Agent</button>
+            </div>
+            <div id="otherAgentSelect" style="margin-top:10px;display:none;">
+              <label for="manualAgentSelect" style="font-weight:500;">Select Another Agent:</label>
+              <select id="manualAgentSelect" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid #ccc;margin-top:4px;"></select>
+            </div>
           </div>
         </div>
 
@@ -801,8 +811,6 @@ body {
         <button type="button" id="getAgentBtn" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
       </div>
 
-      <span id="suggestedAgent" style="display:block;margin-top:8px;"></span>
-      
       <input type="date" name="preferred_date" required>
       <textarea name="note" placeholder="Notes or questions"></textarea>
 
@@ -985,7 +993,10 @@ function openViewingModal(lot) {
   // Clear previously suggested agent
   const ag = document.getElementById('suggestedAgent');
   ag.innerHTML = '';
+  ag.style.display = 'none';
   delete ag.dataset.agentId;
+  if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
+  if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
 }
 
 function closeViewingModal() {
@@ -1013,7 +1024,13 @@ function getCurrentLocationUser() {
       statusDiv.className = 'location-status location-success';
       statusDiv.textContent = 'Location captured successfully!';
       setTimeout(() => statusDiv.style.display = 'none', 3000);
-      fetchNearestAgent(); // <-- Automatically fetch agent after location
+      // Always clear and hide agent info
+      const agentDiv = document.getElementById('suggestedAgent');
+      agentDiv.innerHTML = '';
+      agentDiv.style.display = 'none';
+      delete agentDiv.dataset.agentId;
+      if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
+      if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
     },
     err => {
       statusDiv.className = 'location-status location-error';
@@ -1027,6 +1044,13 @@ function clearLocationUser() {
   document.getElementById('user_lng').value = '';
   const statusDiv = document.getElementById('user-location-status');
   statusDiv.style.display = 'none';
+  // Also clear and hide agent info
+  const agentDiv = document.getElementById('suggestedAgent');
+  agentDiv.innerHTML = '';
+  agentDiv.style.display = 'none';
+  delete agentDiv.dataset.agentId;
+  if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
+  if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
 }
 
 /* -------------------- GET NEAREST AGENT (ONE TRUE HANDLER) -------------------- */
@@ -1058,16 +1082,25 @@ document.getElementById('getAgentBtn').onclick = function () {
               <div style="font-size:0.98em;color:#444;">${data.email}<br>${data.mobile}<br>${data.city}${data.address ? ', ' + data.address : ''}</div>
             </div>
           </div>`;
-        agentDiv.dataset.agentId = data.id; // <-- used on submit
+        agentDiv.dataset.agentId = data.id;
+        agentDiv.style.display = 'block';
+        document.getElementById('agentActions').style.display = 'block';
+        document.getElementById('otherAgentSelect').style.display = 'none';
       } else {
         agentDiv.textContent = 'No agent found near your location.';
+        agentDiv.style.display = 'block';
         delete agentDiv.dataset.agentId;
+        document.getElementById('agentActions').style.display = 'none';
+        document.getElementById('otherAgentSelect').style.display = 'none';
       }
     })
     .catch(() => {
       const agentDiv = document.getElementById('suggestedAgent');
       agentDiv.textContent = 'Could not find agent (network error).';
+      agentDiv.style.display = 'block';
       delete agentDiv.dataset.agentId;
+      document.getElementById('agentActions').style.display = 'none';
+      document.getElementById('otherAgentSelect').style.display = 'none';
     });
 };
 
@@ -1096,7 +1129,7 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
 
   fetch('submit_viewing.php', { method: 'POST', body: formData })
     .then(r => r.json())
-    .then(data => {
+    .then data => {
       if (data.success) {
         alert('Your viewing request has been submitted! We will contact you soon.');
         closeViewingModal();
@@ -1141,17 +1174,61 @@ function fetchNearestAgent() {
             </div>
           </div>`;
         agentDiv.dataset.agentId = data.id;
+        agentDiv.style.display = 'block';
+        document.getElementById('agentActions').style.display = 'block';
+        document.getElementById('otherAgentSelect').style.display = 'none';
       } else {
         agentDiv.textContent = 'No agent found near your location.';
+        agentDiv.style.display = 'block';
         delete agentDiv.dataset.agentId;
+        document.getElementById('agentActions').style.display = 'none';
+        document.getElementById('otherAgentSelect').style.display = 'none';
       }
     })
     .catch(() => {
       const agentDiv = document.getElementById('suggestedAgent');
       agentDiv.textContent = 'Could not find agent (network error).';
+      agentDiv.style.display = 'block';
       delete agentDiv.dataset.agentId;
+      document.getElementById('agentActions').style.display = 'none';
+      document.getElementById('otherAgentSelect').style.display = 'none';
     });
 }
+
+// Fetch all agents for manual selection
+function fetchAllAgentsForSelect() {
+  fetch('get_all_agents.php')
+    .then(res => res.json())
+    .then(list => {
+      const select = document.getElementById('manualAgentSelect');
+      select.innerHTML = '<option value="">Select an agent</option>';
+      list.forEach(agent => {
+        select.innerHTML += `<option value="${agent.id}">${agent.name} (${agent.email})</option>`;
+      });
+    });
+}
+
+document.getElementById('pickSuggestedAgentBtn').onclick = function() {
+  const agentDiv = document.getElementById('suggestedAgent');
+  if (agentDiv.dataset.agentId) {
+    document.getElementById('manualAgentSelect').value = '';
+    document.getElementById('otherAgentSelect').style.display = 'none';
+  }
+};
+
+document.getElementById('chooseOtherAgentBtn').onclick = function() {
+  fetchAllAgentsForSelect();
+  document.getElementById('otherAgentSelect').style.display = 'block';
+};
+
+document.getElementById('manualAgentSelect').onchange = function() {
+  const agentDiv = document.getElementById('suggestedAgent');
+  if (this.value) {
+    agentDiv.dataset.agentId = this.value;
+  } else {
+    delete agentDiv.dataset.agentId;
+  }
+};
 </script>
 
 </body>

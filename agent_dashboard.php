@@ -6,7 +6,7 @@ session_start();
 /* ---- Allow both session styles ---- */
 if (!isset($_SESSION['agent_id'])) {
   if (!isset($_SESSION['user']) || ($_SESSION['role'] ?? '') !== 'agent') {
-    header("Location: Login/index.html");
+    header("Location: agentdb/Login/login.php");
     exit();
   }
 }
@@ -41,7 +41,7 @@ if ($agentId === 0) {
   }
 }
 if ($agentId === 0) {
-  header("Location: Login/index.html");
+  header("Location: agentdb/Login/login.php");
   exit();
 }
 
@@ -127,6 +127,185 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
     exit;
   }
+
+  // Mark notification as read
+  if (isset($_POST['mark_read'])) {
+    $notif_id = (int)$_POST['mark_read'];
+    $stmt = $conn->prepare("UPDATE agent_notifications SET is_read=1 WHERE id=? AND agent_id=?");
+    $stmt->bind_param('ii', $notif_id, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['success' => true]);
+    exit;
+  }
+
+  // Delete notification
+  if (isset($_POST['delete_notif'])) {
+    $notif_id = (int)$_POST['delete_notif'];
+    $stmt = $conn->prepare("DELETE FROM agent_notifications WHERE id=? AND agent_id=?");
+    $stmt->bind_param('ii', $notif_id, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['success' => true]);
+    exit;
+  }
+
+  // Mark message as read
+  if (isset($_POST['mark_message_read'])) {
+    $msg_id = (int)$_POST['mark_message_read'];
+    $stmt = $conn->prepare("UPDATE messages SET is_read=1 WHERE id=? AND agent_id=?");
+    $stmt->bind_param('ii', $msg_id, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['success' => true]);
+    exit;
+  }
+
+  // Delete message
+  if (isset($_POST['delete_message'])) {
+    $msg_id = (int)$_POST['delete_message'];
+    $stmt = $conn->prepare("DELETE FROM messages WHERE id=? AND agent_id=?");
+    $stmt->bind_param('ii', $msg_id, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['success' => true]);
+    exit;
+  }
+
+  // Handle agent profile update (POST)
+  if (isset($_POST['first_name'], $_POST['last_name'], $_POST['email'])) {
+    $first = trim($_POST['first_name'] ?? '');
+    $last  = trim($_POST['last_name'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $mobile= trim($_POST['mobile'] ?? '');
+    $addr  = trim($_POST['address'] ?? '');
+    $exp   = (int)($_POST['experience'] ?? 0);
+    $sales = (int)($_POST['total_sales'] ?? 0);
+    $desc  = trim($_POST['description'] ?? '');
+    $lat   = trim($_POST['latitude'] ?? '');
+    $lng   = trim($_POST['longitude'] ?? '');
+    $profile_picture = $agent['profile_picture'] ?? '';
+
+    // Handle profile picture upload
+    if (!empty($_FILES['profile_picture']['name']) && is_uploaded_file($_FILES['profile_picture']['tmp_name'])) {
+      $ext = strtolower(pathinfo($_FILES['profile_picture']['name'], PATHINFO_EXTENSION));
+      if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+        $dir = __DIR__.'/assets/profile_photos';
+        if (!is_dir($dir)) @mkdir($dir, 0777, true);
+        $fname = 'agent_'.$agentId.'_'.time().'.'.$ext;
+        $dest  = $dir.'/'.$fname;
+        if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $dest)) {
+          $profile_picture = 'assets/profile_photos/'.$fname;
+        }
+      }
+    }
+
+    // Update agent_accounts
+    $stmt = $conn->prepare("UPDATE agent_accounts SET first_name=?, last_name=?, email=?, mobile=?, address=?, experience=?, total_sales=?, description=?, latitude=?, longitude=?, profile_picture=? WHERE id=?");
+    if ($stmt) {
+      $stmt->bind_param('sssssiissssi', $first, $last, $email, $mobile, $addr, $exp, $sales, $desc, $lat, $lng, $profile_picture, $agentId);
+      $stmt->execute();
+      $stmt->close();
+      $agent['first_name'] = $first;
+      $agent['last_name'] = $last;
+      $agent['email'] = $email;
+      $agent['mobile'] = $mobile;
+      $agent['address'] = $addr;
+      $agent['experience'] = $exp;
+      $agent['total_sales'] = $sales;
+      $agent['description'] = $desc;
+      $agent['latitude'] = $lat;
+      $agent['longitude'] = $lng;
+      $agent['profile_picture'] = $profile_picture;
+      $profile_update_success = true;
+    } else {
+      $profile_update_error = 'Error updating profile.';
+    }
+  }
+}
+
+/* ---- GET fetch handlers ---- */
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
+  if ($_GET['fetch'] === 'notifications') {
+    $notifications = [];
+    $stmt = $conn->prepare("SELECT * FROM agent_notifications WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $notifications[] = $row;
+    }
+    $stmt->close();
+    header('Content-Type: application/json');
+    echo json_encode($notifications);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'messages') {
+    $messages = [];
+    $stmt = $conn->prepare("SELECT * FROM messages WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $messages[] = $row;
+    }
+    $stmt->close();
+    header('Content-Type: application/json');
+    echo json_encode($messages);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'audit_logs') {
+    $logs = [];
+    $stmt = $conn->prepare("SELECT * FROM agent_audit_logs WHERE agent_id=? ORDER BY created_at DESC LIMIT 100");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $logs[] = $row;
+    }
+    $stmt->close();
+    header('Content-Type: application/json');
+    echo json_encode($logs);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'documents') {
+    $docs = [];
+    $stmt = $conn->prepare("SELECT * FROM agent_documents WHERE agent_id=? ORDER BY created_at DESC");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $docs[] = $row;
+    }
+    $stmt->close();
+    header('Content-Type: application/json');
+    echo json_encode($docs);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'user_documents') {
+    $docs = [];
+    $stmt = $conn->prepare("
+        SELECT d.*, u.first_name, u.last_name 
+        FROM user_documents d 
+        LEFT JOIN user_accounts u ON d.user_id = u.id 
+        WHERE u.agent_id = ? 
+        ORDER BY d.uploaded_at DESC
+    ");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $docs[] = $row;
+    }
+    $stmt->close();
+    header('Content-Type: application/json');
+    echo json_encode($docs);
+    exit;
+  }
 }
 
 /* ---- KPIs ---- */
@@ -193,7 +372,7 @@ if ($stmt = $conn->prepare("
          v.client_first_name, v.client_last_name,
          v.client_email, v.client_phone,
          v.preferred_at, v.status,
-         v.lot_no,                -- legacy fallback
+         v.lot_no,
          l.block_number, l.lot_number,
          ll.location_name
   FROM viewings v
@@ -209,7 +388,6 @@ if ($stmt = $conn->prepare("
   if ($res) $viewings = $res->fetch_all(MYSQLI_ASSOC);
   $stmt->close();
 }
-
 
 /* ---- (Optional) Load profile data for the Profile section ---- */
 $agent = [
@@ -257,148 +435,6 @@ if ($stmt = $conn->prepare("
   if ($res) $leads = $res->fetch_all(MYSQLI_ASSOC);
   $stmt->close();
 }
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'notifications') {
-    $notifications = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_notifications WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $notifications[] = $row;
-    }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($notifications);
-    exit;
-}
-
-// Mark notification as read
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_read'])) {
-    $notif_id = (int)$_POST['mark_read'];
-    $stmt = $conn->prepare("UPDATE agent_notifications SET is_read=1 WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $notif_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
-    echo json_encode(['success' => true]);
-    exit;
-}
-
-// Delete notification
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_notif'])) {
-    $notif_id = (int)$_POST['delete_notif'];
-    $stmt = $conn->prepare("DELETE FROM agent_notifications WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $notif_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
-    echo json_encode(['success' => true]);
-    exit;
-}
-
-// Fetch messages
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'messages') {
-    $messages = [];
-    $stmt = $conn->prepare("SELECT * FROM messages WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $messages[] = $row;
-    }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($messages);
-    exit;
-}
-
-// Mark message as read
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_message_read'])) {
-    $msg_id = (int)$_POST['mark_message_read'];
-    $stmt = $conn->prepare("UPDATE messages SET is_read=1 WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $msg_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
-    echo json_encode(['success' => true]);
-    exit;
-}
-
-// Delete message
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_message'])) {
-    $msg_id = (int)$_POST['delete_message'];
-    $stmt = $conn->prepare("DELETE FROM messages WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $msg_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
-    echo json_encode(['success' => true]);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'audit_logs') {
-    $logs = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_audit_logs WHERE agent_id=? ORDER BY created_at DESC LIMIT 100");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $logs[] = $row;
-    }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($logs);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'documents') {
-    $docs = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_documents WHERE agent_id=? ORDER BY created_at DESC");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $docs[] = $row;
-    }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($docs);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_password'], $_POST['confirm_password'])) {
-    if ($_POST['new_password'] === $_POST['confirm_password'] && $_POST['new_password'] !== '') {
-        $hash = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
-        $stmt = $conn->prepare("UPDATE agent_accounts SET password=? WHERE id=?");
-        $stmt->bind_param('si', $hash, $agentId);
-        $stmt->execute();
-        $stmt->close();
-        // Optionally set a success message
-    } else {
-        // Optionally set an error message
-    }
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'user_documents') {
-    $docs = [];
-    // Only show documents for users assigned to this agent
-    // Assumes user_accounts table has an agent_id column
-    $stmt = $conn->prepare("
-        SELECT d.*, u.first_name, u.last_name 
-        FROM user_documents d 
-        LEFT JOIN user_accounts u ON d.user_id = u.id 
-        WHERE u.agent_id = ? 
-        ORDER BY d.uploaded_at DESC
-    ");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $docs[] = $row;
-    }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($docs);
-    exit;
-}
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -408,7 +444,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 <title>Agent Dashboard</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  /* keep sidebar fixed-feel on left */
   .nav-active { background-color: rgb(22 101 52 / .45); }
 </style>
 </head>
@@ -416,36 +451,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 <div class="flex min-h-screen">
   <!-- STATIC SIDEBAR -->
   <aside class="w-72 bg-green-900 text-white flex flex-col items-center py-8" style="height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow: hidden;">
-  <div class="flex items-center gap-3 mb-8">
-  <img src="logo.png" alt="Logo" class="w-16 h-16 rounded-full bg-white/10 object-contain" />
-  <div>
-    <h2 class="font-bold text-lg tracking-wide whitespace-nowrap leading-tight">NUEVO PUERTA</h2>
-    <span class="text-xs font-normal text-white/90 leading-none block mt-0.5">REAL ESTATE</span>
-  </div>
-</div>
-
-   <div class="bg-white/10 rounded-xl px-4 py-3 mb-8 w-56 mx-auto flex items-center">
-  <div class="mr-3">
-    <?php if (!empty($agent['profile_picture'])): ?>
-      <img src="<?php echo h($agent['profile_picture']); ?>" alt="Profile" class="w-10 h-10 rounded-full object-cover bg-white" onerror="this.style.display='none'">
-    <?php else: ?>
-      <div class="w-10 h-10 rounded-full bg-white text-green-900 grid place-items-center font-bold">
-        <?php echo strtoupper(substr($kpis['full_name'],0,1)); ?>
+    <div class="flex items-center gap-3 mb-8">
+      <img src="logo.png" alt="Logo" class="w-16 h-16 rounded-full bg-white/10 object-contain" />
+      <div>
+        <h2 class="font-bold text-lg tracking-wide whitespace-nowrap leading-tight">NUEVO PUERTA</h2>
+        <span class="text-xs font-normal text-white/90 leading-none block mt-0.5">REAL ESTATE</span>
       </div>
-    <?php endif; ?>
-  </div>
-  <div class="leading-tight">
-    <div class="font-semibold text-sm text-white"><?php echo h($kpis['full_name']); ?></div>
-    <div class="text-xs text-white/80">Agent</div>
-  </div>
-</div>
+    </div>
+
+    <div class="bg-white/10 rounded-xl px-4 py-3 mb-8 w-56 mx-auto flex items-center">
+      <div class="mr-3">
+        <?php if (!empty($agent['profile_picture'])): ?>
+          <img src="<?php echo h($agent['profile_picture']); ?>" alt="Profile" class="w-10 h-10 rounded-full object-cover bg-white" onerror="this.style.display='none'">
+        <?php else: ?>
+          <div class="w-10 h-10 rounded-full bg-white text-green-900 grid place-items-center font-bold">
+            <?php echo strtoupper(substr($kpis['full_name'],0,1)); ?>
+          </div>
+        <?php endif; ?>
+      </div>
+      <div class="leading-tight">
+        <div class="font-semibold text-sm text-white"><?php echo h($kpis['full_name']); ?></div>
+        <div class="text-xs text-white/80">Agent</div>
+      </div>
+    </div>
 
     <nav class="w-full">
       <ul class="space-y-1 w-full" id="spa-nav">
         <li>
           <a href="#dashboard" data-target="section-dashboard"
              class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-            <!-- white home icon -->
             <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7A1 1 0 003 11h1v6a1 1 0 001 1h3a1 1 0 001-1v-3h2v3a1 1 0 001 1h3a1 1 0 001-1v-6h1a1 1 0 00.707-1.707l-7-7z"/>
             </svg>
@@ -488,36 +522,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             Notifications
           </a>
         </li>
-
         <li>
-  <a href="#messages" data-target="section-messages"
-     class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-    <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-      <path d="M21 6.5a2.5 2.5 0 00-2.5-2.5h-13A2.5 2.5 0 003 6.5v11A2.5 2.5 0 005.5 20h13a2.5 2.5 0 002.5-2.5v-11zm-2.5 0l-6.5 5.5-6.5-5.5"/>
-    </svg>
-    Messages
-  </a>
-</li>
-
-<li>
-  <a href="#audit-logs" data-target="section-audit-logs"
-     class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-    <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-      <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm7 7h2v2h-2v-2z"/>
-    </svg>
-    Audit Logs
-  </a>
-</li>
-
-<li>
-  <a href="#documents" data-target="section-documents"
-     class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-    <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-      <path d="M6 2v6h12V2H6zm0 8v12h12V10H6zm2 2h8v8H8v-8z"/>
-    </svg>
-    Document Review
-  </a>
-</li>
+          <a href="#messages" data-target="section-messages"
+             class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
+            <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M21 6.5a2.5 2.5 0 00-2.5-2.5h-13A2.5 2.5 0 003 6.5v11A2.5 2.5 0 005.5 20h13a2.5 2.5 0 002.5-2.5v-11zm-2.5 0l-6.5 5.5-6.5-5.5"/>
+            </svg>
+            Messages
+          </a>
+        </li>
+        <li>
+          <a href="#audit-logs" data-target="section-audit-logs"
+             class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
+            <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm7 7h2v2h-2v-2z"/>
+            </svg>
+            Audit Logs
+          </a>
+        </li>
+        <li>
+          <a href="#documents" data-target="section-documents"
+             class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
+            <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 2v6h12V2H6zm0 8v12h12V10H6zm2 2h8v8H8v-8z"/>
+            </svg>
+            Document Review
+          </a>
+        </li>
         <li>
           <a href="#leads" data-target="section-leads"
              class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
@@ -561,58 +592,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </form>
       </div>
 
-    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mt-6">
-  <div class="bg-white rounded-2xl border shadow p-5">
-    <div class="flex items-center gap-3 text-green-900 font-semibold">
-      <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h6v8H3zM9 3h6v18H9zM15 9h6v12h-6z"/></svg>
-      Total Sales
-    </div>
-    <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['total_sales']); ?></div>
-    <div class="text-xs text-gray-500 mt-1">All time</div>
-  </div>
-  <div class="bg-white rounded-2xl border shadow p-5">
-    <div class="flex items-center gap-3 text-green-900 font-semibold">
-      <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#fff">M</text></svg>
-      Sales (This Month)
-    </div>
-    <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['month_sales']); ?></div>
-    <div class="text-xs text-gray-500 mt-1"><?php echo date('F Y'); ?></div>
-  </div>
-  <div class="bg-white rounded-2xl border shadow p-5">
-    <div class="flex items-center gap-3 text-green-900 font-semibold">
-      <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M17 8a5 5 0 00-10 0c0 3.87 5 9 5 9s5-5.13 5-9z"/><circle cx="12" cy="8" r="2"/></svg>
-      Upcoming Viewings
-    </div>
-    <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['upcoming_viewings']); ?></div>
-    <div class="text-xs text-gray-500 mt-1">Scheduled / Rescheduled</div>
-  </div>
-  <div class="bg-white rounded-2xl border shadow p-5">
-    <div class="flex items-center gap-3 text-green-900 font-semibold">
-      <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M21 6.5a2.5 2.5 0 00-2.5-2.5h-13A2.5 2.5 0 003 6.5v11A2.5 2.5 0 005.5 20h13a2.5 2.5 0 002.5-2.5v-11zm-2.5 0l-6.5 5.5-6.5-5.5"/></svg>
-      Unread Messages
-    </div>
-    <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['unread_messages']); ?></div>
-    <div class="text-xs text-gray-500 mt-1">Needs attention</div>
-  </div>
-</section>
+      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mt-6">
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h6v8H3zM9 3h6v18H9zM15 9h6v12h-6z"/></svg>
+            Total Sales
+          </div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['total_sales']); ?></div>
+          <div class="text-xs text-gray-500 mt-1">All time</div>
+        </div>
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#fff">M</text></svg>
+            Sales (This Month)
+          </div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['month_sales']); ?></div>
+          <div class="text-xs text-gray-500 mt-1"><?php echo date('F Y'); ?></div>
+        </div>
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M17 8a5 5 0 00-10 0c0 3.87 5 9 5 9s5-5.13 5-9z"/><circle cx="12" cy="8" r="2"/></svg>
+            Upcoming Viewings
+          </div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['upcoming_viewings']); ?></div>
+          <div class="text-xs text-gray-500 mt-1">Scheduled / Rescheduled</div>
+        </div>
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M21 6.5a2.5 2.5 0 00-2.5-2.5h-13A2.5 2.5 0 003 6.5v11A2.5 2.5 0 005.5 20h13a2.5 2.5 0 002.5-2.5v-11zm-2.5 0l-6.5 5.5-6.5-5.5"/></svg>
+            Unread Messages
+          </div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['unread_messages']); ?></div>
+          <div class="text-xs text-gray-500 mt-1">Needs attention</div>
+        </div>
+      </section>
 
-       <!-- Add these sections below KPI cards and above Upcoming Viewings -->
-    <section class="mt-8">
-      <div class="bg-white rounded-2xl border shadow p-6">
-        <div class="font-semibold text-gray-800 mb-4">Recent Activities</div>
-        <ul class="text-sm text-gray-700 space-y-2">
-          <li>✅ No recent activities yet.</li>
-          <!-- Later, fill with PHP: -->
-          <!--
-          <?php foreach ($recent_activities as $activity): ?>
-            <li><?php echo h($activity); ?></li>
-          <?php endforeach; ?>
-          -->
-        </ul>
-      </div>
-    </section>
-
-   
+      <section class="mt-8">
+        <div class="bg-white rounded-2xl border shadow p-6">
+          <div class="font-semibold text-gray-800 mb-4">Recent Activities</div>
+          <ul class="text-sm text-gray-700 space-y-2">
+            <li>✅ No recent activities yet.</li>
+          </ul>
+        </div>
+      </section>
 
       <section class="mt-8">
         <div class="bg-white rounded-2xl border shadow p-6">
@@ -627,7 +649,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
           <?php else: ?>
             <div class="overflow-x-auto">
               <table class="min-w-full border rounded text-sm">
-               <thead>
+                <thead>
                 <tr class="bg-gray-50 text-gray-700">
                   <th class="py-2 px-4 text-left border">Client</th>
                   <th class="py-2 px-4 text-left border">Location &amp; Lot</th>
@@ -636,8 +658,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                   <th class="py-2 px-4 text-left border">Contact</th>
                   <th class="py-2 px-4 text-left border">Actions</th>
                 </tr>
-              </thead>
-
+                </thead>
                 <tbody>
                 <?php foreach ($viewings as $v): ?>
                   <tr class="border-t">
@@ -668,39 +689,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                         </a>
                       </div>
                     </td>
-                  
-<td class="py-2 px-4 border">
-  <div class="grid grid-cols-2 gap-2">
-    <div>
-      <a class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-         href="resched_viewing.php?id=<?php echo (int)$v['id']; ?>">⏱ Resched</a>
-    </div>
-    <div>
-      <form method="post">
-        <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-        <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-        <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                name="viewing_action" value="completed">✅ Completed</button>
-      </form>
-    </div>
-    <div>
-      <form method="post">
-        <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-        <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-        <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                name="viewing_action" value="no_show_client">🚫 Client No-show</button>
-      </form>
-    </div>
-    <div>
-      <form method="post">
-        <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-        <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-        <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                name="viewing_action" value="cancelled">✖ Cancelled</button>
-      </form>
-    </div>
-  </div>
-</td>
+                    <td class="py-2 px-4 border">
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <a class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
+                             href="resched_viewing.php?id=<?php echo (int)$v['id']; ?>">⏱ Resched</a>
+                        </div>
+                        <div>
+                          <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
+                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
+                                    name="viewing_action" value="completed">✅ Completed</button>
+                          </form>
+                        </div>
+                        <div>
+                          <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
+                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
+                                    name="viewing_action" value="no_show_client">🚫 Client No-show</button>
+                          </form>
+                        </div>
+                        <div>
+                          <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
+                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
+                                    name="viewing_action" value="cancelled">✖ Cancelled</button>
+                          </form>
+                        </div>
+                      </div>
+                    </td>
                   </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -711,104 +731,134 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </section>
     </section>
 
-    
-      
+    <!-- PROFILE -->
+    <section id="section-profile" class="hidden">
+      <?php if (empty($agent['longitude']) || empty($agent['latitude'])): ?>
+        <div id="location-reminder" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-900 p-4 mb-4 rounded">
+          <strong>Reminder:</strong> Please set your current location (Longitude and Latitude). This is required for your agent account and helps clients find you more easily.
+        </div>
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            var form = document.getElementById('edit-profile-form');
+            if (form) {
+              form.addEventListener('submit', function() {
+                setTimeout(function() {
+                  var reminder = document.getElementById('location-reminder');
+                  if (reminder) reminder.style.display = 'none';
+                }, 500);
+              });
+            }
+          });
+        </script>
+      <?php endif; ?>
+      <h2 class="text-3xl font-bold text-green-900 mb-2">Profile</h2>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-bottom: 1.5em;">View and update your personal and contact information.</p>
+      <div class="bg-white rounded-2xl border shadow p-6 max-w-4xl">
+        <!-- Tabs -->
+        <div class="flex border-b mb-6">
+          <button id="tab-profile-info" type="button" class="px-6 py-2 font-semibold text-green-900 border-b-2 border-green-900 focus:outline-none">Profile Info</button>
+          <button id="tab-change-password" type="button" class="px-6 py-2 font-semibold text-gray-600 border-b-2 border-transparent focus:outline-none">Change Password</button>
+        </div>
 
-  <!-- PROFILE -->
-<section id="section-profile" class="hidden">
-  <h2 class="text-3xl font-bold text-green-900 mb-2">Profile</h2>
-  <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-bottom: 1.5em;">View and update your personal and contact information.</p>
-  <div class="bg-white rounded-2xl border shadow p-6 max-w-4xl">
-
-    <!-- Tabs -->
-    <div class="flex border-b mb-6">
-      <button id="tab-profile-info" type="button" class="px-6 py-2 font-semibold text-green-900 border-b-2 border-green-900 focus:outline-none">Profile Info</button>
-      <button id="tab-change-password" type="button" class="px-6 py-2 font-semibold text-gray-600 border-b-2 border-transparent focus:outline-none">Change Password</button>
-    </div>
-
-    <!-- Profile Info Form -->
-    <div id="profile-info-pane">
-      <form id="edit-profile-form" enctype="multipart/form-data" method="post" action="agentprofile_update.php">
-        <div class="grid md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-semibold mb-1">First Name</label>
-            <input type="text" name="first_name" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h($agent['first_name'] ?? ''); ?>" required>
-          </div>
-          <div>
-            <label class="block text-sm font-semibold mb-1">Last Name</label>
-            <input type="text" name="last_name" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h($agent['last_name'] ?? ''); ?>">
-          </div>
-          <div>
-            <label class="block text-sm font-semibold mb-1">Email</label>
-            <input type="email" name="email" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h($agent['email'] ?? ''); ?>">
-          </div>
-          <div>
-            <label class="block text-sm font-semibold mb-1">Mobile</label>
-            <input type="text" name="mobile" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h($agent['mobile'] ?? ''); ?>">
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-sm font-semibold mb-1">Address</label>
-            <input type="text" name="address" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h($agent['address'] ?? ''); ?>">
-          </div>
-          <div>
-            <label class="block text-sm font-semibold mb-1">Experience (Years)</label>
-            <input type="number" name="experience" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h((string)($agent['experience'] ?? 0)); ?>">
-          </div>
-          <div>
-            <label class="block text-sm font-semibold mb-1">Total Sales</label>
-            <input type="number" name="total_sales" class="w-full border rounded px-3 py-2"
-                   value="<?php echo h((string)($agent['total_sales'] ?? 0)); ?>">
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-sm font-semibold mb-1">Description</label>
-            <textarea name="description" rows="3" class="w-full border rounded px-3 py-2"><?php
-              echo h($agent['description'] ?? '');
-            ?></textarea>
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-sm font-semibold mb-1">Profile Picture</label>
-            <?php if (!empty($agent['profile_picture'])): ?>
-              <img src="<?php echo h($agent['profile_picture']); ?>" class="w-16 h-16 rounded-full object-cover mb-2"
-                   onerror="this.style.display='none'">
+        <!-- Profile Info Form -->
+        <div id="profile-info-pane">
+          <form id="edit-profile-form" enctype="multipart/form-data" method="post" action="agent_dashboard.php">
+            <?php if (!empty($profile_update_success)): ?>
+              <div class="bg-green-100 border border-green-300 text-green-900 px-4 py-2 rounded mb-4">Profile updated successfully.</div>
+            <?php elseif (!empty($profile_update_error)): ?>
+              <div class="bg-red-100 border border-red-300 text-red-900 px-4 py-2 rounded mb-4"><?php echo h($profile_update_error); ?></div>
             <?php endif; ?>
-            <input type="file" name="profile_picture" class="w-full border rounded px-3 py-2">
-          </div>
+            <div class="grid md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-semibold mb-1">First Name</label>
+                <input type="text" name="first_name" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h($agent['first_name'] ?? ''); ?>" required>
+              </div>
+              <div>
+                <label class="block text-sm font-semibold mb-1">Last Name</label>
+                <input type="text" name="last_name" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h($agent['last_name'] ?? ''); ?>">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold mb-1">Email</label>
+                <input type="email" name="email" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h($agent['email'] ?? ''); ?>">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold mb-1">Mobile</label>
+                <input type="text" name="mobile" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h($agent['mobile'] ?? ''); ?>">
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-sm font-semibold mb-1">Address</label>
+                <input type="text" name="address" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h($agent['address'] ?? ''); ?>">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold mb-1">Experience (Years)</label>
+                <input type="number" name="experience" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h((string)($agent['experience'] ?? 0)); ?>">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold mb-1">Total Sales</label>
+                <input type="number" name="total_sales" class="w-full border rounded px-3 py-2"
+                       value="<?php echo h((string)($agent['total_sales'] ?? 0)); ?>">
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-sm font-semibold mb-1">Description</label>
+                <textarea name="description" rows="3" class="w-full border rounded px-3 py-2"><?php
+                  echo h($agent['description'] ?? '');
+                ?></textarea>
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-sm font-semibold mb-1">Profile Picture</label>
+                <?php if (!empty($agent['profile_picture'])): ?>
+                  <img src="<?php echo h($agent['profile_picture']); ?>" class="w-16 h-16 rounded-full object-cover mb-2"
+                       onerror="this.style.display='none'">
+                <?php endif; ?>
+                <input type="file" name="profile_picture" class="w-full border rounded px-3 py-2">
+              </div>
+              <div class="md:col-span-2 grid grid-cols-2 gap-4 mt-2">
+                <div>
+                  <label class="block text-sm font-semibold mb-1">Latitude</label>
+                  <input type="text" name="latitude" id="agent-latitude" class="w-full border rounded px-3 py-2" value="<?php echo h($agent['latitude'] ?? ''); ?>">
+                </div>
+                <div>
+                  <label class="block text-sm font-semibold mb-1">Longitude</label>
+                  <input type="text" name="longitude" id="agent-longitude" class="w-full border rounded px-3 py-2" value="<?php echo h($agent['longitude'] ?? ''); ?>">
+                </div>
+              </div>
+              <div class="md:col-span-2 flex gap-4 mt-2">
+                <button id="get-location-btn" type="button" class="bg-green-900 text-white px-4 py-2 rounded" onclick="getAgentLocation()">Get Current Location</button>
+                <button type="button" class="bg-green-900 text-white px-4 py-2 rounded" onclick="clearAgentLocation()">Clear Location</button>
+              </div>
+            </div>
+            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+            <div class="flex justify-end mt-4">
+              <button class="bg-green-900 text-white px-6 py-2 rounded hover:bg-green-800">Save</button>
+            </div>
+          </form>
         </div>
-        <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-        <div class="flex justify-end mt-4">
-          <button class="bg-green-900 text-white px-6 py-2 rounded hover:bg-green-800">Save</button>
+
+        <!-- Change Password Form -->
+        <div id="change-password-pane" style="display:none;">
+          <form id="change-password-form" method="post" action="agentprofile_update.php">
+            <div class="mb-3">
+              <label class="block text-sm font-semibold mb-1">New Password</label>
+              <input type="password" name="new_password" class="w-full border rounded px-3 py-2" placeholder="New Password">
+            </div>
+            <div class="mb-3">
+              <label class="block text-sm font-semibold mb-1">Confirm New Password</label>
+              <input type="password" name="confirm_password" class="w-full border rounded px-3 py-2" placeholder="Confirm Password">
+            </div>
+            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+            <button class="bg-green-900 text-white px-6 py-2 rounded hover:bg-green-800">Change Password</button>
+          </form>
         </div>
-      </form>
-    </div>
+      </div>
+    </section>
 
-    <!-- Change Password Form -->
-    <div id="change-password-pane" style="display:none;">
-      <form id="change-password-form" method="post" action="agentprofile_update.php">
-        <div class="mb-3">
-          <label class="block text-sm font-semibold mb-1">New Password</label>
-          <input type="password" name="new_password" class="w-full border rounded px-3 py-2" placeholder="New Password">
-        </div>
-        <div class="mb-3">
-          <label class="block text-sm font-semibold mb-1">Confirm New Password</label>
-          <input type="password" name="confirm_password" class="w-full border rounded px-3 py-2" placeholder="Confirm Password">
-        </div>
-        <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-        <button class="bg-green-900 text-white px-6 py-2 rounded hover:bg-green-800">Change Password</button>
-      </form>
-    </div>
-  </div>
-</section>
-
-
-    
-
-    <!-- SALES (no sales on dashboard; shown here) -->
+    <!-- SALES -->
     <section id="section-sales" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Manage Sales</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review your property sales and transaction history</p>
@@ -852,50 +902,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     <!-- NOTIFICATIONS -->
     <section id="section-notifications" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Notifications</h2>
-       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Stay updated with important alerts and system messages</p>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Stay updated with important alerts and system messages</p>
       <div class="bg-white rounded-2xl border shadow p-6">
-        <p class="text-gray-600">No messages yet.</p>
+        <div id="notifications-container">
+          <p class="text-gray-600">Loading notifications...</p>
+        </div>
       </div>
     </section>
 
     <!-- MESSAGES -->
     <section id="section-messages" class="hidden">
-  <h2 class="text-3xl font-bold text-green-900 mb-4">Messages</h2>
- <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">View and respond to your messages</p>
-  <div class="bg-white rounded-2xl border shadow p-6">
-    <div id="messages-container">
-      <p class="text-gray-600">Loading messages...</p>
-    </div>
-  </div>
-</section>
+      <h2 class="text-3xl font-bold text-green-900 mb-4">Messages</h2>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">View and respond to your messages</p>
+      <div class="bg-white rounded-2xl border shadow p-6">
+        <div id="messages-container">
+          <p class="text-gray-600">Loading messages...</p>
+        </div>
+      </div>
+    </section>
 
-<section id="section-audit-logs" class="hidden">
-  <h2 class="text-3xl font-bold text-green-900 mb-4">Audit Logs</h2>
-  <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review system audit logs for security and compliance</p>
-  <div class="bg-white rounded-2xl border shadow p-6">
-    <div id="audit-logs-container">
-      <p class="text-gray-600">Loading audit logs...</p>
-    </div>
-  </div>
-</section>
+    <!-- AUDIT LOGS -->
+    <section id="section-audit-logs" class="hidden">
+      <h2 class="text-3xl font-bold text-green-900 mb-4">Audit Logs</h2>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review system audit logs for security and compliance</p>
+      <div class="bg-white rounded-2xl border shadow p-6">
+        <div id="audit-logs-container">
+          <p class="text-gray-600">Loading audit logs...</p>
+        </div>
+      </div>
+    </section>
 
-
-<section id="section-documents" class="hidden">
-  <h2 class="text-3xl font-bold text-green-900 mb-4">Document Review</h2>
-  <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review and manage your documents</p>
-  <div class="bg-white rounded-2xl border shadow p-6">
-    <div id="documents-container">
-      <p class="text-gray-600">Loading documents...</p>
-    </div>
-  </div>
-</section>
+    <!-- DOCUMENT REVIEW -->
+    <section id="section-documents" class="hidden">
+      <h2 class="text-3xl font-bold text-green-900 mb-4">Document Review</h2>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review and manage your documents</p>
+      <div class="bg-white rounded-2xl border shadow p-6">
+        <div id="documents-container">
+          <p class="text-gray-600">Loading documents...</p>
+        </div>
+      </div>
+    </section>
 
     <!-- MY VIEWINGS -->
     <section id="section-viewings" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Viewing Requests</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Manage and track your assigned viewing requests</p>
       <div class="bg-white rounded-2xl border shadow p-6">
-        
         <?php if (empty($all_viewings)): ?>
           <div class="border border-dashed rounded-xl p-6 text-gray-500 text-sm">
             No viewing requests assigned to you yet.
@@ -922,32 +974,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                       <br><small class="text-gray-600">Note: <?php echo h($v['note']); ?></small>
                     <?php endif; ?>
                   </td>
-                <td class="py-3 px-4 border">
-                  <div class="text-sm">
-                    <a href="mailto:<?php echo h($v['client_email']); ?>" class="text-green-700 hover:underline block">
-                      <?php echo h($v['client_email']); ?>
-                    </a>
-                    <a href="tel:<?php echo h($v['client_phone']); ?>" class="text-green-700 hover:underline">
-                      <?php echo h($v['client_phone']); ?>
-                    </a>
-                  </div>
-                </td>
-               <td class="py-3 px-4 border">
-  <div class="text-sm">
-    <?php if (!empty($v['location_name']) || (!empty($v['block_number']) && !empty($v['lot_number']))): ?>
-      <strong><?php echo h($v['location_name'] ?? ''); ?></strong>
-      <?php if (!empty($v['block_number']) && !empty($v['lot_number'])): ?>
-        <br><small class="text-gray-600">
-          Block <?php echo h($v['block_number']); ?>, Lot <?php echo h($v['lot_number']); ?>
-          <?php if (!empty($v['lot_size'])): ?>(<?php echo h($v['lot_size']); ?> sqm)<?php endif; ?>
-        </small>
-      <?php endif; ?>
-    <?php else: ?>
-      <span class="text-gray-500">Lot <?php echo h($v['lot_no'] ?: 'N/A'); ?></span>
-    <?php endif; ?>
-  </div>
-</td>
-
+                  <td class="py-3 px-4 border">
+                    <div class="text-sm">
+                      <a href="mailto:<?php echo h($v['client_email']); ?>" class="text-green-700 hover:underline block">
+                        <?php echo h($v['client_email']); ?>
+                      </a>
+                      <a href="tel:<?php echo h($v['client_phone']); ?>" class="text-green-700 hover:underline">
+                        <?php echo h($v['client_phone']); ?>
+                      </a>
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 border">
+                    <div class="text-sm">
+                      <?php if (!empty($v['location_name']) || (!empty($v['block_number']) && !empty($v['lot_number']))): ?>
+                        <strong><?php echo h($v['location_name'] ?? ''); ?></strong>
+                        <?php if (!empty($v['block_number']) && !empty($v['lot_number'])): ?>
+                          <br><small class="text-gray-600">
+                            Block <?php echo h($v['block_number']); ?>, Lot <?php echo h($v['lot_number']); ?>
+                            <?php if (!empty($v['lot_size'])): ?>(<?php echo h($v['lot_size']); ?> sqm)<?php endif; ?>
+                          </small>
+                        <?php endif; ?>
+                      <?php else: ?>
+                        <span class="text-gray-500">Lot <?php echo h($v['lot_no'] ?: 'N/A'); ?></span>
+                      <?php endif; ?>
+                    </div>
+                  </td>
                   <td class="py-3 px-4 border">
                     <?php if ($v['preferred_at']): ?>
                       <div class="text-sm">
@@ -981,7 +1032,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                           <button class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
                                   name="viewing_action" value="completed">✓ Complete</button>
                         </form>
-                        
                         <form method="post" style="display: inline;">
                           <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                           <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
@@ -1000,7 +1050,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             </table>
           </div>
         <?php endif; ?>
-        
       </div>
     </section>
 
@@ -1048,9 +1097,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   </main>
 </div>
 
-<!-- SPA NAV / SECTION SWITCHER -->
+<!-- Logout Confirmation Modal -->
+<div id="logoutModal"
+     class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50">
+  <div class="bg-white rounded-2xl shadow p-6 max-w-md w-full mx-4">
+    <h3 class="text-lg font-semibold text-gray-900 mb-2">Logout</h3>
+    <p class="text-gray-600 mb-6">
+      Are you sure you want to logout? You will need to login again to access your dashboard.
+    </p>
+    <div class="flex gap-3 justify-end">
+      <button onclick="closeLogoutModal()"
+              class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
+        Cancel
+      </button>
+      <button onclick="proceedLogout()"
+              class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
+        Logout
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- SPA NAV / SECTION SWITCHER + Logic -->
 <script>
- const links = document.querySelectorAll('#spa-nav a[data-target]');
+const links = document.querySelectorAll('#spa-nav a[data-target]');
 const sections = [
   'section-dashboard',
   'section-profile',
@@ -1059,12 +1129,12 @@ const sections = [
   'section-notifications',
   'section-messages',
   'section-leads',
-  'section-audit-logs', // <-- comma added
+  'section-audit-logs',
   'section-documents'
 ].map(id => document.getElementById(id));
 
 function showSection(id) {
-  sections.forEach(s => s.classList.toggle('hidden', s.id !== id));
+  sections.forEach(s => s && s.classList.toggle('hidden', s.id !== id));
   links.forEach(a => a.classList.toggle('nav-active', a.dataset.target === id));
 
   if (id === 'section-notifications') {
@@ -1086,7 +1156,7 @@ links.forEach(a => {
   a.addEventListener('click', (e) => {
     e.preventDefault();
     const id = a.dataset.target;
-    history.replaceState(null, '', a.getAttribute('href')); // keep hash updated
+    history.replaceState(null, '', a.getAttribute('href'));
     showSection(id);
   });
 });
@@ -1105,55 +1175,36 @@ const map = {
   'documents': 'section-documents'
 };
 showSection(map[hash] || 'section-dashboard');
-</script>
 
-<!-- If you have your sales JS already, include it here -->
-<script src="agentdb/js/main.js"></script>
+// Logout modal functions
+function confirmLogout() {
+  const modal = document.getElementById('logoutModal');
+  if (modal) modal.classList.remove('hidden');
+}
 
-<!-- Logout Confirmation Modal -->
-<div id="logoutModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-  <div class="bg-white rounded-lg p-6 max-w-sm mx-4">
-    <div class="flex items-center mb-4">
-      <svg class="w-6 h-6 text-red-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
-      </svg>
-      <h3 class="text-lg font-semibold text-gray-900">Confirm Logout</h3>
-    </div>
-    <p class="text-gray-600 mb-6">Are you sure you want to logout? You will need to login again to access your dashboard.</p>
-    <div class="flex gap-3 justify-end">
-      <button onclick="closeLogoutModal()" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
-        Cancel
-      </button>
-      <button onclick="proceedLogout()" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
-        Logout
-      </button>
-    </div>
-  </div>
-</div>
+function closeLogoutModal() {
+  const modal = document.getElementById('logoutModal');
+  if (modal) modal.classList.add('hidden');
+}
 
-<script>
-  // Logout modal functions
-  function confirmLogout() {
-    document.getElementById('logoutModal').classList.remove('hidden');
-  }
+function proceedLogout() {
+  window.location.href = 'logout.php';
+}
 
-  function closeLogoutModal() {
-    document.getElementById('logoutModal').classList.add('hidden');
-  }
-
-  function proceedLogout() {
-    window.location.href = 'logout.php';
-  }
-
-  // Close modal when clicking outside
-  document.getElementById('logoutModal').addEventListener('click', function(e) {
+// Close modal when clicking outside
+const logoutModal = document.getElementById('logoutModal');
+if (logoutModal) {
+  logoutModal.addEventListener('click', function(e) {
     if (e.target === this) {
       closeLogoutModal();
     }
   });
+}
 
-  function loadAgentNotifications() {
+// Notifications
+function loadAgentNotifications() {
   const container = document.getElementById('notifications-container');
+  if (!container) return;
   container.innerHTML = '<p class="text-gray-600">Loading notifications...</p>';
   fetch(window.location.pathname + '?fetch=notifications')
     .then(response => response.json())
@@ -1183,7 +1234,7 @@ function markNotificationRead(id) {
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: `mark_read=${id}`
+    body: `mark_read=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
   .then(() => loadAgentNotifications());
@@ -1194,22 +1245,16 @@ function deleteNotification(id) {
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: `delete_notif=${id}`
+    body: `delete_notif=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
   .then(() => loadAgentNotifications());
 }
 
-// Load notifications when the section is shown
-const notificationsLink = document.querySelector('a[data-target="section-notifications"]');
-if (notificationsLink) {
-  notificationsLink.addEventListener('click', () => {
-    loadAgentNotifications();
-  });
-}
-
+// Messages
 function loadAgentMessages() {
   const container = document.getElementById('messages-container');
+  if (!container) return;
   container.innerHTML = '<p class="text-gray-600">Loading messages...</p>';
   fetch(window.location.pathname + '?fetch=messages')
     .then(response => response.json())
@@ -1239,7 +1284,7 @@ function markMessageRead(id) {
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: `mark_message_read=${id}`
+    body: `mark_message_read=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
   .then(() => loadAgentMessages());
@@ -1250,22 +1295,16 @@ function deleteMessage(id) {
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: `delete_message=${id}`
+    body: `delete_message=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
   .then(() => loadAgentMessages());
 }
 
-// Load messages when the section is shown
-const messagesLink = document.querySelector('a[data-target="section-messages"]');
-if (messagesLink) {
-  messagesLink.addEventListener('click', () => {
-    loadAgentMessages();
-  });
-}
-
+// Audit Logs
 function loadAgentAuditLogs() {
   const container = document.getElementById('audit-logs-container');
+  if (!container) return;
   container.innerHTML = '<p class="text-gray-600">Loading audit logs...</p>';
   fetch(window.location.pathname + '?fetch=audit_logs')
     .then(response => response.json())
@@ -1287,9 +1326,10 @@ function loadAgentAuditLogs() {
     });
 }
 
-
+// Documents
 function loadAgentDocuments() {
   const container = document.getElementById('documents-container');
+  if (!container) return;
   container.innerHTML = '<p class="text-gray-600">Loading documents...</p>';
   fetch(window.location.pathname + '?fetch=user_documents')
     .then(response => response.json())
@@ -1320,7 +1360,6 @@ function loadAgentDocuments() {
                 <td class="py-2 px-4 border">${doc.status}</td>
                 <td class="py-2 px-4 border">
                   <a href="${doc.file_path}" target="_blank" class="px-2 py-1 text-xs bg-blue-700 text-white rounded">View</a>
-                  <!-- Optionally add Approve/Reject buttons here -->
                 </td>
               </tr>
             `).join('')}
@@ -1333,25 +1372,72 @@ function loadAgentDocuments() {
     });
 }
 
+// Profile tabs
+document.addEventListener('DOMContentLoaded', function() {
+  const tabProfileInfo = document.getElementById('tab-profile-info');
+  const tabChangePassword = document.getElementById('tab-change-password');
+  const profilePane = document.getElementById('profile-info-pane');
+  const passwordPane = document.getElementById('change-password-pane');
 
+  if (tabProfileInfo && tabChangePassword && profilePane && passwordPane) {
+    tabProfileInfo.onclick = function() {
+      this.classList.add('text-green-900', 'border-green-900');
+      this.classList.remove('text-gray-600', 'border-transparent');
+      tabChangePassword.classList.remove('text-green-900', 'border-green-900');
+      tabChangePassword.classList.add('text-gray-600', 'border-transparent');
+      profilePane.style.display = '';
+      passwordPane.style.display = 'none';
+    };
+    tabChangePassword.onclick = function() {
+      this.classList.add('text-green-900', 'border-green-900');
+      this.classList.remove('text-gray-600', 'border-transparent');
+      tabProfileInfo.classList.remove('text-green-900', 'border-green-900');
+      tabProfileInfo.classList.add('text-gray-600', 'border-transparent');
+      profilePane.style.display = 'none';
+      passwordPane.style.display = '';
+    };
+  }
+});
 
-document.getElementById('tab-profile-info').onclick = function() {
-  this.classList.add('text-green-900', 'border-green-900');
-  this.classList.remove('text-gray-600', 'border-transparent');
-  document.getElementById('tab-change-password').classList.remove('text-green-900', 'border-green-900');
-  document.getElementById('tab-change-password').classList.add('text-gray-600', 'border-transparent');
-  document.getElementById('profile-info-pane').style.display = '';
-  document.getElementById('change-password-pane').style.display = 'none';
-};
-document.getElementById('tab-change-password').onclick = function() {
-  this.classList.add('text-green-900', 'border-green-900');
-  this.classList.remove('text-gray-600', 'border-transparent');
-  document.getElementById('tab-profile-info').classList.remove('text-green-900', 'border-green-900');
-  document.getElementById('tab-profile-info').classList.add('text-gray-600', 'border-transparent');
-  document.getElementById('profile-info-pane').style.display = 'none';
-  document.getElementById('change-password-pane').style.display = '';
-};
+// Clear location button
+function clearAgentLocation() {
+  const lat = document.getElementById('agent-latitude');
+  const lng = document.getElementById('agent-longitude');
+  if (lat) lat.value = '';
+  if (lng) lng.value = '';
+}
+</script>
 
+<!-- Sales JS -->
+<script src="agentdb/js/main.js"></script>
+
+<!-- Geolocation helper -->
+<script>
+function getAgentLocation() {
+  var btn = document.getElementById('get-location-btn');
+  if (!btn) return;
+  var origText = btn.textContent;
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(position) {
+      var latInput = document.getElementById('agent-latitude');
+      var lngInput = document.getElementById('agent-longitude');
+      if (latInput) latInput.value = position.coords.latitude;
+      if (lngInput) lngInput.value = position.coords.longitude;
+      btn.textContent = origText;
+      btn.disabled = false;
+    }, function(error) {
+      alert('Unable to retrieve location: ' + error.message);
+      btn.textContent = origText;
+      btn.disabled = false;
+    });
+  } else {
+    alert('Geolocation is not supported by your browser.');
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
 </script>
 </body>
 </html>

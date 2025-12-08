@@ -29,6 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $addr  = trim($_POST['address'] ?? '');
   $city  = trim($_POST['city'] ?? '');
   $desc  = trim($_POST['description'] ?? '');
+  $lat   = trim($_POST['latitude'] ?? '');
+  $lng   = trim($_POST['longitude'] ?? '');
 
   // Basic validation
   if ($first === '' || $last === '' || $email === '') {
@@ -37,10 +39,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Update main profile in nuevopuerta.agent_accounts
     $stmt = $conn->prepare("
       UPDATE agent_accounts
-      SET first_name=?, last_name=?, email=?, mobile=?, address=?, city=?, description=?
+      SET first_name=?, last_name=?, email=?, mobile=?, address=?, city=?, description=?, latitude=?, longitude=?
       WHERE id=?");
     if ($stmt) {
-      $stmt->bind_param('sssssssi', $first, $last, $email, $mobile, $addr, $city, $desc, $agentId);
+      $stmt->bind_param('sssssssssi', $first, $last, $email, $mobile, $addr, $city, $desc, $lat, $lng, $agentId);
       $stmt->execute();
       $stmt->close();
       $flash = 'Profile saved.';
@@ -96,15 +98,18 @@ $profile = [
   'address'    => '',
   'city'       => '',
   'description'=> '',
+  'latitude'   => '',
+  'longitude'  => '',
   'photo'      => ''
 ];
 
 $stmt = $conn->prepare("
-  SELECT aa.first_name, aa.last_name, aa.email, aa.mobile, aa.address, aa.city, aa.description,
-         ag.photo
-  FROM agent_accounts aa
-  LEFT JOIN agents ag ON ag.login_agent_id = aa.id
-  WHERE aa.id = ?
+    SELECT aa.first_name, aa.last_name, aa.email, aa.mobile, aa.address, aa.city, aa.description,
+      aa.latitude, aa.longitude,
+      ag.photo
+    FROM agent_accounts aa
+    LEFT JOIN agents ag ON ag.login_agent_id = aa.id
+    WHERE aa.id = ?
 ");
 if ($stmt) {
   $stmt->bind_param('i', $agentId);
@@ -199,6 +204,14 @@ textarea{min-height:120px;resize:vertical}
           <div class="row">
             <label>City</label>
             <input type="text" name="city" value="<?php echo h($profile['city']); ?>">
+          </div>
+          <div class="row">
+            <label>Latitude</label>
+            <input type="text" name="latitude" value="<?php echo h($profile['latitude']); ?>" placeholder="Latitude">
+          </div>
+          <div class="row">
+            <label>Longitude</label>
+            <input type="text" name="longitude" value="<?php echo h($profile['longitude']); ?>" placeholder="Longitude">
           </div>
         </div>
 

@@ -1,6 +1,5 @@
 <?php
 session_start();
-
 // Database connection settings
 $servername = "localhost";
 $username = "root";
@@ -226,17 +225,17 @@ if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'ag
     $type = $_GET['fetch'];
 
     if ($type === 'admin') {
-        $sql = "SELECT * FROM admin_accounts WHERE id = ?";
+      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at FROM admin_accounts WHERE id = ?";
     } elseif ($type === 'agent') {
-        $sql = "SELECT * FROM agent_accounts WHERE id = ?";
+      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at FROM agent_accounts WHERE id = ?";
     } else { // user
-        $sql = "SELECT * FROM user_accounts WHERE id = ?";
+      $sql = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts WHERE id = ?";
     }
 
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
-        echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
-        exit;
+      echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
+      exit;
     }
 
     $stmt->bind_param("i", $id);
@@ -246,9 +245,9 @@ if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'ag
     $stmt->close();
 
     if (!$account) {
-        echo json_encode(['error' => 'Account not found', 'id' => $id]);
+      echo json_encode(['error' => 'Account not found', 'id' => $id]);
     } else {
-        echo json_encode($account);
+      echo json_encode($account);
     }
     exit; // VERY IMPORTANT – stop executing before HTML
 }
@@ -261,63 +260,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
 
     // ---------- ADD ADMIN ----------
     if ($_POST['account_action'] === 'add') {
-        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email             = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
-        $address           = mysqli_real_escape_string($conn, $_POST['address']);
-        $short_description = mysqli_real_escape_string($conn, $_POST['short_description']);
-        $years_experience  = mysqli_real_escape_string($conn, $_POST['years_experience']);
-        $availability      = isset($_POST['availability']) ? 1 : 0;
-        $latitude          = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
-        $longitude         = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
-        $password          = password_hash($_POST['password'], PASSWORD_DEFAULT);
-        $role              = mysqli_real_escape_string($conn, $_POST['role']);
+        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']        ?? '');
+        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']       ?? '');
+        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']         ?? '');
+        $email             = mysqli_real_escape_string($conn, $_POST['email']             ?? '');
+        $username          = mysqli_real_escape_string($conn, $_POST['username']          ?? '');
+        $phone             = mysqli_real_escape_string($conn, $_POST['phone']             ?? '');
+        $address           = mysqli_real_escape_string($conn, $_POST['address']           ?? '');
+        $availability     = isset($_POST['availability']) ? 1 : 0;
+        $longitude         = ($_POST['longitude'] ?? '') !== '' ? (float)$_POST['longitude'] : null;
 
+        // password (required)
+        $raw_password = $_POST['password'] ?? '';
+        if ($raw_password === '') {
+            echo json_encode(['success' => false, 'error' => 'Password is required.']);
+            exit;
+        }
+        $password = password_hash($raw_password, PASSWORD_DEFAULT);
+
+        // optional photo
         $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
         $sql = "INSERT INTO admin_accounts 
-                (first_name, middle_name, last_name, email, phone, address, 
-                 short_description, years_experience, photo_path, availability, 
-                 latitude, longitude, password, role)
+                (first_name, middle_name, last_name, email, username, password,
+                 phone, address, short_description, years_experience,
+                 photo_path, availability, latitude, longitude)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
 
         if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+            echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
             exit;
         }
 
-        // strings x9, int, double, double, string, string
+        // 11 strings + 1 int + 2 doubles = "sssssssssssidd"
         $stmt->bind_param(
-            "sssssssssiddss",
-            $first_name, $middle_name, $last_name, $email, $phone, $address,
-            $short_description, $years_experience, $photo_path, $availability,
-            $latitude, $longitude, $password, $role
+            "sssssssssssidd",
+            $first_name, $middle_name, $last_name, $email, $username, $password,
+            $phone, $address, $short_description, $years_experience,
+            $photo_path, $availability, $latitude, $longitude
         );
 
         $ok = $stmt->execute();
 
-        // Audit log for add
-        if ($ok && isset($admin_id)) {
-            $action  = 'add_admin';
-            $details = 'Added admin: ' . $first_name . ' ' . $last_name . ' (' . $email . ')';
-            $log_sql = "INSERT INTO audit_logs (admin_id, action, details, created_at) VALUES (?, ?, ?, NOW())";
-            $log_stmt = $conn->prepare($log_sql);
-            if ($log_stmt) {
-                $log_stmt->bind_param("iss", $admin_id, $action, $details);
-                $log_stmt->execute();
-                $log_stmt->close();
-            }
-        }
-
         echo json_encode([
             'success' => $ok,
-            'message' => $ok ? "Admin account created successfully!" : "Error creating admin account: " . $stmt->error
+            'message' => $ok ? 'Admin account created successfully!'
+                             : 'Error creating admin account: ' . $stmt->error
         ]);
         $stmt->close();
         exit;
@@ -325,119 +317,103 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
 
     // ---------- UPDATE ADMIN ----------
     if ($_POST['account_action'] === 'update') {
-    $account_id       = intval($_POST['account_id']);
-    $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
-    $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-    $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']);
-    $email            = mysqli_real_escape_string($conn, $_POST['email']);
-    $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
-    $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-    $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-    $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? '');
-    $availability     = isset($_POST['availability']) ? 1 : 0;
-    $role             = mysqli_real_escape_string($conn, $_POST['role']);
+        $account_id       = intval($_POST['account_id'] ?? 0);
+        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']        ?? '');
+        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']       ?? '');
+        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']         ?? '');
+        $email            = mysqli_real_escape_string($conn, $_POST['email']             ?? '');
+        $username         = mysqli_real_escape_string($conn, $_POST['username']          ?? '');
+        $phone            = mysqli_real_escape_string($conn, $_POST['phone']             ?? '');
+        $address          = mysqli_real_escape_string($conn, $_POST['address']           ?? '');
+        $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
+        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience']  ?? '');
+        $availability     = isset($_POST['availability']) ? 1 : 0;
 
-    $photo_path = null;
-    if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-        $photo_path = handleFileUpload($_FILES['photo']);
-    }
-
-    // ---------- WITH password change ----------
-    if (!empty($_POST['password'])) {
-        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-
-        $sql = "UPDATE admin_accounts 
-                SET first_name=?, middle_name=?, last_name=?, email=?, phone=?, address=?, 
-                    short_description=?, years_experience=?, availability=?, password=?, 
-                    role=?, photo_path=? 
-                WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
+        $photo_path = null;
+        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+            $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        // 8 strings + 1 int + 3 strings + 1 int  => "ssssssssissssi"
-        $stmt->bind_param(
-            "ssssssssissssi",
-            $first_name, $middle_name, $last_name, $email, $phone, $address,
-            $short_description, $years_experience, $availability, $password,
-            $role, $photo_path, $account_id
-        );
+        // if password is provided -> update it too
+        if (!empty($_POST['password'])) {
+            $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-    // ---------- WITHOUT password change ----------
-    } else {
-        $sql = "UPDATE admin_accounts 
-                SET first_name=?, middle_name=?, last_name=?, email=?, phone=?, address=?, 
-                    short_description=?, years_experience=?, availability=?, role=?, photo_path=? 
-                WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
+            $sql = "UPDATE admin_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, email=?, username=?, 
+                        password=?, phone=?, address=?, short_description=?, years_experience=?,
+                        photo_path=?, availability=?, latitude=?, longitude=?
+                    WHERE id=?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
+                exit;
+            }
+
+            // 10 strings + 1 int + 2 doubles + 1 int = "ssssssssssiddi"
+            $stmt->bind_param(
+                "ssssssssssiddi",
+                $first_name, $middle_name, $last_name, $email, $username,
+                $password, $phone, $address, $short_description, $years_experience,
+                $photo_path, $availability, $latitude, $longitude, $account_id
+            );
+
+        } else {
+            // no password change
+            $sql = "UPDATE admin_accounts 
+                    SET first_name=?, middle_name=?, last_name=?, email=?, username=?,
+                        phone=?, address=?, short_description=?, years_experience=?,
+                        photo_path=?, availability=?, latitude=?, longitude=?
+                    WHERE id=?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
+                exit;
+            }
+
+            // 9 strings + 1 int + 2 doubles + 1 int = "sssssssssiddi"
+            $stmt->bind_param(
+                "sssssssssiddi",
+                $first_name, $middle_name, $last_name, $email, $username,
+                $phone, $address, $short_description, $years_experience,
+                $photo_path, $availability, $latitude, $longitude, $account_id
+            );
         }
 
-        // 8 strings + 1 int + 2 strings + 1 int => "ssssssssissi"
-        $stmt->bind_param(
-            "ssssssssissi",
-            $first_name, $middle_name, $last_name, $email, $phone, $address,
-            $short_description, $years_experience, $availability,
-            $role, $photo_path, $account_id
-        );
+        $ok = $stmt->execute();
+
+        echo json_encode([
+            'success' => $ok,
+            'message' => $ok ? 'Account updated successfully!'
+                             : 'Error updating account: ' . $stmt->error
+        ]);
+        $stmt->close();
+        exit;
     }
-
-    $ok = $stmt->execute();
-
-    echo json_encode([
-        'success' => $ok,
-        'message' => $ok ? "Account updated successfully!"
-                         : "Error updating account: " . $stmt->error
-    ]);
-    $stmt->close();
-    exit;
-}
-
 
     // ---------- DELETE ADMIN ----------
     if ($_POST['account_action'] === 'delete') {
-        $account_id = intval($_POST['account_id']);
-
-        if ($account_id == $admin_id) {
-            echo json_encode(['success' => false, 'error' => "You cannot delete your own account!"]);
-            exit;
-        }
+        $account_id = intval($_POST['account_id'] ?? 0);
 
         $sql  = "DELETE FROM admin_accounts WHERE id = ?";
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+            echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
             exit;
         }
         $stmt->bind_param("i", $account_id);
-
         $ok = $stmt->execute();
-
-        // Audit log for delete
-        if ($ok && isset($admin_id)) {
-            $action  = 'delete_admin';
-            $details = 'Deleted admin account ID: ' . $account_id;
-            $log_sql = "INSERT INTO audit_logs (admin_id, action, details, created_at) VALUES (?, ?, ?, NOW())";
-            $log_stmt = $conn->prepare($log_sql);
-            if ($log_stmt) {
-                $log_stmt->bind_param("iss", $admin_id, $action, $details);
-                $log_stmt->execute();
-                $log_stmt->close();
-            }
-        }
 
         echo json_encode([
             'success' => $ok,
-            'message' => $ok ? "Account deleted successfully!" : "Error deleting account: " . $conn->error
+            'message' => $ok ? 'Account deleted successfully!'
+                             : 'Error deleting account: ' . $stmt->error
         ]);
         $stmt->close();
         exit;
     }
 }
+
+
 
 // =====================================================
 // AGENT ACCOUNT CRUD (agent_action)
@@ -479,10 +455,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
 
         // NOTE: years_experience removed from the columns and values
         $sql = "INSERT INTO agent_accounts 
-                (first_name, middle_name, last_name, username, email, phone, address, 
-                 short_description, photo_path, availability, latitude, 
-                 longitude, password, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
+          (first_name, middle_name, last_name, username, email, phone, address, 
+           photo_path, availability, password, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
 
         $stmt = $conn->prepare($sql);
         if (!$stmt) {
@@ -493,10 +468,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         // 8 strings (first..short_description) + photo_path(s) = 9 's'
         // availability (i), latitude(d), longitude(d), password(s)
         $stmt->bind_param(
-            "sssssssssidds",
-            $first_name, $middle_name, $last_name, $username, $email, $phone,
-            $address, $short_description, $photo_path,
-            $availability, $latitude, $longitude, $password
+          "sssssssssis",
+          $first_name, $middle_name, $last_name, $username, $email, $phone,
+          $address, $photo_path, $availability, $password
         );
 
         $ok = $stmt->execute();
@@ -534,10 +508,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
             $sql = "UPDATE agent_accounts 
-                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                        address=?, short_description=?, availability=?, 
-                        latitude=?, longitude=?, password=?, photo_path=? 
-                    WHERE id=?";
+                SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                  address=?, availability=?, password=?, photo_path=? 
+                WHERE id=?";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
@@ -547,17 +520,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             // 8 strings (first..short_description),
             // availability(i), latitude(d), longitude(d), password(s), photo_path(s), id(i)
             $stmt->bind_param(
-                "ssssssssiddssi",
-                $first_name, $middle_name, $last_name, $username, $email, $phone,
-                $address, $short_description, $availability,
-                $latitude, $longitude, $password, $photo_path, $agent_id
+              "ssssssssisi",
+              $first_name, $middle_name, $last_name, $username, $email, $phone,
+              $address, $availability, $password, $photo_path, $agent_id
             );
         } else {
             $sql = "UPDATE agent_accounts 
-                    SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                        address=?, short_description=?, availability=?, 
-                        latitude=?, longitude=?, photo_path=? 
-                    WHERE id=?";
+                SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                  address=?, availability=?, photo_path=? 
+                WHERE id=?";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
                 echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
@@ -565,10 +536,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             }
 
             $stmt->bind_param(
-                "ssssssssiddsi",
-                $first_name, $middle_name, $last_name, $username, $email, $phone,
-                $address, $short_description, $availability,
-                $latitude, $longitude, $photo_path, $agent_id
+              "sssssssisi",
+              $first_name, $middle_name, $last_name, $username, $email, $phone,
+              $address, $availability, $photo_path, $agent_id
             );
         }
 
@@ -589,17 +559,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         $stmt     = $conn->prepare($sql);
 
         if (!$stmt) {
-            $error_message = "Prepare failed: " . $conn->error;
+          $error_message = "Prepare failed: " . $conn->error;
         } else {
-            $stmt->bind_param("i", $agent_id);
-            if ($stmt->execute()) {
-                $success_message = "Agent account deleted successfully!";
-            } else {
-                $error_message = "Error deleting agent account: " . $conn->error;
-            }
-            $stmt->close();
+          $stmt->bind_param("i", $agent_id);
+          if ($stmt->execute()) {
+            $_SESSION['success_message'] = "Agent account deleted successfully!";
+            header('Location: admindashboard.php#admin-accounts');
+            exit;
+          } else {
+            $error_message = "Error deleting agent account: " . $conn->error;
+          }
+          $stmt->close();
         }
-        // no JSON here, normal page reload
+        // PRG: redirect after POST to avoid resubmission
     }
 }
 
@@ -884,12 +856,13 @@ if ($agentsResult) {
 
 // Admin accounts
 $adminAccounts   = [];
-$accountsQuery   = "SELECT id, first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, role, created_at FROM admin_accounts ORDER BY created_at DESC";
+$accountsQuery   = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, photo_path, availability, created_at FROM admin_accounts ORDER BY created_at DESC";
 $accountsResult  = mysqli_query($conn, $accountsQuery);
-if ($accountsResult) {
-    while ($account = mysqli_fetch_assoc($accountsResult)) {
-        $adminAccounts[] = $account;
-    }
+if (!$accountsResult) {
+  die('Admin Accounts Query Error: ' . mysqli_error($conn));
+}
+while ($account = mysqli_fetch_assoc($accountsResult)) {
+  $adminAccounts[] = $account;
 }
 
 // Agent accounts (working, matches your DB)
@@ -931,6 +904,8 @@ if ($userResult) {
         $userAccounts[] = $user;
     }
 }
+
+
 
 
 // Handle file uploads
@@ -1090,14 +1065,7 @@ if (isset($_POST['viewing_action'])) {
 }
 
 // Fetch all admin accounts
-$adminAccounts = [];
-$accountsQuery = "SELECT id, first_name, middle_name, last_name, email, phone, address, short_description, years_experience, photo_path, availability, role, created_at FROM admin_accounts ORDER BY created_at DESC";
-$accountsResult = mysqli_query($conn, $accountsQuery);
-if ($accountsResult) {
-    while ($account = mysqli_fetch_assoc($accountsResult)) {
-        $adminAccounts[] = $account;
-    }
-}
+// ...existing code...
 
 // Fetch all agent accounts
 $agentAccounts = [];
@@ -1512,6 +1480,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Admin Dashboard</title>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        document.querySelectorAll('.alert.success, .alert.error').forEach(function(el) {
+          el.style.display = 'none';
+        });
+      }, 3000);
+    });
+  </script>
   <style>
     * {
       margin: 0;
@@ -2609,8 +2586,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   </div>
 
   <div class="table-section">
-    <?php if (isset($success_message)): ?>
-      <div class="alert success"><?php echo $success_message; ?></div>
+    <?php if (isset($_SESSION['success_message'])): ?>
+      <div class="alert success"><?php echo $_SESSION['success_message']; ?></div>
+      <?php unset($_SESSION['success_message']); ?>
     <?php endif; ?>
 
     <?php if (isset($error_message)): ?>
@@ -2624,7 +2602,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
     </div>
 
-  <!-- ADMIN ACCOUNTS SECTION -->
+ <!-- ADMIN ACCOUNTS SECTION -->
 <div id="admin-accounts" class="account-section active">
   <div class="form-container">
     <div class="form-title">Add New Admin Account</div>
@@ -2633,26 +2611,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     <form method="POST" enctype="multipart/form-data" id="admin-account-form">
       <input type="hidden" name="account_action" value="add">
       
-      <!-- Personal Information -->
+      <!-- PERSONAL INFORMATION -->
       <div class="form-section">
         <div class="form-section-title">Personal Information</div>
+
         <div class="form-row-three">
           <div class="form-group">
-            <label for="first_name">First Name</label>
-            <input type="text" id="first_name" name="first_name" required>
+            <label for="admin_first_name">First Name</label>
+            <input type="text" id="admin_first_name" name="first_name" required>
           </div>
           <div class="form-group">
-            <label for="middle_name">Middle Name (Optional)</label>
-            <input type="text" id="middle_name" name="middle_name">
+            <label for="admin_middle_name">Middle Name (Optional)</label>
+            <input type="text" id="admin_middle_name" name="middle_name">
           </div>
           <div class="form-group">
-            <label for="last_name">Last Name</label>
-            <input type="text" id="last_name" name="last_name" required>
+            <label for="admin_last_name">Last Name</label>
+            <input type="text" id="admin_last_name" name="last_name" required>
           </div>
+        </div>
+
+        <!-- Username -->
+        <div class="form-group">
+          <label for="admin_username">Username</label>
+          <input type="text" id="admin_username" name="username" required>
         </div>
       </div>
 
-      <!-- Contact Information -->
+      <!-- CONTACT INFORMATION -->
       <div class="form-section">
         <div class="form-section-title">Contact Information</div>
         <div class="form-row">
@@ -2671,7 +2656,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- PROFILE PHOTO (Optional) -->
+      <!-- PROFILE PHOTO (OPTIONAL) -->
       <div class="form-section">
         <div class="form-section-title">Profile Photo (Optional)</div>
         <div class="photo-upload-section">
@@ -2679,7 +2664,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             No Photo
           </div>
           <div class="file-input-wrapper">
-            <input type="file" id="admin_photo" name="photo" accept="image/*" onchange="previewPhoto(this, 'admin-photo-preview')">
+            <input type="file" id="admin_photo" name="photo" accept="image/*"
+                   onchange="previewPhoto(this, 'admin-photo-preview')">
             <label for="admin_photo" class="file-input-label">Choose Photo</label>
           </div>
           <div style="font-size: 12px; color: #999; margin-top: 8px;">
@@ -2688,73 +2674,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-     <!-- Login Details -->
-<div class="form-section">
-  <div class="form-section-title">Login Details</div>
+      <!-- ACCOUNT SECURITY -->
+      <div class="form-section">
+        <div class="form-section-title">Account Security</div>
 
-  <div class="form-group">
-    <label for="password">Password</label>
-    <input type="password" id="password" name="password" required>
-  </div>
+        <div class="form-row">
+          <!-- Password -->
+          <div class="form-group">
+            <label for="admin_password">Password</label>
+            <input type="password" id="admin_password" name="password" required>
+          </div>
 
-  <div class="form-group">
-    <label for="confirm_password">Confirm Password</label>
-    <input type="password" id="confirm_password" name="confirm_password" required>
-    <small id="password-error" style="color: red; display: none;">
-      Passwords do not match.
-    </small>
-  </div>
-</div>
-
-
-      <!-- REMOVE: Role -->
-      <!-- REMOVE: Availability -->
-      <!-- REMOVE: Geolocation -->
+          <!-- Confirm Password -->
+          <div class="form-group">
+            <label for="admin_confirm_password">Confirm Password</label>
+            <input type="password" id="admin_confirm_password" name="confirm_password" required>
+            <small id="admin-password-error"
+                   style="color:#dc3545;display:none;font-size:13px;">
+              Passwords do not match.
+            </small>
+          </div>
+        </div>
+      </div>
 
       <button type="submit" class="btn-primary">Create Admin Account</button>
-      <button type="button" class="btn btn-danger" onclick="resetForm('admin-account-form')">Cancel</button>
+      <button type="button" class="btn btn-danger"
+              onclick="resetForm('admin-account-form')">Cancel</button>
     </form>
   </div>
 
   <!-- Admin Accounts List -->
   <div class="accounts-table">
     <h3>Existing Admin Accounts</h3>
-    
+
     <?php if (empty($adminAccounts)): ?>
-      <div class="empty-state"><p>No admin accounts found.</p></div>
+      <div class="empty-state" style="
+        background:#fafafa;
+        padding:40px;
+        text-align:center;
+        border-radius:8px;
+        font-size:18px;
+        color:#666;
+      ">
+        <p>No admin accounts found in the database.</p>
+      </div>
     <?php else: ?>
-      <table>
+      <table style="width:100%; border-collapse:collapse;">
         <thead>
-          <tr>
-            <th>Photo</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Actions</th>
+          <tr style="background:#2d482d; color:#fff;">
+            <th style="padding:12px 10px;">Name</th>
+            <th style="padding:12px 10px;">Username</th>
+            <th style="padding:12px 10px;">Email</th>
+            <th style="padding:12px 10px;">Mobile</th>
+            <th style="padding:12px 10px;">Address</th>
+            <th style="padding:12px 10px;">Actions</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($adminAccounts as $account): ?>
-          <tr>
-            <td>
-              <?php if ($account['photo_path']): ?>
-                <img src="<?= htmlspecialchars($account['photo_path']) ?>" class="profile-photo">
-              <?php else: ?>
-                <div class="profile-placeholder">No Photo</div>
-              <?php endif; ?>
-            </td>
-            <td><strong><?= htmlspecialchars($account['first_name'].' '.$account['last_name']) ?></strong></td>
-            <td><?= htmlspecialchars($account['email']) ?></td>
-            <td>
-              <button onclick="viewProfile(<?= $account['id'] ?>, 'admin')" class="btn-small">View</button>
-              <button onclick="editAccount(<?= $account['id'] ?>, 'admin')" class="btn-small">Edit</button>
-            </td>
-          </tr>
+            <tr style="border-bottom:1px solid #eee; background:#fff;">
+              <td style="padding:10px 8px;"><strong><?php echo htmlspecialchars(trim(($account['first_name'] ?? '') . ' ' . ($account['middle_name'] ?? '') . ' ' . ($account['last_name'] ?? '')) ?: 'N/A'); ?></strong></td>
+              <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['username'] ?? ''); ?></td>
+              <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['email'] ?? ''); ?></td>
+              <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['phone'] ?? ''); ?></td>
+              <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['address'] ?? ''); ?></td>
+              <td style="padding:10px 8px;">
+                <button onclick="viewProfile(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:4px 10px; font-size:11px; margin-right:3px;">View</button>
+                <button onclick="editAccount(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:4px 10px; font-size:11px; margin-right:3px;">Edit</button>
+                <button onclick="deleteAdmin(<?php echo (int)$account['id']; ?>)" class="btn-small btn-danger" style="padding:4px 10px; font-size:11px;">Delete</button>
+              </td>
+            </tr>
           <?php endforeach; ?>
         </tbody>
       </table>
     <?php endif; ?>
   </div>
 </div>
+
 
 
   <!-- AGENT ACCOUNTS SECTION -->
@@ -3309,7 +3305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             </thead>
             <tbody>
               <?php foreach ($all_viewings as $viewing): ?>
-                <tr>
+                <tr style="border-bottom:1px solid #eee; background:#fff;">
                   <td>
                     <strong><?php echo htmlspecialchars($viewing['client_first_name'] . ' ' . $viewing['client_last_name']); ?></strong>
                     <?php if (!empty($viewing['note'])): ?>
@@ -3341,28 +3337,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                       <?php echo htmlspecialchars(ucwords(str_replace('_', ' ', $viewing['status']))); ?>
                     </span>
                   </td>
-                  <td>
-                    <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px;">
-                      <form method="POST" style="width: 100%;">
-                        <input type="hidden" name="viewing_action" value="assign_agent">
-                        <input type="hidden" name="viewing_id" value="<?php echo $viewing['id']; ?>">
-                        <select name="agent_id" required style="width: 140px;">
-                          <option value="">Select Agent</option>
-                          <?php foreach ($agents as $agent): ?>
-                            <option value="<?php echo $agent['id']; ?>"><?php echo htmlspecialchars($agent['first_name'] . ' ' . $agent['last_name']); ?></option>
-                          <?php endforeach; ?>
-                        </select>
-                        <div style="display: flex; gap: 6px; margin-top: 6px;">
-                          <button type="submit" class="btn-small">Assign</button>
-                          <button type="button"
-                            class="btn-small"
-                            onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
-                            View Client
-                          </button>
+                    <td>
+                      <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px;">
+                        <div style="margin-bottom: 4px;">
+                          <?php
+                            $assignedAgent = null;
+                            if (!empty($viewing['agent_id'])) {
+                              foreach ($agents as $agent) {
+                                if ($agent['id'] == $viewing['agent_id']) {
+                                  $assignedAgent = $agent;
+                                  break;
+                                }
+                              }
+                            }
+                          ?>
+                          <?php if ($assignedAgent): ?>
+                            <span style="font-size:13px;color:#2d482d;background:#e6f4ea;padding:2px 8px;border-radius:5px;display:inline-block;">
+                              Nearest Agent: <strong><?php echo htmlspecialchars($assignedAgent['first_name'] . ' ' . $assignedAgent['last_name']); ?></strong>
+                            </span>
+                          <?php else: ?>
+                            <span style="font-size:13px;color:#666;">No agent assigned yet</span>
+                          <?php endif; ?>
                         </div>
-                      </form>
-                    </div>
-                  </td>
+                        <form method="POST" style="width: 100%;">
+                          <input type="hidden" name="viewing_action" value="assign_agent">
+                          <input type="hidden" name="viewing_id" value="<?php echo $viewing['id']; ?>">
+                          <select name="agent_id" required style="width: 120px; font-size:12px; padding:4px 8px; border-radius:4px;">
+                            <option value="">Select Agent</option>
+                            <?php foreach ($agents as $agent): ?>
+                              <option value="<?php echo $agent['id']; ?>" <?php if ($viewing['agent_id'] == $agent['id']) echo 'selected style="background:#e6f4ea;font-weight:bold;"'; ?>><?php echo htmlspecialchars($agent['first_name'] . ' ' . $agent['last_name']); ?><?php if ($viewing['agent_id'] == $agent['id']) echo ' (Assigned)'; ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                          <div style="display: flex; gap: 4px; margin-top: 4px;">
+                            <button type="submit" class="btn-small" style="padding:4px 10px; font-size:11px;">Assign</button>
+                            <button type="button"
+                              class="btn-small"
+                              style="padding:4px 10px; font-size:11px;"
+                              onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
+                              View Client
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </td>
                 </tr>
               <?php endforeach; ?>
             </tbody>
@@ -3643,380 +3660,589 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
  <script>
-  // ================================
-  // MAIN NAVIGATION & INITIAL SETUP
-  // ================================
-  document.addEventListener('DOMContentLoaded', function() {
-    // Section navigation
-    const sections = [
-      'section-dashboard',
-      'section-accounts',
-      'section-lots',
-      'section-viewings',
-      'section-analytics',
-      'section-documents',
-      'section-notifications',
-      'section-audit-logs'
-    ];
-    
-    function showSection(targetId) {
-      sections.forEach(sectionId => {
-        const section = document.getElementById(sectionId);
-        if (section) {
-          section.classList.toggle('hidden', sectionId !== targetId);
-        }
-      });
-      
-      // Update active nav link
-      document.querySelectorAll('[data-target]').forEach(link => {
-        link.classList.toggle('active', link.dataset.target === targetId);
-      });
-
-      // Load data based on section
-      if (targetId === 'section-lots') {
-        loadLocations();
-      } else if (targetId === 'section-analytics') {
-        loadAnalyticsData();
-      } else if (targetId === 'section-documents') {
-        loadDocuments();
-      } else if (targetId === 'section-notifications') {
-        loadNotifications();
-      } else if (targetId === 'section-audit-logs') {
-        loadAuditLogs();
+// ================================
+// MAIN NAVIGATION & INITIAL SETUP
+// ================================
+document.addEventListener('DOMContentLoaded', function() {
+  // Section navigation
+  const sections = [
+    'section-dashboard',
+    'section-accounts',
+    'section-lots',
+    'section-viewings',
+    'section-analytics',
+    'section-documents',
+    'section-notifications',
+    'section-audit-logs'
+  ];
+  
+  function showSection(targetId) {
+    sections.forEach(sectionId => {
+      const section = document.getElementById(sectionId);
+      if (section) {
+        section.classList.toggle('hidden', sectionId !== targetId);
       }
-    }
-
-    // Handle navigation clicks
+    });
+    
+    // Update active nav link
     document.querySelectorAll('[data-target]').forEach(link => {
-      link.addEventListener('click', function(e) {
-        e.preventDefault();
-        showSection(this.dataset.target);
-      });
+      link.classList.toggle('active', link.dataset.target === targetId);
     });
 
-    // Add Analytics navigation dynamically (if not present)
-    const viewingsNav = document.querySelector('[data-target="section-viewings"]');
-    if (viewingsNav && !document.querySelector('[data-target="section-analytics"]')) {
-      const analyticsNav = document.createElement('a');
-      analyticsNav.setAttribute('data-target', 'section-analytics');
-      analyticsNav.innerHTML = `
-        <svg width="24" height="24" fill="white" viewBox="0 0 24 24" class="nav-icon">
-          <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
-        </svg>
-        <span>Analytics</span>
-      `;
-      viewingsNav.parentNode.insertBefore(analyticsNav, viewingsNav.nextSibling);
-      
-      // Add click handler for new analytics nav
-      analyticsNav.addEventListener('click', function(e) {
-        e.preventDefault();
-        showSection('section-analytics');
-      });
+    // Load data based on section
+    if (targetId === 'section-lots') {
+      loadLocations();
+    } else if (targetId === 'section-analytics') {
+      loadAnalyticsData();
+    } else if (targetId === 'section-documents') {
+      loadDocuments();
+    } else if (targetId === 'section-notifications') {
+      loadNotifications();
+    } else if (targetId === 'section-audit-logs') {
+      loadAuditLogs();
     }
+  }
 
-    // Show dashboard by default
-    showSection('section-dashboard');
+  // Handle navigation clicks
+  document.querySelectorAll('[data-target]').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      showSection(this.dataset.target);
+    });
+  });
 
-    // Set up lots location dropdown
-    const locationSelect = document.getElementById('location_id');
-    if (locationSelect) {
-      locationSelect.addEventListener('change', function() {
-        loadLots(this.value);
-      });
-    }
+  // Add Analytics navigation dynamically (if not present)
+  const viewingsNav = document.querySelector('[data-target="section-viewings"]');
+  if (viewingsNav && !document.querySelector('[data-target="section-analytics"]')) {
+    const analyticsNav = document.createElement('a');
+    analyticsNav.setAttribute('data-target', 'section-analytics');
+    analyticsNav.innerHTML = `
+      <svg width="24" height="24" fill="white" viewBox="0 0 24 24" class="nav-icon">
+        <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
+      </svg>
+      <span>Analytics</span>
+    `;
+    viewingsNav.parentNode.insertBefore(analyticsNav, viewingsNav.nextSibling);
+    
+    analyticsNav.addEventListener('click', function(e) {
+      e.preventDefault();
+      showSection('section-analytics');
+    });
+  }
 
-    // Initial loads
+  // Show dashboard by default
+  showSection('section-dashboard');
+
+  // Lots location dropdown
+  const locationSelect = document.getElementById('location_id');
+  if (locationSelect) {
+    locationSelect.addEventListener('change', function() {
+      loadLots(this.value);
+    });
+  }
+
+  // Initial loads
+  loadNotifications();
+  refreshBadges();
+
+  // Auto-refresh every 20 seconds
+  setInterval(() => {
     loadNotifications();
     refreshBadges();
 
-    // Auto-refresh every 20 seconds
-    setInterval(() => {
-      loadNotifications();      // always keep notifications fresh
-      refreshBadges();          // update counts
+    const docsSection  = document.getElementById('section-documents');
+    const auditSection = document.getElementById('section-audit-logs');
 
-      // Only refresh audit logs/documents if their section is open
-      const docsSection  = document.getElementById('section-documents');
-      const auditSection = document.getElementById('section-audit-logs');
+    if (docsSection && !docsSection.classList.contains('hidden')) {
+      loadDocuments();
+    }
+    if (auditSection && !auditSection.classList.contains('hidden')) {
+      loadAuditLogs();
+    }
+  }, 20000);
 
-      if (docsSection && !docsSection.classList.contains('hidden')) {
-        loadDocuments();
+  // ========= Edit Account modal submit =========
+  const editAccountForm = document.getElementById('editAccountForm');
+  if (editAccountForm) {
+    editAccountForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      const formData = new FormData(editAccountForm);
+      const type = formData.get('account_type');
+
+      if (type === 'admin') {
+        formData.append('account_action', 'update');
+      } else if (type === 'agent') {
+        formData.append('agent_action', 'update');
+      } else if (type === 'user') {
+        formData.append('user_action', 'update');
       }
-      if (auditSection && !auditSection.classList.contains('hidden')) {
-        loadAuditLogs();
-      }
-    }, 20000);
 
-    // Global functions
-    window.loadLocations         = loadLocations;
-    window.loadLots              = loadLots;
-    window.saveLot               = saveLot;
-    window.editLot               = editLot;
-    window.saveEdit              = saveEdit;
-    window.deleteLot             = deleteLot;
-    window.addNewLot             = addNewLot;
-    window.cancelAdd             = cancelAdd;
-    window.cancelEdit            = cancelEdit;
-    window.showAccountType       = showAccountType;
-    window.confirmLogout         = confirmLogout;
-    window.applyAnalyticsFilters = applyAnalyticsFilters;
-    window.loadTopAgents         = loadTopAgents;
-    window.exportAnalytics       = exportAnalytics;
-    window.loadDocuments         = loadDocuments;
-    window.loadNotifications     = loadNotifications;
-    window.loadAuditLogs         = loadAuditLogs;
+      fetch(window.location.pathname, {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          alert(res.message || 'Account updated!');
+          closeEditAccountModal();
+          location.reload();
+        } else {
+          alert('Failed to update account: ' + (res.error || res.message || 'Unknown error'));
+        }
+      })
+      .catch(err => {
+        console.error('Update fetch error:', err);
+        alert('Failed to update account: ' + err.message);
+      });
+    });
+  }
+
+  // ========= Edit Lot modal submit =========
+  const editLotForm = document.getElementById('editLotForm');
+  if (editLotForm) {
+    editLotForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const formData = new FormData(editLotForm);
+      formData.append('action', 'save');
+      fetch(window.location.pathname, { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            alert('Lot updated!');
+            closeEditLotModal();
+            const locSel = document.getElementById('location_id');
+            loadLots(locSel ? locSel.value : '');
+          } else {
+            alert('Failed to update lot: ' + (res.error || 'Unknown error'));
+          }
+        })
+        .catch(() => alert('Failed to update lot.'));
+    });
+  }
+
+  // ========= Agent account create (AJAX) =========
+  const agentForm = document.getElementById('agent-account-form');
+  if (agentForm) {
+    agentForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const pass   = document.getElementById('agent_password');
+      const confirm = document.getElementById('agent_confirm_password');
+      const error  = document.getElementById('agent-password-error');
+
+      if (pass && confirm && error && pass.value !== confirm.value) {
+        error.style.display = 'block';
+        return;
+      } else if (error) {
+        error.style.display = 'none';
+      }
+
+      const formData = new FormData(agentForm);
+
+      try {
+        const response = await fetch(window.location.pathname, {
+          method: "POST",
+          body: formData
+        });
+        const result = await response.json();
+
+        if (result.success) {
+          alert(result.message || "✅ Agent account created successfully!");
+          agentForm.reset();
+          if (error) error.style.display = 'none';
+        } else {
+          alert("❌ Error: " + (result.message || "Failed to create account"));
+        }
+      } catch (err) {
+        alert("❌ Request failed.");
+        console.error(err);
+      }
+    });
+  }
+
+  // ========= Admin account create (AJAX) =========
+  const adminForm = document.getElementById('admin-account-form');
+  if (adminForm) {
+    const adminPass    = document.getElementById('admin_password');
+    const adminConfirm = document.getElementById('admin_confirm_password');
+    const adminError   = document.getElementById('admin-password-error');
+
+    if (adminPass && adminConfirm && adminError) {
+      // live feedback
+      function validateAdminPasswords() {
+        if (adminPass.value && adminConfirm.value && adminPass.value !== adminConfirm.value) {
+          adminError.style.display = 'block';
+          adminConfirm.setCustomValidity('Passwords do not match');
+        } else {
+          adminError.style.display = 'none';
+          adminConfirm.setCustomValidity('');
+        }
+      }
+
+      adminPass.addEventListener('input', validateAdminPasswords);
+      adminConfirm.addEventListener('input', validateAdminPasswords);
+
+      adminForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        validateAdminPasswords();
+        if (adminConfirm.validationMessage) {
+          adminConfirm.reportValidity();
+          return;
+        }
+
+        const formData = new FormData(adminForm);
+        if (!formData.get('account_action')) {
+          formData.append('account_action', 'add');
+        }
+
+        fetch(window.location.pathname, {
+          method: 'POST',
+          body: formData
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            alert(res.message || 'Admin account created successfully!');
+            adminForm.reset();
+            adminError.style.display = 'none';
+          } else {
+            alert(res.error || res.message || 'Failed to create admin account.');
+          }
+        })
+        .catch(err => {
+          alert('Request failed: ' + err.message);
+        });
+      });
+    }
+  }
+
+  // ========= User password live check =========
+  (function () {
+    const form    = document.getElementById('user-account-form');
+    const pass    = document.getElementById('user_password');
+    const confirm = document.getElementById('user_confirm_password');
+    const error   = document.getElementById('user-password-error');
+
+    if (!form || !pass || !confirm || !error) return;
+
+    function validateUserPasswords() {
+      if (pass.value && confirm.value && pass.value !== confirm.value) {
+        error.style.display = 'block';
+        confirm.setCustomValidity('Passwords do not match');
+      } else {
+        error.style.display = 'none';
+        confirm.setCustomValidity('');
+      }
+    }
+
+    pass.addEventListener('input',   validateUserPasswords);
+    confirm.addEventListener('input', validateUserPasswords);
+
+    form.addEventListener('submit', function (e) {
+      validateUserPasswords();
+      if (confirm.validationMessage) {
+        e.preventDefault();
+        confirm.reportValidity();
+      }
+    });
+  })();
+
+  // ========= View Client modal close handlers =========
+  const viewModal = document.getElementById('viewClientModal');
+  if (viewModal) {
+    viewModal.addEventListener('click', (e) => {
+      if (e.target === viewModal) closeViewClientModal();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeViewClientModal();
   });
 
-  // ===========================
-  // BADGES (Notifications / Docs)
-  // ===========================
-  function updateBadge(el, count) {
-    if (!el) return;
-    if (count > 0) {
-      el.style.display = 'inline-block';
-      el.textContent = count > 99 ? '99+' : count;
-    } else {
-      el.style.display = 'none';
-    }
+  // expose globals
+  window.loadLocations         = loadLocations;
+  window.loadLots              = loadLots;
+  window.saveLot               = saveLot;
+  window.editLot               = editLot;
+  window.saveEdit              = saveEdit;
+  window.deleteLot             = deleteLot;
+  window.addNewLot             = addNewLot;
+  window.cancelAdd             = cancelAdd;
+  window.cancelEdit            = cancelEdit;
+  window.showAccountType       = showAccountType;
+  window.confirmLogout         = confirmLogout;
+  window.applyAnalyticsFilters = applyAnalyticsFilters;
+  window.loadTopAgents         = loadTopAgents;
+  window.exportAnalytics       = exportAnalytics;
+  window.loadDocuments         = loadDocuments;
+  window.loadNotifications     = loadNotifications;
+  window.loadAuditLogs         = loadAuditLogs;
+  window.viewProfile           = viewProfile;
+  window.closeViewClientModal  = closeViewClientModal;
+  window.editAccount           = editAccount;
+  window.closeEditAccountModal = closeEditAccountModal;
+  window.openEditLotModal      = openEditLotModal;
+  window.closeEditLotModal     = closeEditLotModal;
+  window.bulkDeleteLots        = bulkDeleteLots;
+});
+
+// ===========================
+// BADGES (Notifications / Docs)
+// ===========================
+function updateBadge(el, count) {
+  if (!el) return;
+  if (count > 0) {
+    el.style.display = 'inline-block';
+    el.textContent = count > 99 ? '99+' : count;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function refreshBadges() {
+  const notifBadge = document.getElementById('notifications-badge');
+  const docsBadge  = document.getElementById('documents-badge');
+
+  if (notifBadge) {
+    fetch(window.location.pathname + '?fetch=notifications_count')
+      .then(r => r.json())
+      .then(data => updateBadge(notifBadge, data.count || 0))
+      .catch(() => {});
   }
 
-  function refreshBadges() {
-    const notifBadge = document.getElementById('notifications-badge');
-    const docsBadge  = document.getElementById('documents-badge');
-
-    if (notifBadge) {
-      fetch(window.location.pathname + '?fetch=notifications_count')
-        .then(r => r.json())
-        .then(data => updateBadge(notifBadge, data.count || 0))
-        .catch(() => {});
-    }
-
-    if (docsBadge) {
-      fetch(window.location.pathname + '?fetch=documents')
-        .then(r => r.json())
-        .then(docs => updateBadge(docsBadge, docs.length || 0))
-        .catch(() => {});
-    }
+  if (docsBadge) {
+    fetch(window.location.pathname + '?fetch=documents')
+      .then(r => r.json())
+      .then(docs => updateBadge(docsBadge, docs.length || 0))
+      .catch(() => {});
   }
+}
 
-  // ===========================
-  // LOTS MANAGEMENT FUNCTIONS
-  // ===========================
-  function loadLocations() {
-    fetch(window.location.pathname + '?fetch=locations')
-      .then(response => response.json())
-      .then(locations => {
-        const selects = ['location_id', 'analytics_location'];
-        selects.forEach(selectId => {
-          const select = document.getElementById(selectId);
-          if (select) {
-            const isAnalytics = selectId === 'analytics_location';
-            select.innerHTML = isAnalytics
-              ? '<option value="">All Locations</option>'
-              : '<option value="" disabled selected>Please select a location first</option>';
-            locations.forEach(location => {
-              const option = document.createElement('option');
-              option.value = location.id;
-              option.textContent = location.location_name;
-              select.appendChild(option);
-            });
-          }
-        });
-      })
-      .catch(error => console.error('Error loading locations:', error));
-  }
-
-  function loadLots(locationId = '') {
-    fetch(`${window.location.pathname}?fetch=lots&location_id=${locationId}`)
-      .then(response => response.json())
-      .then(data => {
-        const tbody = document.getElementById('lots-table-body');
-        const newRow = document.getElementById('new-row');
-        if (newRow) newRow.remove();
-        
-        tbody.innerHTML = '';
-        
-        if (data.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No lots available.</td></tr>';
-        } else {
-          data.forEach(lot => {
-            const row = tbody.insertRow();
-            row.setAttribute('data-id', lot.id);
-            row.innerHTML = `
-              <td><input type="checkbox" class="lot-checkbox" value="${lot.id}"></td>
-              <td>${lot.block_number}</td>
-              <td>${lot.lot_number}</td>
-              <td>${lot.lot_size}</td>
-              <td>${lot.lot_price}</td>
-              <td>${lot.status}</td>
-              <td>
-                <button onclick='openEditLotModal(${JSON.stringify(lot)})'>Edit</button>
-                <button onclick="deleteLot(${lot.id})">Delete</button>
-              </td>
-            `;
+// ===========================
+// LOTS MANAGEMENT FUNCTIONS
+// ===========================
+function loadLocations() {
+  fetch(window.location.pathname + '?fetch=locations')
+    .then(response => response.json())
+    .then(locations => {
+      const selects = ['location_id', 'analytics_location'];
+      selects.forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (select) {
+          const isAnalytics = selectId === 'analytics_location';
+          select.innerHTML = isAnalytics
+            ? '<option value="">All Locations</option>'
+            : '<option value="" disabled selected>Please select a location first</option>';
+          locations.forEach(location => {
+            const option = document.createElement('option');
+            option.value = location.id;
+            option.textContent = location.location_name;
+            select.appendChild(option);
           });
         }
+      });
+    })
+    .catch(error => console.error('Error loading locations:', error));
+}
 
-        if (newRow) tbody.appendChild(newRow);
-      })
-      .catch(error => console.error('Error loading lots:', error));
-  }
+function loadLots(locationId = '') {
+  fetch(`${window.location.pathname}?fetch=lots&location_id=${locationId}`)
+    .then(response => response.json())
+    .then(data => {
+      const tbody = document.getElementById('lots-table-body');
+      const newRow = document.getElementById('new-row');
+      if (!tbody) return;
 
-  function saveLot() {
-    const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status'];
-    const locationId = document.getElementById('location_id').value;
-    
-    const data = {};
-    let isValid = true;
-    
-    fields.forEach(field => {
-      const value = document.getElementById(field).value;
-      if (!value || (field.includes('number') && isNaN(value))) {
-        isValid = false;
+      if (newRow) newRow.remove();
+      
+      tbody.innerHTML = '';
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No lots available.</td></tr>';
+      } else {
+        data.forEach(lot => {
+          const row = tbody.insertRow();
+          row.setAttribute('data-id', lot.id);
+          row.innerHTML = `
+            <td><input type="checkbox" class="lot-checkbox" value="${lot.id}"></td>
+            <td>${lot.block_number}</td>
+            <td>${lot.lot_number}</td>
+            <td>${lot.lot_size}</td>
+            <td>${lot.lot_price}</td>
+            <td>${lot.status}</td>
+            <td>
+              <button onclick='openEditLotModal(${JSON.stringify(lot)})'>Edit</button>
+              <button onclick="deleteLot(${lot.id})">Delete</button>
+            </td>
+          `;
+        });
       }
-      data[field] = value;
-    });
 
-    if (!isValid || !locationId) {
-      alert('Please fill out all fields correctly and select a location.');
-      return;
+      if (newRow) tbody.appendChild(newRow);
+    })
+    .catch(error => console.error('Error loading lots:', error));
+}
+
+function saveLot() {
+  const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status'];
+  const locationId = document.getElementById('location_id').value;
+  
+  const data = {};
+  let isValid = true;
+  
+  fields.forEach(field => {
+    const value = document.getElementById(field).value;
+    if (!value || (field.includes('number') && isNaN(value))) {
+      isValid = false;
     }
+    data[field] = value;
+  });
 
-    const formData = new FormData();
-    formData.append('action', 'save');
-    Object.keys(data).forEach(key => formData.append(key, data[key]));
-    formData.append('location_id', locationId);
-
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(response => response.json())
-      .then(result => {
-        if (result.success) {
-          showLotMessage('Lot added successfully!', true);
-          loadLots(locationId);
-          cancelAdd();
-        } else {
-          alert('Error: ' + result.error);
-        }
-      })
-      .catch(error => console.error('Error:', error));
+  if (!isValid || !locationId) {
+    alert('Please fill out all fields correctly and select a location.');
+    return;
   }
 
-  function deleteLot(id) {
-    if (!confirm('Are you sure you want to delete this lot?')) return;
+  const formData = new FormData();
+  formData.append('action', 'save');
+  Object.keys(data).forEach(key => formData.append(key, data[key]));
+  formData.append('location_id', locationId);
 
-    const formData = new FormData();
-    formData.append('action', 'delete');
-    formData.append('lot_id', id);
+  fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(response => response.json())
+    .then(result => {
+      if (result.success) {
+        showLotMessage('Lot added successfully!', true);
+        loadLots(locationId);
+        cancelAdd();
+      } else {
+        alert('Error: ' + result.error);
+      }
+    })
+    .catch(error => console.error('Error:', error));
+}
 
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(response => response.json())
-      .then(result => {
-        if (result.success) {
-          showLotMessage('Lot deleted successfully!', true);
-          loadLots(document.getElementById('location_id').value);
-        } else {
-          alert('Error: ' + result.error);
-        }
-      })
-      .catch(error => console.error('Error:', error));
+function deleteLot(id) {
+  if (!confirm('Are you sure you want to delete this lot?')) return;
+
+  const formData = new FormData();
+  formData.append('action', 'delete');
+  formData.append('lot_id', id);
+
+  fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(response => response.json())
+    .then(result => {
+      if (result.success) {
+        showLotMessage('Lot deleted successfully!', true);
+        const locSel = document.getElementById('location_id');
+        loadLots(locSel ? locSel.value : '');
+      } else {
+        alert('Error: ' + result.error);
+      }
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function editLot(button) {
+  const row = button.closest('tr');
+  const cells = row.querySelectorAll('td');
+
+  for (let i = 0; i < 5; i++) {
+    cells[i].setAttribute('data-original', cells[i].innerText);
   }
 
-  function editLot(button) {
-    const row = button.closest('tr');
-    const cells = row.querySelectorAll('td');
+  cells[0].innerHTML = `<input type="text" value="${cells[0].getAttribute('data-original')}">`;
+  cells[1].innerHTML = `<input type="text" value="${cells[1].getAttribute('data-original')}">`;
+  cells[2].innerHTML = `<input type="text" value="${cells[2].getAttribute('data-original')}">`;
+  cells[3].innerHTML = `<input type="text" value="${cells[3].getAttribute('data-original')}">`;
+  cells[4].innerHTML = `
+    <select>
+      <option value="Available" ${cells[4].getAttribute('data-original') === 'Available' ? 'selected' : ''}>Available</option>
+      <option value="Sold" ${cells[4].getAttribute('data-original') === 'Sold' ? 'selected' : ''}>Sold</option>
+      <option value="Reserved" ${cells[4].getAttribute('data-original') === 'Reserved' ? 'selected' : ''}>Reserved</option>
+    </select>
+  `;
+  cells[5].innerHTML = '<button onclick="saveEdit(this)">Save</button><button onclick="cancelEdit(this)">Cancel</button>';
+}
 
-    for (let i = 0; i < 5; i++) {
-      cells[i].setAttribute('data-original', cells[i].innerText);
-    }
+function saveEdit(button) {
+  const row = button.closest('tr');
+  const id = row.getAttribute('data-id');
+  const inputs = row.querySelectorAll('input, select');
+  const locationId = document.getElementById('location_id').value;
 
-    cells[0].innerHTML = `<input type="text" value="${cells[0].getAttribute('data-original')}">`;
-    cells[1].innerHTML = `<input type="text" value="${cells[1].getAttribute('data-original')}">`;
-    cells[2].innerHTML = `<input type="text" value="${cells[2].getAttribute('data-original')}">`;
-    cells[3].innerHTML = `<input type="text" value="${cells[3].getAttribute('data-original')}">`;
-    cells[4].innerHTML = `
-      <select>
-        <option value="Available" ${cells[4].getAttribute('data-original') === 'Available' ? 'selected' : ''}>Available</option>
-        <option value="Sold" ${cells[4].getAttribute('data-original') === 'Sold' ? 'selected' : ''}>Sold</option>
-        <option value="Reserved" ${cells[4].getAttribute('data-original') === 'Reserved' ? 'selected' : ''}>Reserved</option>
-      </select>
-    `;
-    cells[5].innerHTML = '<button onclick="saveEdit(this)">Save</button><button onclick="cancelEdit(this)">Cancel</button>';
+  if (!locationId) {
+    showLotMessage('Please select a location.', false);
+    return;
   }
 
-  function saveEdit(button) {
-    const row = button.closest('tr');
-    const id = row.getAttribute('data-id');
-    const inputs = row.querySelectorAll('input, select');
-    const locationId = document.getElementById('location_id').value;
+  const formData = new FormData();
+  formData.append('action', 'save');
+  formData.append('lot_id', id);
+  formData.append('block_number', inputs[0].value);
+  formData.append('lot_number', inputs[1].value);
+  formData.append('lot_size', inputs[2].value);
+  formData.append('lot_price', inputs[3].value);
+  formData.append('status', inputs[4].value);
+  formData.append('location_id', locationId);
 
-    if (!locationId) {
-      showLotMessage('Please select a location.', false);
-      return;
-    }
+  fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(response => response.json())
+    .then(result => {
+      if (result.success) {
+        showLotMessage('Lot updated successfully!', true);
+        setTimeout(() => loadLots(locationId), 1000);
+      } else {
+        showLotMessage('Error: ' + result.error, false);
+      }
+    })
+    .catch(error => console.error('Error:', error));
+}
 
-    const formData = new FormData();
-    formData.append('action', 'save');
-    formData.append('lot_id', id);
-    formData.append('block_number', inputs[0].value);
-    formData.append('lot_number', inputs[1].value);
-    formData.append('lot_size', inputs[2].value);
-    formData.append('lot_price', inputs[3].value);
-    formData.append('status', inputs[4].value);
-    formData.append('location_id', locationId);
+function addNewLot() {
+  const newRow = document.getElementById('new-row');
+  if (newRow) newRow.style.display = 'table-row';
+}
 
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(response => response.json())
-      .then(result => {
-        if (result.success) {
-          showLotMessage('Lot updated successfully!', true);
-          setTimeout(() => loadLots(locationId), 1000);
-        } else {
-          showLotMessage('Error: ' + result.error, false);
-        }
-      })
-      .catch(error => console.error('Error:', error));
-  }
+function cancelAdd() {
+  const newRow = document.getElementById('new-row');
+  if (!newRow) return;
+  newRow.style.display = 'none';
+  newRow.querySelectorAll('input').forEach(input => input.value = '');
+  const status = document.getElementById('status');
+  if (status) status.value = 'Available';
+}
 
-  function addNewLot() {
-    const newRow = document.getElementById('new-row');
-    if (newRow) newRow.style.display = 'table-row';
-  }
+function cancelEdit() {
+  const locSel = document.getElementById('location_id');
+  loadLots(locSel ? locSel.value : '');
+}
 
-  function cancelAdd() {
-    const newRow = document.getElementById('new-row');
-    newRow.style.display = 'none';
-    newRow.querySelectorAll('input').forEach(input => input.value = '');
-    document.getElementById('status').value = 'Available';
-  }
+function showLotMessage(msg, success = true) {
+  const msgDiv = document.getElementById('lot-message');
+  if (!msgDiv) return;
+  msgDiv.textContent = msg;
+  msgDiv.style.display = 'block';
+  msgDiv.style.background = success ? '#d4edda' : '#f8d7da';
+  msgDiv.style.color = success ? '#155724' : '#721c24';
+  msgDiv.style.border = success ? '1px solid #c3e6cb' : '1px solid #f5c6cb';
+  setTimeout(() => msgDiv.style.display = 'none', 3000);
+}
 
-  function cancelEdit(button) {
-    loadLots(document.getElementById('location_id').value);
-  }
-
-  function showLotMessage(msg, success = true) {
-    const msgDiv = document.getElementById('lot-message');
-    if (!msgDiv) return;
-    msgDiv.textContent = msg;
-    msgDiv.style.display = 'block';
-    msgDiv.style.background = success ? '#d4edda' : '#f8d7da';
-    msgDiv.style.color = success ? '#155724' : '#721c24';
-    msgDiv.style.border = success ? '1px solid #c3e6cb' : '1px solid #f5c6cb';
-    setTimeout(() => msgDiv.style.display = 'none', 3000);
-  }
-
-  // ===========================
-  // DOCUMENT REVIEW FUNCTIONS
- 
+// ===========================
+// DOCUMENT REVIEW FUNCTIONS
+// ===========================
 function loadDocuments() {
   const container = document.getElementById('documents-container');
   if (!container) return;
 
   container.innerHTML = '<p style="text-align: center; color: #666;">Loading documents...</p>';
 
-  // Fetch ALL user-uploaded documents for admin review
   fetch(window.location.pathname + '?fetch=all_user_documents')
     .then(response => response.json())
     .then(documents => {
-      // update badge count too
       const docsBadge = document.getElementById('documents-badge');
       updateBadge(docsBadge, documents.length || 0);
 
@@ -4073,7 +4299,7 @@ function approveDocument(id) {
 
 function rejectDocument(id) {
   const remarks = prompt('Enter remarks for rejection (optional):', '');
-  if (remarks === null) return; // cancelled
+  if (remarks === null) return;
 
   const formData = new FormData();
   formData.append('action', 'reject_document');
@@ -4094,561 +4320,577 @@ function rejectDocument(id) {
     .catch(() => alert('Failed to reject document.'));
 }
 
-  // ===========================
-  // NOTIFICATIONS FUNCTIONS
-  // ===========================
-  function loadNotifications() {
-    const container = document.getElementById('notifications-container');
-    if (!container) return;
+// ===========================
+// NOTIFICATIONS FUNCTIONS
+// ===========================
+function loadNotifications() {
+  const container = document.getElementById('notifications-container');
+  if (!container) return;
 
-    container.innerHTML = '<p style="text-align: center; color: #666;">Loading notifications...</p>';
+  container.innerHTML = '<p style="text-align: center; color: #666;">Loading notifications...</p>';
 
-    fetch(window.location.pathname + '?fetch=notifications')
-      .then(response => response.json())
-      .then(notifications => {
-        // update badge
-        const notifBadge = document.getElementById('notifications-badge');
-        updateBadge(notifBadge, notifications.length || 0);
+  fetch(window.location.pathname + '?fetch=notifications')
+    .then(response => response.json())
+    .then(notifications => {
+      const notifBadge = document.getElementById('notifications-badge');
+      updateBadge(notifBadge, notifications.length || 0);
 
-        if (!notifications.length) {
-          container.innerHTML = '<p style="text-align: center; color: #666;">No notifications available.</p>';
-          return;
-        }
-
-        container.innerHTML = notifications.map(notification => `
-          <div style="padding: 15px; margin-bottom: 10px; border-radius: 6px; background: ${getNotificationColor(notification.type)}; color: ${getNotificationTextColor(notification.type)};">
-            <strong>${notification.title}</strong>
-            <p style="margin: 5px 0;">${notification.message}</p>
-            <small style="color: #999;">${notification.created_at ? new Date(notification.created_at).toLocaleString() : ''}</small>
-          </div>
-        `).join('');
-      })
-      .catch(error => {
-        container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load notifications.</p>';
-        console.error('Error loading notifications:', error);
-      });
-  }
-
-  function getNotificationColor(type) {
-    switch (type) {
-      case 'success': return '#d4edda';
-      case 'warning': return '#fff3cd';
-      case 'error':   return '#f8d7da';
-      default:        return '#e2e3e5';
-    }
-  }
-
-  function getNotificationTextColor(type) {
-    switch (type) {
-      case 'success': return '#155724';
-      case 'warning': return '#856404';
-      case 'error':   return '#721c24';
-      default:        return '#383d41';
-    }
-  }
-
-  // ===========================
-  // AUDIT LOGS FUNCTIONS
-  // ===========================
-  function loadAuditLogs() {
-    const container = document.getElementById('audit-logs-container');
-    if (!container) return;
-
-    container.innerHTML = '<p style="text-align: center; color: #666;">Loading audit logs...</p>';
-
-    fetch(window.location.pathname + '?fetch=audit_logs')
-      .then(response => response.json())
-      .then(logs => {
-        if (!logs.length) {
-          container.innerHTML = '<p style="text-align: center; color: #666;">No audit logs found.</p>';
-          return;
-        }
-
-        container.innerHTML = logs.map(log => `
-          <div style="padding: 12px; margin-bottom: 10px; border-radius: 6px; background: #fff; border: 1px solid #e0e0e0;">
-            <strong>${log.action}</strong>
-            <div style="font-size: 13px; color: #333;">${log.details}</div>
-            <div style="font-size: 12px; color: #999;">
-              By: ${log.first_name || ''} ${log.last_name || ''} • ${log.created_at ? new Date(log.created_at).toLocaleString() : ''}
-            </div>
-          </div>
-        `).join('');
-      })
-      .catch(error => {
-        container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load audit logs.</p>';
-        console.error('Error loading audit logs:', error);
-      });
-  }
-
-  // ===========================
-  // ACCOUNT MANAGEMENT
-  // ===========================
-  function showAccountType(type) {
-    document.querySelectorAll('.account-section').forEach(section => section.classList.remove('active'));
-    document.querySelectorAll('.account-type-nav a').forEach(tab => tab.classList.remove('active'));
-    document.getElementById(type + '-accounts').classList.add('active');
-    document.getElementById(type + '-tab').classList.add('active');
-  }
-
-  // Photo and location functions
-  function previewPhoto(input, previewId) {
-    const preview = document.getElementById(previewId);
-    const file = input.files[0];
-    
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        preview.innerHTML = `<img src="${e.target.result}" alt="Preview" class="photo-preview">`;
-      };
-      reader.readAsDataURL(file);
-    } else {
-      preview.innerHTML = 'No Photo';
-      preview.className = 'photo-placeholder';
-    }
-  }
-
-  function getCurrentLocation() {
-    const statusDiv = document.getElementById('location-status');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = 'Getting location...';
-    
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        position => {
-          document.getElementById('latitude').value = position.coords.latitude;
-          document.getElementById('longitude').value = position.coords.longitude;
-          statusDiv.className = 'location-status location-success';
-          statusDiv.innerHTML = 'Location captured successfully!';
-          setTimeout(() => statusDiv.style.display = 'none', 3000);
-        },
-        error => {
-          statusDiv.className = 'location-status location-error';
-          statusDiv.innerHTML = 'Error: ' + error.message;
-        }
-      );
-    } else {
-      statusDiv.className = 'location-status location-error';
-      statusDiv.innerHTML = 'Geolocation is not supported by this browser.';
-    }
-  }
-
-  function clearLocation() {
-    document.getElementById('latitude').value = '';
-    document.getElementById('longitude').value = '';
-    document.getElementById('location-status').style.display = 'none';
-  }
-
-  function getCurrentLocationAgent() {
-    const statusDiv = document.getElementById('agent-location-status');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = 'Getting location...';
-    
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        position => {
-          document.getElementById('agent_latitude').value = position.coords.latitude;
-          document.getElementById('agent_longitude').value = position.coords.longitude;
-          statusDiv.className = 'location-status location-success';
-          statusDiv.innerHTML = 'Location captured successfully!';
-          setTimeout(() => statusDiv.style.display = 'none', 3000);
-        },
-        error => {
-          statusDiv.className = 'location-status location-error';
-          statusDiv.innerHTML = 'Error: ' + error.message;
-        }
-      );
-    } else {
-      statusDiv.className = 'location-status location-error';
-      statusDiv.innerHTML = 'Geolocation is not supported by this browser.';
-    }
-  }
-
-  function clearLocationAgent() {
-    document.getElementById('agent_latitude').value = '';
-    document.getElementById('agent_longitude').value = '';
-    document.getElementById('agent-location-status').style.display = 'none';
-  }
-
-  // ===========================
-  // VIEW CLIENT MODAL
-  // ===========================
-  function viewProfile(id, type, evt) {
-    if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
-    const modal   = document.getElementById('viewClientModal');
-    const content = document.getElementById('viewClientContent');
-    if (!modal || !content) return;
-
-    // show modal immediately with loading state
-    modal.style.display = 'flex';
-    content.innerHTML = '<div style="color:#666;">Loading client details…</div>';
-
-    // Guest client (no account): read details from the table row and show
-    if (type === 'user' && (!id || id === 0)) {
-      try {
-        const btn       = evt?.target;
-        const row       = btn?.closest('tr');
-        const name      = row?.querySelector('td strong')?.innerText?.trim() || 'N/A';
-        const contact   = row?.querySelector('td:nth-child(2)')?.innerText?.trim() || 'N/A';
-        const location  = row?.querySelector('td:nth-child(3)')?.innerText?.trim() || 'N/A';
-        const lot       = row?.querySelector('td:nth-child(4)')?.innerText?.trim() || 'N/A';
-        const prefDate  = row?.querySelector('td:nth-child(5)')?.innerText?.trim() || 'N/A';
-
-        content.innerHTML = `
-          <strong>Name:</strong> ${name}<br>
-          <strong>Contact:</strong> ${contact}<br>
-          <strong>Location:</strong> ${location}<br>
-          <strong>Lot Details:</strong> ${lot}<br>
-          <strong>Preferred Date:</strong> ${prefDate}<br>
-          <div style="color:#dc3545;margin-top:8px;">No user account for this client.</div>
-        `;
-      } catch (e) {
-        content.innerHTML = `<div style="color:#dc3545;">Couldn’t read row data.</div>`;
+      if (!notifications.length) {
+        container.innerHTML = '<p style="text-align: center; color: #666;">No notifications available.</p>';
+        return;
       }
-      return;
-    }
 
-    // Registered user: fetch full profile via your PHP endpoint
-    if (type === 'user' && id) {
-      fetch(window.location.pathname + '?fetch=user&id=' + encodeURIComponent(id))
-        .then(r => {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
-        .then(user => {
-          if (user && user.id) {
-            const created = user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A';
-            content.innerHTML = `
-              <strong>Name:</strong> ${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}<br>
-              <strong>Email:</strong> ${user.email || 'N/A'}<br>
-              <strong>Mobile:</strong> ${user.mobile_number || 'N/A'}<br>
-              <strong>Address:</strong> ${user.address || 'N/A'}<br>
-              <strong>Registered:</strong> ${created}
-            `;
-          } else {
-            content.innerHTML = `<div style="color:#dc3545;">Client not found.</div>`;
-          }
-        })
-        .catch(err => {
-          content.innerHTML = `<div style="color:#dc3545;">Error loading client: ${err.message}</div>`;
-        });
-    }
-  }
-
-  function closeViewClientModal() {
-    const modal = document.getElementById('viewClientModal');
-    if (modal) modal.style.display = 'none';
-  }
-
-  // close on backdrop click + Esc
-  (function attachModalCloseHandlers(){
-    const modal = document.getElementById('viewClientModal');
-    if (!modal) return;
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) closeViewClientModal();
+      container.innerHTML = notifications.map(notification => `
+        <div style="padding: 15px; margin-bottom: 10px; border-radius: 6px; background: ${getNotificationColor(notification.type)}; color: ${getNotificationTextColor(notification.type)};">
+          <strong>${notification.title}</strong>
+          <p style="margin: 5px 0;">${notification.message}</p>
+          <small style="color: #999;">${notification.created_at ? new Date(notification.created_at).toLocaleString() : ''}</small>
+        </div>
+      `).join('');
+    })
+    .catch(error => {
+      container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load notifications.</p>';
+      console.error('Error loading notifications:', error);
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeViewClientModal();
-    });
-  })();
+}
 
-  // Make global
-  window.viewProfile = viewProfile;
-  window.closeViewClientModal = closeViewClientModal;
+function getNotificationColor(type) {
+  switch (type) {
+    case 'success': return '#d4edda';
+    case 'warning': return '#fff3cd';
+    case 'error':   return '#f8d7da';
+    default:        return '#e2e3e5';
+  }
+}
 
-  // ===========================
-  // LOGOUT CONFIRMATION
-  // ===========================
-  function confirmLogout() {
-    const modal = document.createElement('div');
-    modal.innerHTML = `
-      <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; align-items: center; justify-content: center; font-family: 'Segoe UI', sans-serif;">
-        <div style="background: white; padding: 0; border-radius: 8px; width: 400px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-          <div style="padding: 24px 24px 16px 24px;">
-            <div style="display: flex; align-items: flex-start; gap: 16px;">
-              <div style="width: 32px; height: 32px; background: #fff3cd; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 4px;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 9V13M12 17H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12z" stroke="#856404" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </div>
-              <div style="flex: 1;">
-                <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600; color: #212529;">Confirm Logout</h3>
-                <p style="margin: 0; font-size: 16px; color: #6c757d;">Are you sure you want to logout? You will need to login again to access your dashboard.</p>
-              </div>
-            </div>
-          </div>
-          <div style="padding: 20px 24px 24px 24px; display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid #e9ecef;">
-            <button id="cancel-logout" style="background: #f8f9fa; color: #6c757d; border: 1px solid #ced4da; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Cancel</button>
-            <button id="confirm-logout" style="background: #dc3545; color: white; border: 1px solid #dc3545; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Logout</button>
+function getNotificationTextColor(type) {
+  switch (type) {
+    case 'success': return '#155724';
+    case 'warning': return '#856404';
+    case 'error':   return '#721c24';
+    default:        return '#383d41';
+  }
+}
+
+// ===========================
+// AUDIT LOGS FUNCTIONS
+// ===========================
+function loadAuditLogs() {
+  const container = document.getElementById('audit-logs-container');
+  if (!container) return;
+
+  container.innerHTML = '<p style="text-align: center; color: #666;">Loading audit logs...</p>';
+
+  fetch(window.location.pathname + '?fetch=audit_logs')
+    .then(response => response.json())
+    .then(logs => {
+      if (!logs.length) {
+        container.innerHTML = '<p style="text-align: center; color: #666;">No audit logs found.</p>';
+        return;
+      }
+
+      container.innerHTML = logs.map(log => `
+        <div style="padding: 12px; margin-bottom: 10px; border-radius: 6px; background: #fff; border: 1px solid #e0e0e0;">
+          <strong>${log.action}</strong>
+          <div style="font-size: 13px; color: #333;">${log.details}</div>
+          <div style="font-size: 12px; color: #999;">
+            By: ${log.first_name || ''} ${log.last_name || ''} • ${log.created_at ? new Date(log.created_at).toLocaleDateString() + ' ' + new Date(log.created_at).toLocaleTimeString() : ''}
           </div>
         </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-    
-    function closeModal() {
-      if (document.body.contains(modal)) document.body.removeChild(modal);
-    }
-    
-    document.getElementById('cancel-logout').addEventListener('click', closeModal);
-    document.getElementById('confirm-logout').addEventListener('click', () => window.location.href = 'logout.php');
-    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+      `).join('');
+    })
+    .catch(error => {
+      container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load audit logs.</p>';
+      console.error('Error loading audit logs:', error);
+    });
+}
+
+// ===========================
+// ACCOUNT MANAGEMENT
+// ===========================
+function showAccountType(type) {
+  document.querySelectorAll('.account-section').forEach(section => section.classList.remove('active'));
+  document.querySelectorAll('.account-type-nav a').forEach(tab => tab.classList.remove('active'));
+  const sec = document.getElementById(type + '-accounts');
+  const tab = document.getElementById(type + '-tab');
+  if (sec) sec.classList.add('active');
+  if (tab) tab.classList.add('active');
+}
+
+// Photo and location functions
+function previewPhoto(input, previewId) {
+  const preview = document.getElementById(previewId);
+  const file = input.files[0];
+  
+  if (file && preview) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      preview.innerHTML = `<img src="${e.target.result}" alt="Preview" class="photo-preview">`;
+    };
+    reader.readAsDataURL(file);
+  } else if (preview) {
+    preview.innerHTML = 'No Photo';
+    preview.className = 'photo-placeholder';
   }
+}
 
-  // ===========================
-  // ANALYTICS
-  // ===========================
-  function loadAnalyticsData() {
-    loadAnalyticsKPIs();
-    loadTopAgents(1);
-    loadMonthlySalesChart();
-  }
-
-  function loadAnalyticsKPIs() {
-    document.getElementById('kpi-total-sales').textContent =
-      '₱' + (<?php echo isset($dashboard_stats["total_sales"]) ? $dashboard_stats["total_sales"] : 0; ?>).toLocaleString();
-    document.getElementById('kpi-total-lots').textContent = '<?php echo $dashboard_stats["lots"]; ?>';
-    document.getElementById('kpi-available-agents').textContent = '<?php echo $dashboard_stats["agents"]; ?>';
-    document.getElementById('kpi-pending-documents').textContent = '<?php echo $dashboard_stats["pending_documents"]; ?>';
-  }
-
-  function loadTopAgents(page = 1) {
-    document.getElementById('top-agents-loading').style.display = 'block';
-    document.getElementById('top-agents-content').style.display = 'none';
-
-    // Get filter values
-    const dateFrom = document.getElementById('analytics_date_from').value;
-    const dateTo = document.getElementById('analytics_date_to').value;
-    const locationId = document.getElementById('analytics_location').value;
-
-    const params = new URLSearchParams();
-    params.append('fetch', 'top_agents');
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    if (locationId) params.append('location_id', locationId);
-
-    fetch(window.location.pathname + '?' + params.toString())
-      .then(response => response.json())
-      .then(agents => {
-        document.getElementById('top-agents-loading').style.display = 'none';
-        document.getElementById('top-agents-content').style.display = 'block';
-
-        const tbody = document.getElementById('top-agents-tbody');
-        if (!agents.length) {
-          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#666;">No agent sales data found.</td></tr>`;
-          return;
+function getCurrentLocation() {
+  const statusDiv = document.getElementById('location-status');
+  if (!statusDiv) return;
+  statusDiv.style.display = 'block';
+  statusDiv.innerHTML = 'Getting location...';
+  
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const lat = document.getElementById('latitude');
+        const lng = document.getElementById('longitude');
+        if (lat && lng) {
+          lat.value = position.coords.latitude;
+          lng.value = position.coords.longitude;
         }
-        tbody.innerHTML = agents.map((agent, idx) => `
-          <tr style="border-bottom: 1px solid #f0f0f0;">
-            <td style="padding: 15px;">
-              <div style="width: 30px; height: 30px; background: #2d482d; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">
-                ${idx + 1}
-              </div>
-            </td>
-            <td style="padding: 15px;">
-              <div style="font-weight: 500;">${agent.name}</div>
-              <div style="font-size: 12px; color: #666;">${agent.email}</div>
-            </td>
-            <td style="padding: 15px;">
-              <span style="background: #e8f5e8; color: #2d482d; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
-                ${agent.sales_count}
-              </span>
-            </td>
-            <td style="padding: 15px; font-weight: 500;">₱${agent.total_amount.toLocaleString()}</td>
-            <td style="padding: 15px;">₱${agent.avg_deal_size.toLocaleString()}</td>
-          </tr>
-        `).join('');
-      })
-      .catch(err => {
-        document.getElementById('top-agents-loading').style.display = 'none';
-        document.getElementById('top-agents-content').style.display = 'block';
-        const tbody = document.getElementById('top-agents-tbody');
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#dc3545;">Failed to load agent data.</td></tr>`;
-        console.error(err);
-      });
+        statusDiv.className = 'location-status location-success';
+        statusDiv.innerHTML = 'Location captured successfully!';
+        setTimeout(() => statusDiv.style.display = 'none', 3000);
+      },
+      error => {
+        statusDiv.className = 'location-status location-error';
+        statusDiv.innerHTML = 'Error: ' + error.message;
+      }
+    );
+  } else {
+    statusDiv.className = 'location-status location-error';
+    statusDiv.innerHTML = 'Geolocation is not supported by this browser.';
   }
+}
 
-  const monthlySalesData = <?php echo json_encode($monthly_sales); ?>; 
+function clearLocation() {
+  const lat = document.getElementById('latitude');
+  const lng = document.getElementById('longitude');
+  const status = document.getElementById('location-status');
+  if (lat) lat.value = '';
+  if (lng) lng.value = '';
+  if (status) status.style.display = 'none';
+}
 
-  function loadMonthlySalesChart() {
-    const canvas = document.getElementById('monthly-sales-chart');
-    const ctx = canvas.getContext('2d');
-
-    // Use real data from PHP
-    const data = monthlySalesData.length ? monthlySalesData : [
-      { month: 'Jan 2024', amount: 150000 },
-      { month: 'Feb 2024', amount: 200000 },
-      { month: 'Mar 2024', amount: 180000 },
-      { month: 'Apr 2024', amount: 250000 },
-      { month: 'May 2024', amount: 300000 },
-      { month: 'Jun 2024', amount: 280000 }
-    ];
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const padding = 40;
-    const width = canvas.width - padding * 2;
-    const height = canvas.height - padding * 2;
-
-    // Draw axes
-    ctx.strokeStyle = '#ddd';
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    // Find max amount for scaling
-    const maxAmount = Math.max(...data.map(item => item.amount), 1);
-
-    // Draw bars
-    const barWidth = width / data.length / 2;
-    data.forEach((item, index) => {
-      const x = padding + index * 2 * barWidth;
-      const barHeight = (item.amount / maxAmount) * (height - 20);
-      const y = canvas.height - padding - barHeight;
-      const color = index % 2 === 0 ? '#28a745' : '#007bff';
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, barWidth, barHeight);
-
-      // Draw labels
-      ctx.fillStyle = '#333';
-      ctx.font = 'bold 12px Arial';
-      ctx.fillText(item.month, x, canvas.height - padding + 15);
-      ctx.fillText(item.amount.toLocaleString(), x, y - 5);
-    });
+function getCurrentLocationAgent() {
+  const statusDiv = document.getElementById('agent-location-status');
+  if (!statusDiv) return;
+  statusDiv.style.display = 'block';
+  statusDiv.innerHTML = 'Getting location...';
+  
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const lat = document.getElementById('agent_latitude');
+        const lng = document.getElementById('agent_longitude');
+        if (lat && lng) {
+          lat.value = position.coords.latitude;
+          lng.value = position.coords.longitude;
+        }
+        statusDiv.className = 'location-status location-success';
+        statusDiv.innerHTML = 'Location captured successfully!';
+        setTimeout(() => statusDiv.style.display = 'none', 3000);
+      },
+      error => {
+        statusDiv.className = 'location-status location-error';
+        statusDiv.innerHTML = 'Error: ' + error.message;
+      }
+    );
+  } else {
+    statusDiv.className = 'location-status location-error';
+    statusDiv.innerHTML = 'Geolocation is not supported by this browser.';
   }
+}
 
-  function applyAnalyticsFilters() {
-    const dateFrom = document.getElementById('analytics_date_from').value;
-    const dateTo = document.getElementById('analytics_date_to').value;
-    const locationId = document.getElementById('analytics_location').value;
+function clearLocationAgent() {
+  const lat = document.getElementById('agent_latitude');
+  const lng = document.getElementById('agent_longitude');
+  const status = document.getElementById('agent-location-status');
+  if (lat) lat.value = '';
+  if (lng) lng.value = '';
+  if (status) status.style.display = 'none';
+}
 
-    const params = new URLSearchParams();
-    params.append('fetch', 'analytics');
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    if (locationId) params.append('location_id', locationId);
+// ===========================
+// VIEW CLIENT MODAL
+// ===========================
+function viewProfile(id, type, evt) {
+    // Hide modal after 3 seconds
+    setTimeout(() => {
+      modal.style.display = 'none';
+    }, 3000);
+  if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+  const modal   = document.getElementById('viewClientModal');
+  const content = document.getElementById('viewClientContent');
+  const title   = modal?.querySelector('h3');
+  if (!modal || !content || !title) return;
 
-    fetch(window.location.pathname + '?' + params.toString())
-      .then(response => response.json())
-      .then(data => {
-        // Update KPIs
-        document.getElementById('kpi-total-sales').textContent = '₱' + (data.kpis.total_sales || 0).toLocaleString();
-        document.getElementById('kpi-total-lots').textContent = data.kpis.total_lots || 0;
-        document.getElementById('kpi-available-agents').textContent = data.kpis.available_agents || 0;
-        document.getElementById('kpi-pending-documents').textContent = data.kpis.pending_documents || 0;
+  // Set modal title based on type
+  let profileTitle = 'Profile';
+  if (type === 'admin') profileTitle = 'Admin Profile';
+  else if (type === 'agent') profileTitle = 'Agent Profile';
+  else if (type === 'user') profileTitle = 'User Profile';
+  else profileTitle = 'Client Profile';
+  title.textContent = profileTitle;
 
-        // Update monthly sales chart
-        updateMonthlySalesChart(data.monthly_sales);
+  modal.style.display = 'flex';
+  content.innerHTML = '<div style="color:#666;">Loading details…</div>';
 
-        // Refresh top agents table:
-        loadTopAgents(1);
-      })
-      .catch(err => {
-        alert('Failed to load analytics data.');
-        console.error(err);
-      });
-  }
+  // guest (no account) from table row
+  if (type === 'user' && (!id || id === 0)) {
+    try {
+      const btn       = evt?.target;
+      const row       = btn?.closest('tr');
+      const name      = row?.querySelector('td strong')?.innerText?.trim() || 'N/A';
+      const contact   = row?.querySelector('td:nth-child(2)')?.innerText?.trim() || 'N/A';
+      const location  = row?.querySelector('td:nth-child(3)')?.innerText?.trim() || 'N/A';
+      const lot       = row?.querySelector('td:nth-child(4)')?.innerText?.trim() || 'N/A';
+      const prefDate  = row?.querySelector('td:nth-child(5)')?.innerText?.trim() || 'N/A';
 
-  // Helper to update chart with new data
-  function updateMonthlySalesChart(monthlySalesData) {
-    const canvas = document.getElementById('monthly-sales-chart');
-    const ctx = canvas.getContext('2d');
-    const data = monthlySalesData.length ? monthlySalesData : [];
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const padding = 40;
-    const width = canvas.width - padding * 2;
-    const height = canvas.height - padding * 2;
-
-    ctx.strokeStyle = '#ddd';
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    const maxAmount = Math.max(...data.map(item => item.amount), 1);
-    const barWidth = data.length ? width / data.length / 2 : 0;
-
-    data.forEach((item, index) => {
-      const x = padding + index * 2 * barWidth;
-      const barHeight = (item.amount / maxAmount) * (height - 20);
-      const y = canvas.height - padding - barHeight;
-      const color = index % 2 === 0 ? '#28a745' : '#007bff';
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, barWidth, barHeight);
-
-      ctx.fillStyle = '#333';
-      ctx.font = 'bold 12px Arial';
-      ctx.fillText(item.month, x, canvas.height - padding + 15);
-      ctx.fillText(item.amount.toLocaleString(), x, y - 5);
-    });
-  }
-
-  // ===========================
-  // MISC HELPERS
-  // ===========================
-  function resetForm(formId) {
-    const form = document.getElementById(formId);
-    if (form) {
-      form.reset(); // Reset all form fields
-      const previews = form.querySelectorAll('.photo-placeholder, .photo-preview');
-      previews.forEach(preview => {
-        preview.innerHTML = 'No Photo'; // Reset photo previews
-        preview.className = 'photo-placeholder';
-      });
+      content.innerHTML = `
+        <strong>Name:</strong> ${name}<br>
+        <strong>Contact:</strong> ${contact}<br>
+        <strong>Location:</strong> ${location}<br>
+        <strong>Lot Details:</strong> ${lot}<br>
+        <strong>Preferred Date:</strong> ${prefDate}<br>
+        <div style="color:#dc3545;margin-top:8px;">No user account for this client.</div>
+      `;
+    } catch (e) {
+      content.innerHTML = `<div style="color:#dc3545;">Couldn’t read row data.</div>`;
     }
+    return;
   }
 
-  // ===========================
-  // EDIT ACCOUNT MODAL
-  // ===========================
- function editAccount(id, type = 'admin') {
-  const modal    = document.getElementById('editAccountModal');
+  // Registered user/admin/agent via endpoint
+  if ((type === 'user' || type === 'admin' || type === 'agent') && id) {
+    fetch(window.location.pathname + `?fetch=${type}&id=` + encodeURIComponent(id))
+      .then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(account => {
+        if (account && account.id) {
+          let html = `<strong>Name:</strong> ${account.first_name || ''} ${account.middle_name ? account.middle_name + ' ' : ''}${account.last_name || ''}<br>`;
+          if (account.username) html += `<strong>Username:</strong> ${account.username}<br>`;
+          html += `<strong>Email:</strong> ${account.email || 'N/A'}<br>`;
+          if (account.phone) html += `<strong>Mobile:</strong> ${account.phone}<br>`;
+          if (account.mobile_number) html += `<strong>Mobile:</strong> ${account.mobile_number}<br>`;
+          html += `<strong>Address:</strong> ${account.address || 'N/A'}<br>`;
+          if (account.created_at) {
+            const created = new Date(account.created_at).toLocaleDateString();
+            html += `<strong>Registered:</strong> ${created}<br>`;
+          }
+          content.innerHTML = html;
+        } else {
+          content.innerHTML = `<div style=\"color:#dc3545;\">Client not found.</div>`;
+        }
+      })
+      .catch(err => {
+        content.innerHTML = `<div style=\"color:#dc3545;\">Error loading client: ${err.message}</div>`;
+      });
+  }
+}
+
+function closeViewClientModal() {
+  const modal = document.getElementById('viewClientModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ===========================
+// LOGOUT CONFIRMATION
+// ===========================
+function confirmLogout() {
+  const modal = document.createElement('div');
+  modal.innerHTML = `
+    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; align-items: center; justify-content: center; font-family: 'Segoe UI', sans-serif;">
+      <div style="background: white; padding: 0; border-radius: 8px; width: 400px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+        <div style="padding: 24px 24px 16px 24px;">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 32px; height: 32px; background: #fff3cd; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 4px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9V13M12 17H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12z" stroke="#856404" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div style="flex: 1;">
+              <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600; color: #212529;">Confirm Logout</h3>
+              <p style="margin: 0; font-size: 16px; color: #6c757d;">Are you sure you want to logout? You will need to login again to access your dashboard.</p>
+            </div>
+          </div>
+        </div>
+        <div style="padding: 20px 24px 24px 24px; display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid #e9ecef;">
+          <button id="cancel-logout" style="background: #f8f9fa; color: #6c757d; border: 1px solid #ced4da; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Cancel</button>
+          <button id="confirm-logout" style="background: #dc3545; color: white; border: 1px solid #dc3545; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Logout</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  function closeModal() {
+    if (document.body.contains(modal)) document.body.removeChild(modal);
+  }
+  
+  document.getElementById('cancel-logout').addEventListener('click', closeModal);
+  document.getElementById('confirm-logout').addEventListener('click', () => window.location.href = 'logout.php');
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+}
+
+// ===========================
+// ANALYTICS
+// ===========================
+function loadAnalyticsData() {
+  loadAnalyticsKPIs();
+  loadTopAgents(1);
+  loadMonthlySalesChart();
+}
+
+function loadAnalyticsKPIs() {
+  const totalSalesEl = document.getElementById('kpi-total-sales');
+  const totalLotsEl  = document.getElementById('kpi-total-lots');
+  const agentsEl     = document.getElementById('kpi-available-agents');
+  const pendingEl    = document.getElementById('kpi-pending-documents');
+
+  if (totalSalesEl) {
+    totalSalesEl.textContent =
+      '₱' + (<?php echo isset($dashboard_stats["total_sales"]) ? $dashboard_stats["total_sales"] : 0; ?>).toLocaleString();
+  }
+  if (totalLotsEl)  totalLotsEl.textContent  = '<?php echo $dashboard_stats["lots"]; ?>';
+  if (agentsEl)     agentsEl.textContent     = '<?php echo $dashboard_stats["agents"]; ?>';
+  if (pendingEl)    pendingEl.textContent    = '<?php echo $dashboard_stats["pending_documents"]; ?>';
+}
+
+function loadTopAgents(page = 1) {
+  const loading  = document.getElementById('top-agents-loading');
+  const content  = document.getElementById('top-agents-content');
+  const tbody    = document.getElementById('top-agents-tbody');
+
+  if (loading) loading.style.display = 'block';
+  if (content) content.style.display = 'none';
+
+  const dateFrom   = document.getElementById('analytics_date_from')?.value;
+  const dateTo     = document.getElementById('analytics_date_to')?.value;
+  const locationId = document.getElementById('analytics_location')?.value;
+
+  const params = new URLSearchParams();
+  params.append('fetch', 'top_agents');
+  if (dateFrom) params.append('date_from', dateFrom);
+  if (dateTo) params.append('date_to', dateTo);
+  if (locationId) params.append('location_id', locationId);
+
+  fetch(window.location.pathname + '?' + params.toString())
+    .then(response => response.json())
+    .then(agents => {
+      if (loading) loading.style.display = 'none';
+      if (content) content.style.display = 'block';
+
+      if (!tbody) return;
+
+      if (!agents.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#666;">No agent sales data found.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = agents.map((agent, idx) => `
+        <tr style="border-bottom: 1px solid #f0f0f0;">
+          <td style="padding: 15px;">
+            <div style="width: 30px; height: 30px; background: #2d482d; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">
+              ${idx + 1}
+            </div>
+          </td>
+          <td style="padding: 15px;">
+            <div style="font-weight: 500;">${agent.name}</div>
+            <div style="font-size: 12px; color: #666;">${agent.email}</div>
+          </td>
+          <td style="padding: 15px;">
+            <span style="background: #e8f5e8; color: #2d482d; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+              ${agent.sales_count}
+            </span>
+          </td>
+          <td style="padding: 15px; font-weight: 500;">₱${agent.total_amount.toLocaleString()}</td>
+          <td style="padding: 15px;">₱${agent.avg_deal_size.toLocaleString()}</td>
+        </tr>
+      `).join('');
+    })
+    .catch(err => {
+      if (loading) loading.style.display = 'none';
+      if (content) content.style.display = 'block';
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#dc3545;">Failed to load agent data.</td></tr>`;
+      }
+      console.error(err);
+    });
+}
+
+const monthlySalesData = <?php echo json_encode($monthly_sales); ?>; 
+
+function loadMonthlySalesChart() {
+  const canvas = document.getElementById('monthly-sales-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const data = monthlySalesData.length ? monthlySalesData : [
+    { month: 'Jan 2024', amount: 150000 },
+    { month: 'Feb 2024', amount: 200000 },
+    { month: 'Mar 2024', amount: 180000 },
+    { month: 'Apr 2024', amount: 250000 },
+    { month: 'May 2024', amount: 300000 },
+    { month: 'Jun 2024', amount: 280000 }
+  ];
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const padding = 40;
+  const width = canvas.width - padding * 2;
+  const height = canvas.height - padding * 2;
+
+  ctx.strokeStyle = '#ddd';
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, canvas.height - padding);
+  ctx.lineTo(canvas.width - padding, canvas.height - padding);
+  ctx.stroke();
+
+  const maxAmount = Math.max(...data.map(item => item.amount), 1);
+  const barWidth = width / data.length / 2;
+  data.forEach((item, index) => {
+    const x = padding + index * 2 * barWidth;
+    const barHeight = (item.amount / maxAmount) * (height - 20);
+    const y = canvas.height - padding - barHeight;
+    const color = index % 2 === 0 ? '#28a745' : '#007bff';
+
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, barWidth, barHeight);
+
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(item.month, x, canvas.height - padding + 15);
+    ctx.fillText(item.amount.toLocaleString(), x, y - 5);
+  });
+}
+
+function applyAnalyticsFilters() {
+  const dateFrom   = document.getElementById('analytics_date_from')?.value;
+  const dateTo     = document.getElementById('analytics_date_to')?.value;
+  const locationId = document.getElementById('analytics_location')?.value;
+
+  const params = new URLSearchParams();
+  params.append('fetch', 'analytics');
+  if (dateFrom) params.append('date_from', dateFrom);
+  if (dateTo) params.append('date_to', dateTo);
+  if (locationId) params.append('location_id', locationId);
+
+  fetch(window.location.pathname + '?' + params.toString())
+    .then(response => response.json())
+    .then(data => {
+      const totalSalesEl = document.getElementById('kpi-total-sales');
+      const totalLotsEl  = document.getElementById('kpi-total-lots');
+      const agentsEl     = document.getElementById('kpi-available-agents');
+      const pendingEl    = document.getElementById('kpi-pending-documents');
+
+      if (totalSalesEl) totalSalesEl.textContent = '₱' + (data.kpis.total_sales || 0).toLocaleString();
+      if (totalLotsEl)  totalLotsEl.textContent  = data.kpis.total_lots || 0;
+      if (agentsEl)     agentsEl.textContent     = data.kpis.available_agents || 0;
+      if (pendingEl)    pendingEl.textContent    = data.kpis.pending_documents || 0;
+
+      updateMonthlySalesChart(data.monthly_sales);
+      loadTopAgents(1);
+    })
+    .catch(err => {
+      alert('Failed to load analytics data.');
+      console.error(err);
+    });
+}
+
+function updateMonthlySalesChart(monthlySalesData) {
+  const canvas = document.getElementById('monthly-sales-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const data = monthlySalesData.length ? monthlySalesData : [];
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const padding = 40;
+  const width = canvas.width - padding * 2;
+  const height = canvas.height - padding * 2;
+
+  ctx.strokeStyle = '#ddd';
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, canvas.height - padding);
+  ctx.lineTo(canvas.width - padding, canvas.height - padding);
+  ctx.stroke();
+
+  const maxAmount = Math.max(...data.map(item => item.amount), 1);
+  const barWidth = data.length ? width / data.length / 2 : 0;
+
+  data.forEach((item, index) => {
+    const x = padding + index * 2 * barWidth;
+    const barHeight = (item.amount / maxAmount) * (height - 20);
+    const y = canvas.height - padding - barHeight;
+    const color = index % 2 === 0 ? '#28a745' : '#007bff';
+
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, barWidth, barHeight);
+
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(item.month, x, canvas.height - padding + 15);
+    ctx.fillText(item.amount.toLocaleString(), x, y - 5);
+  });
+}
+
+// ===========================
+// MISC HELPERS
+// ===========================
+function resetForm(formId) {
+  const form = document.getElementById(formId);
+  if (form) {
+    form.reset();
+    const previews = form.querySelectorAll('.photo-placeholder, .photo-preview');
+    previews.forEach(preview => {
+      preview.innerHTML = 'No Photo';
+      preview.className = 'photo-placeholder';
+    });
+  }
+}
+
+// ===========================
+// EDIT ACCOUNT MODAL
+// ===========================
+function editAccount(id, type = 'admin') {
+  const modal     = document.getElementById('editAccountModal');
   const fieldsDiv = document.getElementById('editAccountFields');
   const photoDiv  = document.getElementById('editAccountPhotoSection');
 
-  // Store id + type in hidden inputs
+  if (!modal || !fieldsDiv || !photoDiv) return;
+
   document.getElementById('edit_account_id').value   = id;
   document.getElementById('edit_account_type').value = type;
 
-  // Show modal + initial loading state
   modal.style.display = 'flex';
   fieldsDiv.innerHTML = '<div style="color:#666;">Loading account details…</div>';
   photoDiv.innerHTML  = '';
 
-  // Fetch account data (admin / agent / user)
   const url = `${window.location.pathname}?fetch=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
 
   fetch(url)
-    .then(r => r.text())          // get raw text first
+    .then(r => r.text())
     .then(text => {
       let account;
-
-      // Try to parse JSON
       try {
         account = JSON.parse(text);
       } catch (e) {
-        // If PHP returned HTML or an error, we see it here
         console.error('Raw response from server:', text);
         fieldsDiv.innerHTML =
           '<div style="color:#dc3545;">Error loading account: Unexpected non-JSON response from server.</div>';
         return;
       }
 
-      // Safety check
       if (!account || !account.id) {
         fieldsDiv.innerHTML = '<div style="color:#dc3545;">Account not found.</div>';
         return;
       }
 
-      // --------------------
-      // Photo preview
-      // --------------------
       const photoHtml = `
         <div class="form-group">
           <label>Profile Photo</label>
@@ -4667,9 +4909,6 @@ function rejectDocument(id) {
       `;
       photoDiv.innerHTML = photoHtml;
 
-      // --------------------
-      // Dynamic form fields
-      // --------------------
       let html = `
         <div class="form-row-three">
           <div class="form-group">
@@ -4687,17 +4926,14 @@ function rejectDocument(id) {
         </div>
       `;
 
-      // Username (agent + user only)
-      if (type === 'agent' || type === 'user') {
-        html += `
-          <div class="form-group">
-            <label>Username</label>
-            <input type="text" name="username" value="${account.username || ''}" required>
-          </div>
-        `;
-      }
+      // Username (always show for admin, agent, user)
+      html += `
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" name="username" value="${account.username || ''}" required>
+        </div>
+      `;
 
-      // Email
       html += `
         <div class="form-group">
           <label>Email</label>
@@ -4705,8 +4941,7 @@ function rejectDocument(id) {
         </div>
       `;
 
-      // Role (admin + agent)
-      if (type === 'admin' || type === 'agent') {
+      if (type === 'agent') {
         html += `
           <div class="form-group">
             <label>Role</label>
@@ -4715,7 +4950,6 @@ function rejectDocument(id) {
         `;
       }
 
-      // Phone (agent)
       if (type === 'agent') {
         html += `
           <div class="form-group">
@@ -4725,7 +4959,6 @@ function rejectDocument(id) {
         `;
       }
 
-      // Mobile number (user)
       if (type === 'user') {
         html += `
           <div class="form-group">
@@ -4735,7 +4968,6 @@ function rejectDocument(id) {
         `;
       }
 
-      // Address + change password
       html += `
         <div class="form-group">
           <label>Address</label>
@@ -4748,14 +4980,6 @@ function rejectDocument(id) {
       `;
 
       fieldsDiv.innerHTML = html;
-
-      // Save original values for "no changes" check
-      setTimeout(() => {
-        const form = document.getElementById('editAccountForm');
-        form.dataset.original = JSON.stringify(
-          Object.fromEntries(new FormData(form))
-        );
-      }, 0);
     })
     .catch(err => {
       fieldsDiv.innerHTML =
@@ -4763,236 +4987,105 @@ function rejectDocument(id) {
     });
 }
 
-  function closeEditAccountModal() {
-    document.getElementById('editAccountModal').style.display = 'none';
-  }
+function closeEditAccountModal() {
+  const modal = document.getElementById('editAccountModal');
+  if (modal) modal.style.display = 'none';
+}
 
- // ===========================
-// EDIT ACCOUNT FORM SUBMIT
 // ===========================
-document.addEventListener('DOMContentLoaded', function () {
-  const form = document.getElementById('editAccountForm');
-  if (!form) return;
+// EDIT LOT MODAL
+// ===========================
+function openEditLotModal(lot) {
+  const modal     = document.getElementById('editLotModal');
+  const fieldsDiv = document.getElementById('editLotFields');
+  const idInput   = document.getElementById('edit_lot_id');
+  if (!modal || !fieldsDiv || !idInput) return;
 
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
+  idInput.value = lot.id;
 
-    const formData = new FormData(form);
+  fieldsDiv.innerHTML = `
+    <div class="form-group">
+      <label>Block Number</label>
+      <input type="text" name="block_number" value="${lot.block_number || ''}" required>
+    </div>
+    <div class="form-group">
+      <label>Lot Number</label>
+      <input type="text" name="lot_number" value="${lot.lot_number || ''}" required>
+    </div>
+    <div class="form-group">
+      <label>Lot Size</label>
+      <input type="text" name="lot_size" value="${lot.lot_size || ''}" required>
+    </div>
+    <div class="form-group">
+      <label>Lot Price</label>
+      <input type="text" name="lot_price" value="${lot.lot_price || ''}" required>
+    </div>
+    <div class="form-group">
+      <label>Status</label>
+      <select name="status" required>
+        <option value="Available" ${lot.status === 'Available' ? 'selected' : ''}>Available</option>
+        <option value="Sold" ${lot.status === 'Sold' ? 'selected' : ''}>Sold</option>
+        <option value="Reserved" ${lot.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Location ID</label>
+      <input type="text" name="location_id" value="${lot.location_id || ''}" required>
+    </div>
+  `;
+  modal.style.display = 'flex';
+}
 
-    // account_type is "admin" | "agent" | "user"
-    const type = formData.get('account_type');
+function closeEditLotModal() {
+  const modal = document.getElementById('editLotModal');
+  if (modal) modal.style.display = 'none';
+}
 
-    // Tell PHP which handler to use
-    if (type === 'admin') {
-      formData.append('account_action', 'update');
-    } else if (type === 'agent') {
-      formData.append('agent_action', 'update');
-    } else if (type === 'user') {
-      formData.append('user_action', 'update');
-    }
+// ===========================
+// BULK LOT DELETE + EXPORT
+// ===========================
+function bulkDeleteLots() {
+  const checkboxes = document.querySelectorAll('.lot-checkbox:checked');
+  if (checkboxes.length === 0) {
+    alert('Please select at least one lot to delete.');
+    return;
+  }
+  if (!confirm('Are you sure you want to delete the selected lots?')) return;
 
-    // Send to same page
-    fetch(window.location.pathname, {
-      method: 'POST',
-      body: formData
+  const ids = Array.from(checkboxes).map(cb => cb.value);
+  const formData = new FormData();
+  formData.append('action', 'bulk_delete');
+  formData.append('lot_ids', JSON.stringify(ids));
+
+  fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        alert('Selected lots deleted!');
+        const locSel = document.getElementById('location_id');
+        loadLots(locSel ? locSel.value : '');
+      } else {
+        alert('Failed to delete lots: ' + (res.error || 'Unknown error'));
+      }
     })
-      .then(r => r.json())
-      .then(res => {
-        console.log('Update response:', res);
-        if (res.success) {
-          alert(res.message || 'Account updated!');
-          closeEditAccountModal();
-          location.reload();
-        } else {
-          alert(
-            'Failed to update account: ' +
-            (res.error || res.message || 'Unknown error')
-          );
-        }
-      })
-      .catch(err => {
-        console.error('Update fetch error:', err);
-        alert('Failed to update account: ' + err.message);
-      });
-  });
-});
+    .catch(() => alert('Failed to delete lots.'));
+}
 
+function exportAnalytics() {
+  const dateFrom   = document.getElementById('analytics_date_from')?.value;
+  const dateTo     = document.getElementById('analytics_date_to')?.value;
+  const locationId = document.getElementById('analytics_location')?.value;
 
+  const params = new URLSearchParams();
+  params.append('export', 'analytics');
+  if (dateFrom) params.append('date_from', dateFrom);
+  if (dateTo) params.append('date_to', dateTo);
+  if (locationId) params.append('location_id', locationId);
 
-  // Make global
-  window.editAccount = editAccount;
-  window.closeEditAccountModal = closeEditAccountModal;
-
-  // ===========================
-  // EDIT LOT MODAL
-  // ===========================
-  function openEditLotModal(lot) {
-    const modal = document.getElementById('editLotModal');
-    const fieldsDiv = document.getElementById('editLotFields');
-    document.getElementById('edit_lot_id').value = lot.id;
-
-    fieldsDiv.innerHTML = `
-      <div class="form-group">
-        <label>Block Number</label>
-        <input type="text" name="block_number" value="${lot.block_number || ''}" required>
-      </div>
-      <div class="form-group">
-        <label>Lot Number</label>
-        <input type="text" name="lot_number" value="${lot.lot_number || ''}" required>
-      </div>
-      <div class="form-group">
-        <label>Lot Size</label>
-        <input type="text" name="lot_size" value="${lot.lot_size || ''}" required>
-      </div>
-      <div class="form-group">
-        <label>Lot Price</label>
-        <input type="text" name="lot_price" value="${lot.lot_price || ''}" required>
-      </div>
-      <div class="form-group">
-        <label>Status</label>
-        <select name="status" required>
-          <option value="Available" ${lot.status === 'Available' ? 'selected' : ''}>Available</option>
-          <option value="Sold" ${lot.status === 'Sold' ? 'selected' : ''}>Sold</option>
-          <option value="Reserved" ${lot.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Location ID</label>
-        <input type="text" name="location_id" value="${lot.location_id || ''}" required>
-      </div>
-    `;
-    modal.style.display = 'flex';
-  }
-
-  function closeEditLotModal() {
-    document.getElementById('editLotModal').style.display = 'none';
-  }
-
-  // Make global
-  window.openEditLotModal = openEditLotModal;
-  window.closeEditLotModal = closeEditLotModal;
-
-  document.addEventListener('DOMContentLoaded', function() {
-    const editLotForm = document.getElementById('editLotForm');
-    if (editLotForm) {
-      editLotForm.onsubmit = function(e) {
-        e.preventDefault();
-        const formData = new FormData(editLotForm);
-        formData.append('action', 'save');
-        fetch(window.location.pathname, { method: 'POST', body: formData })
-          .then(r => r.json())
-          .then(res => {
-            if (res.success) {
-              alert('Lot updated!');
-              closeEditLotModal();
-              loadLots(document.getElementById('location_id').value);
-            } else {
-              alert('Failed to update lot: ' + (res.error || 'Unknown error'));
-            }
-          })
-          .catch(() => alert('Failed to update lot.'));
-      };
-    }
-  });
-
-  // ===========================
-  // BULK LOT DELETE + EXPORT
-  // ===========================
-  function bulkDeleteLots() {
-    const checkboxes = document.querySelectorAll('.lot-checkbox:checked');
-    if (checkboxes.length === 0) {
-      alert('Please select at least one lot to delete.');
-      return;
-    }
-    if (!confirm('Are you sure you want to delete the selected lots?')) return;
-
-    const ids = Array.from(checkboxes).map(cb => cb.value);
-    const formData = new FormData();
-    formData.append('action', 'bulk_delete');
-    formData.append('lot_ids', JSON.stringify(ids));
-
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(res => {
-        if (res.success) {
-          alert('Selected lots deleted!');
-          loadLots(document.getElementById('location_id').value);
-        } else {
-          alert('Failed to delete lots: ' + (res.error || 'Unknown error'));
-        }
-      })
-      .catch(() => alert('Failed to delete lots.'));
-  }
-  window.bulkDeleteLots = bulkDeleteLots;
-
-  function exportAnalytics() {
-    const dateFrom = document.getElementById('analytics_date_from').value;
-    const dateTo = document.getElementById('analytics_date_to').value;
-    const locationId = document.getElementById('analytics_location').value;
-
-    const params = new URLSearchParams();
-    params.append('export', 'analytics');
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    if (locationId) params.append('location_id', locationId);
-
-    window.location.href = window.location.pathname + '?' + params.toString();
-  }
-
-
-// ===========================
-  document.getElementById('admin-account-form').addEventListener('submit', function(e) {
-    const pass = document.getElementById('password').value;
-    const confirm = document.getElementById('confirm_password').value;
-    const error = document.getElementById('password-error');
-
-    if (pass !== confirm) {
-        e.preventDefault();
-        error.style.display = 'block';
-        return false;
-    } else {
-        error.style.display = 'none';
-    }
-});
-
-// Live check while typing
-document.getElementById('confirm_password').addEventListener('input', function() {
-    const pass = document.getElementById('password').value;
-    const confirm = document.getElementById('confirm_password').value;
-    const error = document.getElementById('password-error');
-
-    if (confirm !== pass) {
-        error.style.display = 'block';
-    } else {
-        error.style.display = 'none';
-    }
-});
-
-
-// Agent password confirm validation
-document.getElementById('agent-account-form').addEventListener('submit', function(e) {
-  const pass   = document.getElementById('agent_password').value;
-  const confirm = document.getElementById('agent_confirm_password').value;
-  const error  = document.getElementById('agent-password-error');
-
-  if (pass !== confirm) {
-    e.preventDefault();
-    error.style.display = 'block';
-    return false;
-  } else {
-    error.style.display = 'none';
-  }
-});
-
-document.getElementById('agent_confirm_password').addEventListener('input', function() {
-  const pass   = document.getElementById('agent_password').value;
-  const confirm = document.getElementById('agent_confirm_password').value;
-  const error  = document.getElementById('agent-password-error');
-
-  error.style.display = (pass && confirm && pass !== confirm) ? 'block' : 'none';
-});
-
+  window.location.href = window.location.pathname + '?' + params.toString();
+}
 </script>
+
 
 
 </body>
