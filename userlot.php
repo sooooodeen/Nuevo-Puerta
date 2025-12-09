@@ -54,17 +54,17 @@ $conn->close();
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-          /* ---------------------------------- */
+/* ---------------------------------- */
 /* 1. General Styles and Font Imports */
 /* ---------------------------------- */
 body {
-    font-family: 'Poppins', sans-serif; /* Use Poppins */
+    font-family: 'Poppins', sans-serif;
     font-size: 16px; 
     line-height: 1.6;
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    background-color: #f8f8f8; /* Light background for contrast */
+    background-color: #f8f8f8;
     color: #333;
 }
 
@@ -151,458 +151,412 @@ body {
     box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
 }
 
-
 /* Add margin to main content so it's not hidden behind navbar */
 .adminlots-main {
   margin-top: 90px;
 }
-    .adminlots-main {
-      display: flex;
-      height: calc(100vh - 70px);
-      padding: 20px;
-      gap: 20px;
-      box-sizing: border-box;
-         margin-top: -5px;
-    }
-    .map-panel {
-      flex: 1.8; /* Reduce from 2 to 1.2 */
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-    }
-    .map-controls {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .map-controls input,
-    .map-controls select {
-      padding: 8px 12px;
-      border-radius: 5px;
-      border: 1px solid #ccc;
-      font-size: 16px;
-      outline: none;
-    }
-   #map {
+.adminlots-main {
+  display: flex;
+  height: calc(100vh - 70px);
+  padding: 20px;
+  gap: 20px;
+  box-sizing: border-box;
+  margin-top: -5px;
+}
+.map-panel {
+  flex: 1.8;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+#map {
   flex: 1;
-  height: calc(100vh - 90px); /* Adjust height to fill the space */
+  height: calc(100vh - 90px);
+  min-height: 350px;
   border-radius: 8px;
 }
-    .info-panel {
-      flex: 1.5; /* Increase from 1 to 1.5 */
-      background: #f8f9fa;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      min-width: 440px; /* Increase min-width for more table space */
-    }
-    .info-panel h3 {
-      margin: 0 0 10px 0;
-      font-size: 1.1em;
-      color: #2d4e1e;
-    }
-    .info-panel .blueprint-btn {
-      background: #3a6c28;
-      color: #fff;
-      border: none;
-      border-radius: 5px;
-      padding: 8px 18px;
-      font-size: 15px;
-      float: right;
-      margin-bottom: 10px;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .info-panel .blueprint-btn:hover {
-      background: #f4d03f;
-      color: #2d4e1e;
-    }
-    /* Blueprint Modal Styles */
-    .modal {
-      display: none;
-      position: fixed;
-      z-index: 2000;
-      left: 0; top: 0;
-      width: 100%; height: 100%;
-      overflow: auto;
-      background: rgba(0,0,0,0.7);
-    }
-    .modal-content {
-      display: block;
-      margin: 60px auto;
-      max-width: 90vw;
-      max-height: 80vh;
-      border-radius: 8px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
-    }/* Zoomable image styles */
-    .modal-content {
-      transition: transform 0.2s;
-      cursor: zoom-in;
-    }
-    .modal-content.zoomed {
-      cursor: grab;
-      transform: scale(2); /* You can adjust the zoom level */
-      transition: transform 0.2s;
-    }
-    .close {
-      position: absolute;
-      top: 30px;
-      right: 50px;
-      color: #fff;
-      font-size: 40px;
-      font-weight: bold;
-      cursor: pointer;
-      z-index: 2100;
-    }
+.info-panel {
+  flex: 1.5;
+  background: #f8f9fa;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 440px;
+}
+.info-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 1.1em;
+  color: #2d4e1e;
+}
+.info-panel .blueprint-btn {
+  background: #3a6c28;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 18px;
+  font-size: 15px;
+  float: right;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+  width: 150px;
+  text-align: center;
+  white-space: nowrap;
+}
+.info-panel .blueprint-btn:hover {
+  background: #f4d03f;
+  color: #2d4e1e;
+}
 
-    .info-panel .blueprint-btn {
-      background: #3a6c28;
-      color: #fff;
-      border: none;
-      border-radius: 5px;
-      padding: 8px 18px;
-      font-size: 15px;
-      float: right;
-      margin-bottom: 10px;
-      cursor: pointer;
-      transition: background 0.2s;
-      width: 150px;           /* Fixed width */
-      text-align: center;     /* Center the text */
-      white-space: nowrap;    /* Prevent wrapping */
-    }
+/* Blueprint Modal Styles */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 2000;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  overflow: auto;
+  background: rgba(0,0,0,0.7);
+}
+.modal-content {
+  display: block;
+  margin: 60px auto;
+  max-width: 90vw;
+  max-height: 80vh;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+/* Zoomable image styles */
+.modal-content {
+  transition: transform 0.2s;
+  cursor: zoom-in;
+}
+.modal-content.zoomed {
+  cursor: grab;
+  transform: scale(2);
+  transition: transform 0.2s;
+}
+.close {
+  position: absolute;
+  top: 30px;
+  right: 50px;
+  color: #fff;
+  font-size: 40px;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 2100;
+}
 
-    .blueprint-white-bg {
-      background: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      max-width: 90vw;
-      max-height: 80vh;
-      margin: 40px auto;
-      border-radius: 10px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
-      overflow: hidden;
-    }
-    @media (max-width: 600px) {
-      .modal-content { max-width: 98vw; }
-      .close { right: 20px; top: 10px; font-size: 32px; }
-    }
-    .lots-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      font-size: 15px;
-      background: #fff;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-    .lots-table th, .lots-table td {
-      padding: 8px 10px;
-      text-align: center;
-      border-bottom: 1px solid #e0e0e0;
-    }
-    .lots-table th {
-      background: #e8f5e9;
-      color: #2d4e1e;
-      font-weight: bold;
-    }
-    .lots-table tr:last-child td {
-      border-bottom: none;
-    }
-    .lot-status {
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-size: 13px;
-      font-weight: bold;
-      color: #fff;
-      display: inline-block;
-    }
-    .lot-status.sale { background: #3a6c28; }
-    .lot-status.sold { background: #b71c1c; }
-    .lot-status.reserved { background: #f4d03f; color: #2d4e1e; }
-    .inquire-btn {
-      background: #3a6c28;
-      color: #fff;
-      border: none;
-      border-radius: 5px;
-      padding: 4px 12px;
-      font-size: 13px;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .inquire-btn:hover {
-      background: #2d4e1e;
-    }
-    
-    /* Request Viewing Modal Styles */
-    .viewing-modal {
-      display: none;
-      position: fixed;
-      z-index: 3000;
-      left: 0;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(5px);
-    }
-    
-    .viewing-modal-content {
-      background: white;
-      margin: 10px auto 0 auto;
-      padding: 0;
-      border-radius: 15px;
-      width: 90%;
-      max-width: 600px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-      position: relative;
-      animation: modalSlideIn 0.3s ease;
-      max-height: 90vh;
-      overflow-y: auto;
-    }
-    
-    @keyframes modalSlideIn {
-      from { transform: translateY(-50px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-    
-    .viewing-modal-header {
-      background: linear-gradient(135deg, #2d4e1e, #3a6c28);
-      padding: 20px 30px;
-      border-radius: 15px 15px 0 0;
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    
-    .viewing-modal-title {
-      font-size: 24px;
-      font-weight: 600;
-      margin: 0;
-    }
-    
-    .viewing-close {
-      background: none;
-      border: none;
-      color: white;
-      font-size: 28px;
-      cursor: pointer;
-      padding: 0;
-      width: 35px;
-      height: 35px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 50%;
-      transition: background 0.2s;
-    }
-    
-    .viewing-close:hover {
-      background: rgba(255, 255, 255, 0.2);
-    }
-    
-    .viewing-modal-body {
-      padding: 30px;
-    }
-    
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-bottom: 20px;
-    }
-    
-    .form-group {
-      display: flex;
-      flex-direction: column;
-    }
-    
-    .form-group.full-width {
-      grid-column: 1 / -1;
-    }
-    
-    .form-label {
-      font-weight: 600;
-      color: #2d4e1e;
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-    
-    .form-input {
-      padding: 12px 15px;
-      border: 2px solid #e0e0e0;
-      border-radius: 8px;
-      font-size: 14px;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      background: #fafafa;
-    }
-    
-    .form-input:focus {
-      outline: none;
-      border-color: #2d4e1e;
-      box-shadow: 0 0 0 3px rgba(45, 78, 30, 0.1);
-      background: white;
-    }
-    
-    .form-textarea {
-      min-height: 100px;
-      resize: vertical;
-      font-family: inherit;
-    }
-    
-    .form-actions {
-      display: flex;
-      gap: 15px;
-      justify-content: flex-end;
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid #e0e0e0;
-    }
-    
-    .btn-cancel {
-      background: #6c757d;
-      color: white;
-      border: none;
-      padding: 12px 25px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .btn-cancel:hover {
-      background: #5a6268;
-      transform: translateY(-1px);
-    }
-    
-    .btn-submit {
-      background: linear-gradient(135deg, #2d4e1e, #3a6c28);
-      color: white;
-      border: none;
-      padding: 12px 25px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .btn-submit:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 15px rgba(45, 78, 30, 0.3);
-    }
-    
-    .required {
-      color: #e74c3c;
-    }
-    
-    @media (max-width: 768px) {
-      .viewing-modal-content {
-        margin: 10% auto;
-        width: 95%;
-      }
-      
-      .form-row {
-        grid-template-columns: 1fr;
-        gap: 15px;
-      }
-      
-      .viewing-modal-header {
-        padding: 15px 20px;
-      }
-      
-      .viewing-modal-body {
-        padding: 20px;
-      }
-      
-      .viewing-modal-title {
-        font-size: 20px;
-      }
-    }
-    
-    /* Add to your <style> section */
-    .lot-modal-header {
-      background: #2d4e1e;
-      padding: 18px 30px;
-      border-radius: 10px 10px 0 0;
-      display: flex;
-      align-items: center;
-      /* margin removed to fix header background */
-    }
-    .lot-modal-flex {
-      display: flex;
-      gap: 30px;
-    }
-    .lot-modal-left {
-      flex: 1;
-      min-width: 220px;
-    }
-    .lot-modal-img {
-      width: 100%;
-      max-width: 220px;
-      border-radius: 8px;
-      display: block;
-      margin-bottom: 10px;
-    }
-    .lot-modal-desc {
-      margin-bottom: 10px;
-      font-size: 0.98em;
-    }
-    .lot-modal-size, .lot-modal-price {
-      margin-bottom: 5px;
-    }
-    .lot-modal-right {
-      flex: 1;
-      min-width: 220px;
-    }
-    .plans-tabs { margin-bottom: 10px; }
-    .plan-tab {
-      background: #e6e6e6;
-      border: none;
-      padding: 7px 18px;
-      margin-right: 5px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    .plan-tab.active { background: #2d4e1e; color: #fff; }
-    .pay-btn {
-      background: #d6e09b;
-      border: none;
-      padding: 5px 15px;
-      margin-right: 5px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    .blueprint-btn, .inquire-btn {
-      background: #2d4e1e;
-      color: #fff;
-      border: none;
-      padding: 8px 18px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: bold;
-      margin-top: 10px;
-    }
-    @media (max-width: 900px) {
-      .lot-modal-flex { flex-direction: column; }
-      .lot-modal-left, .lot-modal-right { min-width: 0; }
-    }
-      @media (max-width: 1100px) {
-      .adminlots-main { flex-direction: column; }
-      .info-panel { min-width: unset; margin-top: 20px; }
-    }
-    
-    /* Add to your CSS file or <style> section */
+.blueprint-white-bg {
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 90vw;
+  max-height: 80vh;
+  margin: 40px auto;
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .modal-content { max-width: 98vw; }
+  .close { right: 20px; top: 10px; font-size: 32px; }
+}
+
+.lots-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 15px;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.lots-table th, .lots-table td {
+  padding: 8px 10px;
+  text-align: center;
+  border-bottom: 1px solid #e0e0e0;
+}
+.lots-table th {
+  background: #e8f5e9;
+  color: #2d4e1e;
+  font-weight: bold;
+}
+.lots-table tr:last-child td {
+  border-bottom: none;
+}
+.lot-status {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #fff;
+  display: inline-block;
+}
+.lot-status.sale { background: #3a6c28; }
+.lot-status.sold { background: #b71c1c; }
+.lot-status.reserved { background: #f4d03f; color: #2d4e1e; }
+.inquire-btn {
+  background: #3a6c28;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.inquire-btn:hover {
+  background: #2d4e1e;
+}
+
+/* Request Viewing Modal Styles */
+.viewing-modal {
+  display: none;
+  position: fixed;
+  z-index: 3000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(5px);
+}
+
+.viewing-modal-content {
+  background: white;
+  margin: 10px auto 0 auto;
+  padding: 0;
+  border-radius: 15px;
+  width: 90%;
+  max-width: 600px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  position: relative;
+  animation: modalSlideIn 0.3s ease;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+@keyframes modalSlideIn {
+  from { transform: translateY(-50px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.viewing-modal-header {
+  background: linear-gradient(135deg, #2d4e1e, #3a6c28);
+  padding: 20px 30px;
+  border-radius: 15px 15px 0 0;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.viewing-modal-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.viewing-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  width: 35px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.viewing-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.viewing-modal-body {
+  padding: 30px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-label {
+  font-weight: 600;
+  color: #2d4e1e;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.form-input {
+  padding: 12px 15px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #fafafa;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #2d4e1e;
+  box-shadow: 0 0 0 3px rgba(45, 78, 30, 0.1);
+  background: white;
+}
+
+.form-textarea {
+  min-height: 100px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.form-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: flex-end;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.btn-cancel {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 12px 25px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cancel:hover {
+  background: #5a6268;
+  transform: translateY(-1px);
+}
+
+.btn-submit {
+  background: linear-gradient(135deg, #2d4e1e, #3a6c28);
+  color: white;
+  border: none;
+  padding: 12px 25px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-submit:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(45, 78, 30, 0.3);
+}
+
+.required {
+  color: #e74c3c;
+}
+
+/* Lot modal mini styles */
+.lot-modal-header {
+  background: #2d4e1e;
+  padding: 18px 30px;
+  border-radius: 10px 10px 0 0;
+  display: flex;
+  align-items: center;
+}
+.lot-modal-flex {
+  display: flex;
+  gap: 30px;
+}
+.lot-modal-left {
+  flex: 1;
+  min-width: 220px;
+}
+.lot-modal-img {
+  width: 100%;
+  max-width: 220px;
+  border-radius: 8px;
+  display: block;
+  margin-bottom: 10px;
+}
+.lot-modal-desc {
+  margin-bottom: 10px;
+  font-size: 0.98em;
+}
+.lot-modal-size, .lot-modal-price {
+  margin-bottom: 5px;
+}
+.lot-modal-right {
+  flex: 1;
+  min-width: 220px;
+}
+.plans-tabs { margin-bottom: 10px; }
+.plan-tab {
+  background: #e6e6e6;
+  border: none;
+  padding: 7px 18px;
+  margin-right: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.plan-tab.active { background: #2d4e1e; color: #fff; }
+.pay-btn {
+  background: #d6e09b;
+  border: none;
+  padding: 5px 15px;
+  margin-right: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.blueprint-btn, .inquire-btn {
+  background: #2d4e1e;
+  color: #fff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+  .lot-modal-flex { flex-direction: column; }
+  .lot-modal-left, .lot-modal-right { min-width: 0; }
+}
+@media (max-width: 1100px) {
+  .adminlots-main { flex-direction: column; }
+  .info-panel { min-width: unset; margin-top: 20px; }
+}
+
+/* Location status */
 .location-status {
   margin-top: 10px;
   padding: 8px 12px;
@@ -620,35 +574,31 @@ body {
   color: #721c24;
   border: 1px solid #f5c6cb;
 }
-/* ---------------------------------- */
-/* 6. Active Navigation Indicator */
-/* ---------------------------------- */
 
-/* Active link color */
+/* Active nav */
 .nav-links li.active a {
-    color: #f4d03f; /* Gold text color */
+    color: #f4d03f;
     font-weight: 600;
 }
-
-/* Add the decorative line/bar */
 .nav-links li.active a::after {
     content: '';
     position: absolute;
-    bottom: -5px; /* Adjust this value to control distance from text */
+    bottom: -5px;
     left: 0;
     width: 100%;
-    height: 3px; /* Thickness of the line */
-    background: #f4d03f; /* Gold line color */
+    height: 3px;
+    background: #f4d03f;
     border-radius: 2px;
 }
 
+/* Hidden by default */
 #suggestedAgent, #agentActions, #otherAgentSelect {
   display: none;
 }
   </style>
 </head>
 <body>
- <header>
+<header>
  <nav class="main-nav">
   <div class="nav-left">
     <img src="assets/f.png" alt="Logo" class="nav-logo">
@@ -656,23 +606,25 @@ body {
   </div>
  <ul class="nav-links">
     <li><a href="index.html">Home</a></li>
-    <li class="active"><a href="userlot.php">View Lots</a></li> <li><a href="findagent.php">Find Agent</a></li>
+    <li class="active"><a href="userlot.php">View Lots</a></li>
+    <li><a href="findagent.php">Find Agent</a></li>
     <li><a href="about.html">About</a></li>
     <li><a href="faqs.html">FAQs</a></li>
     <li><a href="contact.html">Contact</a></li>
-</ul>
+ </ul>
   <div class="nav-right">
     <a href="Login/login.php" class="login-btn">Login</a>
   </div>
 </nav>
-
 </header>
-  <div class="adminlots-main">
-    <div class="map-panel">
-      <div id="map"></div>
-    </div>
-    <div class="info-panel" id="infoPanel" style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#bbb;font-size:1.2em;">
-  Select a pinned location on the map to view details.
+
+<div class="adminlots-main">
+  <div class="map-panel">
+    <div id="map"></div>
+  </div>
+  <div class="info-panel" id="infoPanel" style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#bbb;font-size:1.2em;">
+    Select a pinned location on the map to view details.
+  </div>
 </div>
 
 <!-- Request Viewing Modal -->
@@ -684,49 +636,38 @@ body {
     </div>
 
     <div class="viewing-modal-body">
-
       <form id="viewingForm" method="POST" action="">
-
-        <!-- Required for PHP: tells backend this is a viewing request -->
+        <!-- Required for PHP -->
         <input type="hidden" name="viewing_action" value="request">
-
-        <!-- Hidden fields required by PHP -->
         <input type="hidden" name="location_id" id="location_id" value="">
         <input type="hidden" name="lot_id" id="lot_id" value="">
 
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">First Name <span class="required">*</span></label>
-            <input type="text" class="form-input" id="firstName" 
-                   name="client_first_name" required>
+            <input type="text" class="form-input" id="firstName" name="client_first_name" required>
           </div>
-
           <div class="form-group">
             <label class="form-label">Last Name <span class="required">*</span></label>
-            <input type="text" class="form-input" id="lastName" 
-                   name="client_last_name" required>
+            <input type="text" class="form-input" id="lastName" name="client_last_name" required>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Email <span class="required">*</span></label>
-            <input type="email" class="form-input" id="email" 
-                   name="client_email" required>
+            <input type="email" class="form-input" id="email" name="client_email" required>
           </div>
-
           <div class="form-group">
             <label class="form-label">Phone <span class="required">*</span></label>
-            <input type="tel" class="form-input" id="phone" 
-                   name="client_phone" required>
+            <input type="tel" class="form-input" id="phone" name="client_phone" required>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Location <span class="required">*</span></label>
-            <input type="text" class="form-input" id="user_location" 
-                   name="location" placeholder="Address or Area" required>
+            <input type="text" class="form-input" id="user_location" name="location" placeholder="Address or Area" required>
           </div>
         </div>
 
@@ -734,17 +675,13 @@ body {
           <div class="form-group full-width">
             <label class="form-label">Geolocation</label>
             <div style="display:flex;gap:8px;">
-              <input type="number" step="any" class="form-input" id="user_lat" 
-                     name="client_lat" placeholder="Latitude" readonly>
-              <input type="number" step="any" class="form-input" id="user_lng" 
-                     name="client_lng" placeholder="Longitude" readonly>
+              <input type="number" step="any" class="form-input" id="user_lat" name="client_lat" placeholder="Latitude" readonly>
+              <input type="number" step="any" class="form-input" id="user_lng" name="client_lng" placeholder="Longitude" readonly>
             </div>
 
             <div style="margin-top:10px;display:flex;gap:10px;">
-              <button type="button" onclick="getCurrentLocationUser()" 
-                      class="btn-location">Get Current Location</button>
-              <button type="button" onclick="clearLocationUser()" 
-                      class="btn-location">Clear Location</button>
+              <button type="button" onclick="getCurrentLocationUser()" class="btn-location btn-submit" style="padding:6px 12px;">Get Current Location</button>
+              <button type="button" onclick="clearLocationUser()" class="btn-location btn-cancel" style="padding:6px 12px;">Clear Location</button>
             </div>
 
             <div id="user-location-status" class="location-status"></div>
@@ -753,8 +690,11 @@ body {
 
         <div class="form-row">
           <div class="form-group full-width">
-            <button type="button" id="getAgentBtn" class="btn-submit" 
-                    style="padding:6px 12px;">Get Agent</button>
+            <button type="button" id="getAgentBtn" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
+
+            <!-- Suggested agent info will be shown here -->
+            <div id="suggestedAgent" style="margin-top:10px;"></div>
+
             <div id="agentActions" style="margin-top:10px;display:none;">
               <button type="button" id="pickSuggestedAgentBtn" style="background:#23613b;color:#fff;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;margin-right:8px;">Pick This Agent</button>
               <button type="button" id="chooseOtherAgentBtn" style="background:#e6e6e6;color:#23613b;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;">Choose Other Agent</button>
@@ -769,16 +709,14 @@ body {
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Preferred Date & Time</label>
-            <input type="datetime-local" class="form-input" id="preferredDateTime" 
-                   name="preferred_date" required>
+            <input type="datetime-local" class="form-input" id="preferredDateTime" name="preferred_date" required>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Notes (optional)</label>
-            <textarea class="form-input form-textarea" id="notes" 
-                      name="notes" placeholder="Tell us anything we should know..."></textarea>
+            <textarea class="form-input form-textarea" id="notes" name="notes" placeholder="Tell us anything we should know..."></textarea>
           </div>
         </div>
 
@@ -786,15 +724,12 @@ body {
           <button type="button" class="btn-cancel" onclick="closeViewingModal()">Cancel</button>
           <button type="submit" class="btn-submit">Submit Request</button>
         </div>
-
       </form>
-
     </div>
   </div>
 </div>
 
-
-<!-- DO NOT CHANGE BELOW (your original inquire modal) -->
+<!-- ORIGINAL inquire modal (kept but IDs changed to avoid conflicts) -->
 <div id="inquireModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);z-index:999;align-items:flex-start;justify-content:center;">
   <div style="background:#fff;padding:32px 24px;border-radius:12px;max-width:400px;margin:10px auto 0 auto;position:relative;">
     <button onclick="closeInquireModal()" style="position:absolute;top:12px;right:12px;">&times;</button>
@@ -805,10 +740,10 @@ body {
       <input type="email" name="email" placeholder="Email" required>
       <input type="text" name="phone" placeholder="Mobile Number" required>
       
-      <label for="user_location" style="font-weight:600;">Enter Your Location</label>
+      <label for="user_location_old" style="font-weight:600;">Enter Your Location</label>
       <div style="display:flex;align-items:center;gap:8px;">
-        <input type="text" id="user_location" name="location" class="form-input" style="width:140px;" required>
-        <button type="button" id="getAgentBtn" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
+        <input type="text" id="user_location_old" name="location" class="form-input" style="width:140px;" required>
+        <button type="button" id="getAgentBtnOld" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
       </div>
 
       <input type="date" name="preferred_date" required>
@@ -824,8 +759,7 @@ body {
   </div>
 </div>
 
-
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
 /* -------------------- MAP & INFO PANEL -------------------- */
 const map = L.map('map').setView([6.9214, 122.0790], 12);
@@ -864,19 +798,19 @@ function updateInfoPanel(data) {
       else if (lot.lot_status === 'Sold') cls = 'sold';
       else if (lot.lot_status === 'Reserved') cls = 'reserved';
 
-        rows += `
-          <tr>
-            <td>${lot.block_number}</td>
-            <td>${lot.lot_number}</td>
-            <td>${lot.lot_size} sqm</td>
-            <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
-            <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
-            <td>
-              ${lot.lot_status === 'Sold'
-                ? `<button class=\"inquire-btn\" disabled style=\"background:#ccc;cursor:not-allowed;\">Inquire</button>`
-                : `<button class=\"inquire-btn\" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`}
-            </td>
-          </tr>`;
+      rows += `
+        <tr>
+          <td>${lot.block_number}</td>
+          <td>${lot.lot_number}</td>
+          <td>${lot.lot_size} sqm</td>
+          <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
+          <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
+          <td>
+            ${lot.lot_status === 'Sold'
+              ? `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Inquire</button>`
+              : `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`}
+          </td>
+        </tr>`;
     });
   } else {
     rows = `<tr><td colspan="6" style="color:#b71c1c;font-weight:bold;">No lots available</td></tr>`;
@@ -965,36 +899,26 @@ function enableBlueprintZoom() {
 let currentLot = null;
 
 function openViewingModal(lot) {
-  // lot = { id, lot_number, location_id, lot_status }
   currentLot = lot || null;
 
-  // If reserved, show warning first
   if (currentLot && currentLot.lot_status === 'Reserved') {
     if (!confirm('Warning: This lot is reserved and may not be available. Do you want to proceed with your inquiry?')) {
       return;
     }
   }
 
-  // Show modal
   document.getElementById('viewingModal').style.display = 'block';
-
-  // Reset the form
   document.getElementById('viewingForm').reset();
 
-  // Set required hidden fields for PHP
   document.getElementById('location_id').value = currentLot ? currentLot.location_id : '';
   document.getElementById('lot_id').value = currentLot ? currentLot.id : '';
 
-  // Optional: store lot number for JS (agent suggestion)
-  if (currentLot && currentLot.lot_number) {
-    currentLot.lot_number = currentLot.lot_number;
-  }
-
-  // Clear previously suggested agent
   const ag = document.getElementById('suggestedAgent');
-  ag.innerHTML = '';
-  ag.style.display = 'none';
-  delete ag.dataset.agentId;
+  if (ag) {
+    ag.innerHTML = '';
+    ag.style.display = 'none';
+    delete ag.dataset.agentId;
+  }
   if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
   if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
 }
@@ -1024,11 +948,13 @@ function getCurrentLocationUser() {
       statusDiv.className = 'location-status location-success';
       statusDiv.textContent = 'Location captured successfully!';
       setTimeout(() => statusDiv.style.display = 'none', 3000);
-      // Always clear and hide agent info
+
       const agentDiv = document.getElementById('suggestedAgent');
-      agentDiv.innerHTML = '';
-      agentDiv.style.display = 'none';
-      delete agentDiv.dataset.agentId;
+      if (agentDiv) {
+        agentDiv.innerHTML = '';
+        agentDiv.style.display = 'none';
+        delete agentDiv.dataset.agentId;
+      }
       if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
       if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
     },
@@ -1044,16 +970,18 @@ function clearLocationUser() {
   document.getElementById('user_lng').value = '';
   const statusDiv = document.getElementById('user-location-status');
   statusDiv.style.display = 'none';
-  // Also clear and hide agent info
+
   const agentDiv = document.getElementById('suggestedAgent');
-  agentDiv.innerHTML = '';
-  agentDiv.style.display = 'none';
-  delete agentDiv.dataset.agentId;
+  if (agentDiv) {
+    agentDiv.innerHTML = '';
+    agentDiv.style.display = 'none';
+    delete agentDiv.dataset.agentId;
+  }
   if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
   if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
 }
 
-/* -------------------- GET NEAREST AGENT (ONE TRUE HANDLER) -------------------- */
+/* -------------------- GET NEAREST AGENT -------------------- */
 document.getElementById('getAgentBtn').onclick = function () {
   const location = document.getElementById('user_location').value.trim();
   const lat = document.getElementById('user_lat').value.trim();
@@ -1071,8 +999,10 @@ document.getElementById('getAgentBtn').onclick = function () {
 
   fetch('get_nearest_agent.php?' + params.toString())
     .then(res => res.json())
-    .then(data => {
+    .then((data) => {
       const agentDiv = document.getElementById('suggestedAgent');
+      if (!agentDiv) return;
+
       if (data && data.id) {
         agentDiv.innerHTML = `
           <div style="display:flex;align-items:center;gap:12px;padding:10px 0;">
@@ -1096,6 +1026,7 @@ document.getElementById('getAgentBtn').onclick = function () {
     })
     .catch(() => {
       const agentDiv = document.getElementById('suggestedAgent');
+      if (!agentDiv) return;
       agentDiv.textContent = 'Could not find agent (network error).';
       agentDiv.style.display = 'block';
       delete agentDiv.dataset.agentId;
@@ -1122,14 +1053,12 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
   formData.append('preferredDateTime', document.getElementById('preferredDateTime').value || '');
   formData.append('latitude', document.getElementById('user_lat').value || '');
   formData.append('longitude', document.getElementById('user_lng').value || '');
-
-  // ADD THESE LINES:
   formData.append('location_id', document.getElementById('location_id').value || '');
   formData.append('lot_id', document.getElementById('lot_id').value || '');
 
   fetch('submit_viewing.php', { method: 'POST', body: formData })
     .then(r => r.json())
-    .then data => {
+    .then((data) => {
       if (data.success) {
         alert('Your viewing request has been submitted! We will contact you soon.');
         closeViewingModal();
@@ -1137,7 +1066,7 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
         alert('Error submitting request: ' + (data.error || 'Unknown error'));
       }
     })
-    .catch(err => alert('Network error: ' + err.message));
+    .catch((err) => alert('Network error: ' + err.message));
 });
 
 /* -------------------- CLICK OUTSIDE TO CLOSE MODAL -------------------- */
@@ -1146,56 +1075,7 @@ window.addEventListener('click', function (event) {
   if (event.target === modal) closeViewingModal();
 });
 
-function fetchNearestAgent() {
-  const location = document.getElementById('user_location').value.trim();
-  const lat = document.getElementById('user_lat').value.trim();
-  const lng = document.getElementById('user_lng').value.trim();
-
-  if (!location && (!lat || !lng)) {
-    return;
-  }
-
-  const params = new URLSearchParams();
-  if (location) params.append('location', location);
-  if (lat) params.append('lat', lat);
-  if (lng) params.append('lng', lng);
-
-  fetch('get_nearest_agent.php?' + params.toString())
-    .then(res => res.json())
-    .then(data => {
-      const agentDiv = document.getElementById('suggestedAgent');
-      if (data && data.id) {
-        agentDiv.innerHTML = `
-          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;">
-            <img src="${data.photo}" alt="Agent Photo" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #e6e6e6;">
-            <div>
-              <div style="font-weight:700;color:#23613b;font-size:1.1em;">${data.name}</div>
-              <div style="font-size:0.98em;color:#444;">${data.email}<br>${data.mobile}<br>${data.city}${data.address ? ', ' + data.address : ''}</div>
-            </div>
-          </div>`;
-        agentDiv.dataset.agentId = data.id;
-        agentDiv.style.display = 'block';
-        document.getElementById('agentActions').style.display = 'block';
-        document.getElementById('otherAgentSelect').style.display = 'none';
-      } else {
-        agentDiv.textContent = 'No agent found near your location.';
-        agentDiv.style.display = 'block';
-        delete agentDiv.dataset.agentId;
-        document.getElementById('agentActions').style.display = 'none';
-        document.getElementById('otherAgentSelect').style.display = 'none';
-      }
-    })
-    .catch(() => {
-      const agentDiv = document.getElementById('suggestedAgent');
-      agentDiv.textContent = 'Could not find agent (network error).';
-      agentDiv.style.display = 'block';
-      delete agentDiv.dataset.agentId;
-      document.getElementById('agentActions').style.display = 'none';
-      document.getElementById('otherAgentSelect').style.display = 'none';
-    });
-}
-
-// Fetch all agents for manual selection
+/* Manual agent list */
 function fetchAllAgentsForSelect() {
   fetch('get_all_agents.php')
     .then(res => res.json())
@@ -1210,7 +1090,7 @@ function fetchAllAgentsForSelect() {
 
 document.getElementById('pickSuggestedAgentBtn').onclick = function() {
   const agentDiv = document.getElementById('suggestedAgent');
-  if (agentDiv.dataset.agentId) {
+  if (agentDiv && agentDiv.dataset.agentId) {
     document.getElementById('manualAgentSelect').value = '';
     document.getElementById('otherAgentSelect').style.display = 'none';
   }
@@ -1223,6 +1103,7 @@ document.getElementById('chooseOtherAgentBtn').onclick = function() {
 
 document.getElementById('manualAgentSelect').onchange = function() {
   const agentDiv = document.getElementById('suggestedAgent');
+  if (!agentDiv) return;
   if (this.value) {
     agentDiv.dataset.agentId = this.value;
   } else {
@@ -1230,6 +1111,5 @@ document.getElementById('manualAgentSelect').onchange = function() {
   }
 };
 </script>
-
 </body>
 </html>
