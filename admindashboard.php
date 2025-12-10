@@ -1517,7 +1517,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 }
 .sidebar {
   width: 275px;
-  background-color: #3e5f3e;
+  background-color: #14532d;
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -1615,11 +1615,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     }
 
     .nav a:hover {
-      background-color: #3D4D26;
+      background-color: #288d45a9;
     }
 
     .nav a.active {
-      background-color: #2d4e1e;
+      background-color: #288d45a9;
+      color: #ffffffff;
+      border-left: 6px solid #ffffffff;
+      font-weight: 600;
     }
 
     .nav-icon {
@@ -2721,7 +2724,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     <?php else: ?>
       <table style="width:100%; border-collapse:collapse;">
         <thead>
-          <tr style="background:#2d482d; color:#fff;">
+          <tr style="background:#14532d; color:#fff;">
             <th style="padding:12px 10px;">Name</th>
             <th style="padding:12px 10px;">Username</th>
             <th style="padding:12px 10px;">Email</th>
@@ -3339,44 +3342,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                   </td>
                     <td>
                       <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px;">
-                        <div style="margin-bottom: 4px;">
-                          <?php
-                            $assignedAgent = null;
-                            if (!empty($viewing['agent_id'])) {
-                              foreach ($agents as $agent) {
-                                if ($agent['id'] == $viewing['agent_id']) {
-                                  $assignedAgent = $agent;
-                                  break;
-                                }
+                        <?php
+                          $assignedAgent = null;
+                          if (!empty($viewing['agent_id'])) {
+                            foreach ($agents as $agent) {
+                              if ($agent['id'] == $viewing['agent_id']) {
+                                $assignedAgent = $agent;
+                                break;
                               }
                             }
-                          ?>
-                          <?php if ($assignedAgent): ?>
-                            <span style="font-size:13px;color:#2d482d;background:#e6f4ea;padding:2px 8px;border-radius:5px;display:inline-block;">
-                              Nearest Agent: <strong><?php echo htmlspecialchars($assignedAgent['first_name'] . ' ' . $assignedAgent['last_name']); ?></strong>
-                            </span>
-                          <?php else: ?>
-                            <span style="font-size:13px;color:#666;">No agent assigned yet</span>
-                          <?php endif; ?>
-                        </div>
-                        <form method="POST" style="width: 100%;">
-                          <input type="hidden" name="viewing_action" value="assign_agent">
-                          <input type="hidden" name="viewing_id" value="<?php echo $viewing['id']; ?>">
-                          <select name="agent_id" required style="width: 120px; font-size:12px; padding:4px 8px; border-radius:4px;">
-                            <option value="">Select Agent</option>
-                            <?php foreach ($agents as $agent): ?>
-                              <option value="<?php echo $agent['id']; ?>" <?php if ($viewing['agent_id'] == $agent['id']) echo 'selected style="background:#e6f4ea;font-weight:bold;"'; ?>><?php echo htmlspecialchars($agent['first_name'] . ' ' . $agent['last_name']); ?><?php if ($viewing['agent_id'] == $agent['id']) echo ' (Assigned)'; ?></option>
-                            <?php endforeach; ?>
-                          </select>
-                          <div style="display: flex; gap: 4px; margin-top: 4px;">
-                            <button type="submit" class="btn-small" style="padding:4px 10px; font-size:11px;">Assign</button>
+                          }
+                        ?>
+                        <?php if ($assignedAgent): ?>
+                          <div style="background:#e6f4ea;padding:8px 12px;border-radius:7px;display:flex;flex-direction:column;align-items:flex-start;min-width:140px;">
+                            <span style="font-size:13px;color:#14532d;font-weight:600;">Assigned Agent:</span>
+                            <span style="font-size:15px;color:#195c36;font-weight:700;margin-top:2px;\"><?php echo htmlspecialchars($assignedAgent['first_name'] . ' ' . $assignedAgent['last_name']); ?></span>
                             <button type="button"
                               class="btn-small"
-                              style="padding:4px 10px; font-size:11px;"
+                              style="padding:4px 10px; font-size:11px; margin-top:8px;"
                               onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
                               View Client
                             </button>
                           </div>
+                        <?php else: ?>
+                          <form method="POST" style="width: 100%;">
+                            <input type="hidden" name="viewing_action" value="assign_agent">
+                            <input type="hidden" name="viewing_id" value="<?php echo $viewing['id']; ?>">
+                            <select name="agent_id" required style="width: 120px; font-size:12px; padding:4px 8px; border-radius:4px;">
+                              <option value="">Select Agent</option>
+                              <?php foreach ($agents as $agent): ?>
+                                <option value="<?php echo $agent['id']; ?>"><?php echo htmlspecialchars($agent['first_name'] . ' ' . $agent['last_name']); ?></option>
+                              <?php endforeach; ?>
+                            </select>
+                            <div style="display: flex; gap: 4px; margin-top: 4px;">
+                              <button type="submit" class="btn-small" style="padding:4px 10px; font-size:11px;">Assign</button>
+                              <button type="button"
+                                class="btn-small"
+                                style="padding:4px 10px; font-size:11px;"
+                                onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
+                                View Client
+                              </button>
+                            </div>
+                          <?php endif; ?>
                         </form>
                       </div>
                     </td>

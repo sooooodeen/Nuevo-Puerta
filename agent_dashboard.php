@@ -631,7 +631,12 @@ if ($stmt = $conn->prepare("
         <div class="bg-white rounded-2xl border shadow p-6">
           <div class="font-semibold text-gray-800 mb-4">Recent Activities</div>
           <ul class="text-sm text-gray-700 space-y-2">
-            <li>✅ No recent activities yet.</li>
+            <li>
+              <span style="display:inline-flex;align-items:center;margin-right:6px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="18" height="18" rx="4" fill="#2ecc71"/><path d="M5 10l4 4 6-6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              No recent activities yet.
+            </li>
           </ul>
         </div>
       </section>
@@ -639,7 +644,9 @@ if ($stmt = $conn->prepare("
       <section class="mt-8">
         <div class="bg-white rounded-2xl border shadow p-6">
           <div class="flex items-center gap-2 font-semibold text-gray-800 mb-4">
-            <span>👁️</span> Upcoming Viewings
+            <span style="display:inline-flex;align-items:center;margin-right:6px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="12" rx="9" ry="6" fill="#2e7d32"/><circle cx="12" cy="12" r="2.5" fill="#fff"/></svg>
+            </span> Upcoming Viewings
           </div>
 
           <?php if (empty($viewings)): ?>
@@ -693,14 +700,24 @@ if ($stmt = $conn->prepare("
                       <div class="grid grid-cols-2 gap-2">
                         <div>
                           <a class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                             href="resched_viewing.php?id=<?php echo (int)$v['id']; ?>">⏱ Resched</a>
+                             href="resched_viewing.php?id=<?php echo (int)$v['id']; ?>">
+                              <span style="display:inline-flex;align-items:center;gap:4px;">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M12 7v5l4 2" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <span style="color:#2e7d32;font-weight:600;">Resched</span>
+                              </span>
+                            </a>
                         </div>
                         <div>
                           <form method="post">
                             <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                             <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                             <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="completed">✅ Completed</button>
+                                    name="viewing_action" value="completed">
+                                      <span style="display:inline-flex;align-items:center;gap:4px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 13l3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        <span style="color:#2e7d32;font-weight:600;">Completed</span>
+                                      </span>
+                                    </button>
                           </form>
                         </div>
                         <div>
@@ -708,7 +725,12 @@ if ($stmt = $conn->prepare("
                             <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                             <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                             <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="no_show_client">🚫 Client No-show</button>
+                                    name="viewing_action" value="no_show_client">
+                                      <span style="display:inline-flex;align-items:center;gap:4px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 7l10 10M17 7l-10 10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+                                        <span style="color:#2e7d32;font-weight:600;">Client No-show</span>
+                                      </span>
+                                    </button>
                           </form>
                         </div>
                         <div>
@@ -716,7 +738,12 @@ if ($stmt = $conn->prepare("
                             <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                             <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                             <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="cancelled">✖ Cancelled</button>
+                                    name="viewing_action" value="cancelled">
+                                      <span style="display:inline-flex;align-items:center;gap:4px;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 7l10 10M17 7l-10 10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+                                        <span style="color:#2e7d32;font-weight:600;">Cancelled</span>
+                                      </span>
+                                    </button>
                           </form>
                         </div>
                       </div>
@@ -753,7 +780,7 @@ if ($stmt = $conn->prepare("
       <?php endif; ?>
       <h2 class="text-3xl font-bold text-green-900 mb-2">Profile</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-bottom: 1.5em;">View and update your personal and contact information.</p>
-      <div class="bg-white rounded-2xl border shadow p-6 max-w-4xl">
+      <div class="bg-white rounded-2xl border shadow p-6" style="width:100%;max-width:none;">
         <!-- Tabs -->
         <div class="flex border-b mb-6">
           <button id="tab-profile-info" type="button" class="px-6 py-2 font-semibold text-green-900 border-b-2 border-green-900 focus:outline-none">Profile Info</button>

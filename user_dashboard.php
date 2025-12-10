@@ -346,14 +346,17 @@ $avatarSrc = !empty($user['photo'] ?? '') ? $user['photo'] : $defaultAvatarFile;
 <title>User Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 <style>
 :root {
   --green:#2d4e1e; --yellow:#f4d03f; --white:#ffffff; --muted:#6b7280; --bg:#f8f8f8;
 }
 body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green);margin:0}
+body{font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--green);margin:0}
 .dashboard-wrapper{display:flex;min-height:100vh}
-.sidebar{width:260px;background:var(--green);color:var(--white);display:flex;flex-direction:column;align-items:center;padding:40px 0 0;box-shadow:2px 0 8px rgba(0,0,0,0.07);position:sticky;top:0;height:100vh}
+.sidebar{width:300px;background:var(--green);color:var(--white);display:flex;flex-direction:column;align-items:center;padding:40px 0 0;box-shadow:2px 0 8px rgba(0,0,0,0.07);position:sticky;top:0;height:100vh}
 .sidebar .logo {
   margin-bottom: 30px;
   display: flex;
@@ -363,6 +366,7 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
 }
 .sidebar .logo img{width:90px;border-radius:50%;margin-bottom:10px;}
 .sidebar .app-name { font-family: 'Inter', Arial, sans-serif; letter-spacing: 1px; font-weight:700;font-size:22px;margin-bottom:0px;}
+.sidebar .app-name { font-family: 'Poppins', Arial, sans-serif; letter-spacing: 1px; font-weight:700;font-size:22px;margin-bottom:0px;}
 .sidebar .profile-summary{text-align:center;margin-bottom:30px;background:rgba(255,255,255,0.08);border-radius:12px;padding:18px 0;width:85%;}
 .sidebar .profile-summary .avatar{width:54px;height:54px;border-radius:50%;background:#fff;margin:0 auto 10px;}
 .sidebar .profile-summary .avatar img{width:100%;height:100%;border-radius:50%;}
@@ -374,7 +378,7 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
   margin-right: 12px;
   vertical-align: middle;
 }
-.sidebar nav a.active,.sidebar nav a:hover{color:var(--yellow);background:rgba(255,255,255,.06)}
+.sidebar nav a.active,.sidebar nav a:hover{color:#fff;background:rgba(255,255,255,.06)}
 .main-content{flex:1;padding:40px 60px}
 .section{background:var(--white);border-radius:18px;box-shadow:0 4px 10px rgba(0,0,0,0.07);margin-bottom:40px;padding:32px}
 .section h2,
@@ -387,7 +391,7 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
 }
 
 /* keep other heading styles as-is */
-.profile-details{display:grid;grid-template-columns:1fr 1fr;gap:18px 40px;margin-bottom:10px}
+.profile-details{display:grid;grid-template-columns:1fr 1fr;gap:10px 40px;margin-bottom:10px}
 .profile-details .label{font-weight:600;color:var(--muted)}
 .profile-details .value{color:var(--green)}
 .activity-list,.listings-list{list-style:none;padding:0;margin:0}
@@ -882,7 +886,7 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
 </head>
 <body>
 <div class="dashboard-wrapper">
-<aside class="sidebar">
+<aside class="sidebar" style="background:#14532d;">
   <div class="sidebar-logo-block" style="display:flex; align-items:center; gap:12px; margin-bottom:32px;">
   <img src="assets/f.png"
        alt="Logo"
@@ -917,65 +921,113 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
   </div>
 </div>
 
- <div class="profile-summary">
-    <div class="avatar">
-        <img id="sidebarAvatarImg"
-             src="<?php echo htmlspecialchars($avatarSrc, ENT_QUOTES); ?>"
-             alt="Avatar"
-             style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
-             onerror="this.src='assets/Default_photo.jpg'">
+ <div style="
+    background: rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 0 auto 32px;
+    width: 224px;              /* same as w-56 */
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+">
+  <div style="margin-right: 12px; flex-shrink: 0;">
+    <?php if (!empty($avatarSrc)): ?>
+      <img
+        id="sidebarAvatarImg"
+        src="<?php echo htmlspecialchars($avatarSrc, ENT_QUOTES); ?>"
+        alt="Avatar"
+        style="
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          object-fit: cover;
+          background: #fff;
+          display: block;
+        "
+        onerror="this.src='assets/Default_photo.jpg'">
+    <?php else: ?>
+      <div style="
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #fff;
+          color: #064e3b; /* dark green-ish */
+          display: grid;
+          place-items: center;
+          font-weight: 700;
+        ">
+        <?php echo strtoupper(substr($sidebarName, 0, 1)); ?>
+      </div>
+    <?php endif; ?>
+  </div>
+
+  <div style="line-height: 1.2; min-width: 0;">
+    <div id="sidebarName"
+         style="font-weight: 600; font-size: 0.875rem; color: #ffffff; margin-bottom: 2px;">
+      <?php echo htmlspecialchars($sidebarName, ENT_QUOTES); ?>
     </div>
-    <div class="username" id="sidebarName">
-        <?php echo htmlspecialchars($sidebarName, ENT_QUOTES); ?>
+    <div style="font-size: 0.75rem; color: rgba(255,255,255,0.8); white-space: nowrap;">
+      <?php echo htmlspecialchars($user['role_label'] ?? 'User', ENT_QUOTES); ?>
     </div>
-    <div class="role">
-        <?php echo htmlspecialchars($user['role_label'] ?? 'User', ENT_QUOTES); ?>
-    </div>
+  </div>
 </div>
 
   <nav>
-    <a href="#home" class="sidebar-link active"><i class="fa-solid fa-house" style="color:#fff;"></i> Dashboard</a>
-    <a href="#profile" class="sidebar-link"><i class="fa-solid fa-user" style="color:#fff;"></i> Profile</a>
-    <a href="#activity" class="sidebar-link"><i class="fa-solid fa-bell" style="color:#fff;"></i> Notifications</a>
-    <a href="#properties" class="sidebar-link"><i class="fa-solid fa-building" style="color:#fff;"></i> My Properties</a>
-    <a href="#viewings" class="sidebar-link"><i class="fa-solid fa-calendar-days" style="color:#fff;"></i> Viewings</a>
-    <a href="#payments" class="sidebar-link"><i class="fa-solid fa-credit-card" style="color:#fff;"></i> Payments</a>
-    <a href="#documents" class="sidebar-link"><i class="fa-solid fa-file" style="color:#fff;"></i> Documents</a>
-    <a href="#agent" class="sidebar-link"><i class="fa-solid fa-user-tie" style="color:#fff;"></i> Assigned Agent</a>
-    <a href="logout.php" id="logout-link"><i class="fa-solid fa-door-open" style="color:#fff;"></i> Logout</a>
+    <a href="#home" class="sidebar-link active"><i class="fa fa-home" style="color:#fff;font-size:20px;"></i> Dashboard</a>
+    <a href="#profile" class="sidebar-link"><i class="fa fa-user" style="color:#fff;font-size:20px;"></i> Profile</a>
+    <a href="#activity" class="sidebar-link"><i class="fa fa-bell" style="color:#fff;font-size:20px;"></i> Notifications</a>
+    <a href="#properties" class="sidebar-link"><i class="fa fa-cube" style="color:#fff;font-size:20px;"></i> My Properties</a>
+    <a href="#viewings" class="sidebar-link"><i class="fa fa-share-alt" style="color:#fff;font-size:20px;"></i> Viewings</a>
+    <a href="#payments" class="sidebar-link"><i class="fa fa-credit-card" style="color:#fff;font-size:20px;"></i> Payments</a>
+    <a href="#documents" class="sidebar-link"><i class="fa fa-file" style="color:#fff;font-size:20px;"></i> Documents</a>
+    <a href="#agent" class="sidebar-link"><i class="fa fa-user-tie" style="color:#fff;font-size:20px;"></i> Assigned Agent</a>
+    <a href="logout.php" id="logout-link"><i class="fa fa-sign-out" style="color:#fff;font-size:20px;"></i> Logout</a>
   </nav>
 </aside>
 
   <main class="main-content">
     <section class="dashboard-section" id="home" style="display:block;">
       <div style="margin-bottom:18px;">
-        <h2 style="font-size:2rem;font-weight:700;">Welcome, <?php echo h($user['first_name']); ?></h2>
-        <div style="color:var(--muted);font-size:1.1rem;">Monitor your lots, viewings, and payments.</div>
+        <h2 style="font-size:2rem;font-weight:700;margin-bottom:2px;">Welcome, <?php echo h($user['first_name']); ?></h2>
+        <div style="color:var(--muted);font-size:1.1rem; margin-bottom: 12px;">Monitor your lots, viewings, and payments.</div>
       </div>
       <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="kpi-icon">🏡</div>
-          <div class="kpi-title">Lots Owned</div>
-          <div class="kpi-num"><?php echo $lotsOwned; ?></div>
-          <div class="kpi-desc">Total</div>
+        <div class="kpi-card kpi-agent-style" style="text-align:left;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:16px 12px;min-width:200px;max-width:250px;min-height:120px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;">
+            <!-- House Icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M3 11.5L12 4l9 7.5" stroke="#14532d" stroke-width="2" fill="none"/><rect x="6" y="11.5" width="12" height="7.5" rx="2" fill="#2e7d32"/></svg>
+            <span style="font-weight:600;font-size:1.08rem;color:#195c36;">Lots Owned</span>
+          </div>
+          <div style="font-size:2.2rem;font-weight:800;margin:8px 0 0 0;line-height:1.1;"><?php echo $lotsOwned; ?></div>
+          <div style="font-size:0.98rem;color:#6c7a5a;margin-top:2px;">Total</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-icon">📑</div>
-          <div class="kpi-title">Reserved Lots</div>
-          <div class="kpi-num"><?php echo $reservedLots; ?></div>
-          <div class="kpi-desc">Current</div>
+        <div class="kpi-card kpi-agent-style" style="text-align:left;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:16px 12px;min-width:180px;max-width:220px;min-height:120px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;">
+            <!-- Document Icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="20" rx="2" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2"/><rect x="7" y="8" width="10" height="2" rx="1" fill="#2e7d32"/><rect x="7" y="12" width="7" height="2" rx="1" fill="#2e7d32"/></svg>
+            <span style="font-weight:600;font-size:1.08rem;color:#195c36;">Reserved Lots</span>
+          </div>
+          <div style="font-size:2.2rem;font-weight:800;margin:8px 0 0 0;line-height:1.1;"><?php echo $reservedLots; ?></div>
+          <div style="font-size:0.98rem;color:#6c7a5a;margin-top:2px;">Current</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-icon">📅</div>
-          <div class="kpi-title">Upcoming Viewings</div>
-          <div class="kpi-num"><?php echo count($upcomingViewings); ?></div>
-          <div class="kpi-desc">Scheduled</div>
+        <div class="kpi-card kpi-agent-style" style="text-align:left;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:16px 12px;min-width:180px;max-width:220px;min-height:120px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;">
+            <!-- Calendar Icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2"/><rect x="7" y="9" width="2" height="2" rx="1" fill="#2e7d32"/><rect x="11" y="9" width="2" height="2" rx="1" fill="#2e7d32"/><rect x="15" y="9" width="2" height="2" rx="1" fill="#2e7d32"/></svg>
+            <span style="font-weight:600;font-size:1.08rem;color:#195c36;">Upcoming Viewings</span>
+          </div>
+          <div style="font-size:2.2rem;font-weight:800;margin:8px 0 0 0;line-height:1.1;"><?php echo count($upcomingViewings); ?></div>
+          <div style="font-size:0.98rem;color:#6c7a5a;margin-top:2px;">Scheduled</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-icon">💳</div>
-          <div class="kpi-title">Outstanding Balance</div>
-          <div class="kpi-num">₱<?php echo number_format($outstandingBalance,2); ?></div>
-          <div class="kpi-desc">Needs attention</div>
+        <div class="kpi-card kpi-agent-style" style="text-align:left;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:16px 12px;min-width:180px;max-width:220px;min-height:120px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;">
+            <!-- Card Icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="10" rx="2" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2"/><rect x="7" y="11" width="10" height="2" rx="1" fill="#2e7d32"/></svg>
+            <span style="font-weight:600;font-size:1.08rem;color:#195c36;">Outstanding Balance</span>
+          </div>
+          <div style="font-size:2.2rem;font-weight:800;margin:8px 0 0 0;line-height:1.1;">₱<?php echo number_format($outstandingBalance,2); ?></div>
+          <div style="font-size:0.98rem;color:#6c7a5a;margin-top:2px;">Needs attention</div>
         </div>
       </div>
 
@@ -984,7 +1036,10 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
   <?php if (!empty($recentActivities)): ?>
     <ul style="list-style:none;padding:0;margin:0;">
       <?php foreach (array_slice($recentActivities,0,3) as $activity): ?>
-        <li style="background:#fff;border-radius:8px;padding:10px 14px;margin-bottom:6px;box-shadow:0 2px 8px rgba(44,78,30,0.04);color:#234;">
+        <li style="background:#fff;border-radius:8px;padding:10px 14px;margin-bottom:6px;box-shadow:0 2px 8px rgba(44,78,30,0.04);color:#234;display:flex;align-items:center;">
+          <span style="margin-right:10px;display:flex;align-items:center;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#2e7d32"/><path d="M12 7v5l4 2" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
           <span style="font-weight:600;"><?php echo h($activity['status'] ?? 'Notification'); ?></span>
           <span style="margin-left:8px;"><?php echo h($activity['lot_no'] ?? ''); ?></span>
           <span style="margin-left:8px;color:var(--muted);"><?php echo h($activity['preferred_at'] ?? ''); ?></span>
@@ -1020,74 +1075,74 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
       <form id="profileForm" onsubmit="return false;">
         <input type="hidden" id="pf_user_id" value="<?php echo (int)$user_id; ?>">
 
-        <div class="row">
-          <div class="col">
-            <label>First Name</label>
+         <div class="row" style="gap:24px; margin-bottom:18px; display:flex; flex-wrap:wrap;">
+          <div class="col" style="margin-right:24px;">
+            <label style="margin-bottom:8px;display:block;">First Name</label>
             <input id="pf_first_name" type="text"
                    value="<?php echo h($user['first_name']); ?>"
                    readonly data-original="<?php echo h($user['first_name']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:150px; margin-bottom:16px;">
           </div>
-          <div class="col">
-            <label>Middle Name</label>
+          <div class="col" style="margin-right:24px;">
+            <label style="margin-bottom:8px;display:block;">Middle Name</label>
             <input id="pf_middle_name" type="text"
                    value="<?php echo h($user['middle_name']); ?>"
                    readonly data-original="<?php echo h($user['middle_name']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
           <div class="col">
-            <label>Last Name</label>
+            <label style="margin-bottom:8px;display:block;">Last Name</label>
             <input id="pf_last_name" type="text"
                    value="<?php echo h($user['last_name']); ?>"
                    readonly data-original="<?php echo h($user['last_name']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
         </div>
 
-        <div class="row">
+         <div class="row" style="gap:24px; margin-bottom:18px; display:flex; flex-wrap:wrap;">
           <div class="col">
-            <label>Username</label>
-            <input id="pf_username" type="text"
+                 <label style="margin-bottom:8px;display:block;">Username</label>
+                 <input id="pf_username" type="text"
                    value="<?php echo h($user['username']); ?>"
                    readonly data-original="<?php echo h($user['username']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
           <div class="col">
-            <label>Email</label>
-            <input id="pf_email" type="email"
+                 <label style="margin-bottom:8px;display:block;">Email</label>
+                 <input id="pf_email" type="email"
                    value="<?php echo h($user['email']); ?>"
                    readonly data-original="<?php echo h($user['email']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
         </div>
 
-        <div class="row">
+         <div class="row" style="gap:24px; margin-bottom:18px; display:flex; flex-wrap:wrap;">
           <div class="col">
-            <label>Mobile Number</label>
-            <input id="pf_mobile" type="text"
+                 <label style="margin-bottom:8px;display:block;">Mobile Number</label>
+                 <input id="pf_mobile" type="text"
                    value="<?php echo h($user['mobile_number']); ?>"
                    readonly data-original="<?php echo h($user['mobile_number']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
           <div class="col">
-            <label>Address</label>
-            <input id="pf_address" type="text"
+                 <label style="margin-bottom:8px;display:block;">Address</label>
+                 <input id="pf_address" type="text"
                    value="<?php echo h($user['address']); ?>"
                    readonly data-original="<?php echo h($user['address']); ?>"
-                   style="background:#f8f8f8;">
+                   style="background:#f8f8f8; min-width:180px; margin-bottom:16px;">
           </div>
         </div>
 
-        <div class="row" style="align-items:center;">
+         <div class="row" style="align-items:center; gap:24px; margin-bottom:18px; display:flex; flex-wrap:wrap;">
           <div class="avatar-wrap">
             <img id="pf_avatar_preview" src="<?php echo $avatarSrc; ?>" alt="Avatar">
           </div>
           <div class="col">
-            <label>Profile Photo</label>
-            <input id="pf_photo" type="file" accept="image/*" disabled>
-            <input type="hidden" id="pf_photo_path"
+                 <label style="margin-bottom:8px;display:block;">Profile Photo</label>
+                 <input id="pf_photo" type="file" accept="image/*" disabled style="margin-bottom:16px;">
+                 <input type="hidden" id="pf_photo_path"
                    value="<?php echo h($avatarSrc === $defaultAvatarFile ? '' : $avatarSrc); ?>">
-            <div id="pf_photo_status" style="margin-top:6px;display:none;font-size:13px;"></div>
+                 <div id="pf_photo_status" style="margin-top:6px;display:none;font-size:13px;"></div>
           </div>
         </div>
 
@@ -1103,20 +1158,20 @@ body{font-family:'Inter',Arial,sans-serif;background:var(--bg);color:var(--green
     <!-- Change Password -->
     <div id="change-password-pane" style="display:none;">
       <form id="changePasswordForm" method="post" action="change_password.php">
-        <div class="mb-3">
-          <label>Current Password</label>
-          <input type="password" name="current_password" placeholder="Current Password" required>
-        </div>
-        <div class="mb-3">
-          <label>New Password</label>
-          <input type="password" name="new_password" placeholder="New Password" required>
-        </div>
-        <div class="mb-3">
-          <label>Confirm New Password</label>
-          <input type="password" name="confirm_password" placeholder="Confirm Password" required>
-        </div>
-        <button type="submit" class="btn primary">Change Password</button>
-        <div id="changePasswordStatus" style="margin-top:10px;color:crimson;display:none;"></div>
+          <div class="col" style="margin-right:24px;">
+            <label style="margin-bottom:8px;display:block;">Username</label>
+            <input id="pf_username" type="text"
+                   value="<?php echo h($user['username']); ?>"
+                   readonly data-original="<?php echo h($user['username']); ?>"
+                   style="background:#f8f8f8; width:140px; margin-bottom:16px;">
+          </div>
+          <div class="col">
+            <label style="margin-bottom:8px;display:block;">Email</label>
+            <input id="pf_email" type="email"
+                   value="<?php echo h($user['email']); ?>"
+                   readonly data-original="<?php echo h($user['email']); ?>"
+                   style="background:#f8f8f8; width:140px; margin-bottom:16px;">
+          </div>
       </form>
     </div>
   </div>
@@ -1655,6 +1710,12 @@ document.getElementById('confirmCancelBtn').addEventListener('click', function()
     s.style.display = msg ? 'block' : 'none';
     s.style.color = color || '#333';
     s.textContent = msg || '';
+    // Auto-hide success message after 3 seconds
+    if (msg && color === 'green') {
+      setTimeout(function() {
+        s.style.display = 'none';
+      }, 3000);
+    }
   }
 
   var editBtn = document.getElementById('editProfileBtn');
