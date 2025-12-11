@@ -648,33 +648,37 @@ body {
             <input type="text" class="form-input" id="firstName" name="client_first_name" required>
           </div>
           <div class="form-group">
+            <label class="form-label">Middle Name</label>
+            <input type="text" class="form-input" id="middleName" name="client_middle_name" placeholder="(Optional)">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
             <label class="form-label">Last Name <span class="required">*</span></label>
             <input type="text" class="form-input" id="lastName" name="client_last_name" required>
           </div>
-        </div>
-
-        <div class="form-row">
           <div class="form-group">
             <label class="form-label">Email <span class="required">*</span></label>
             <input type="email" class="form-input" id="email" name="client_email" required>
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-group">
             <label class="form-label">Phone <span class="required">*</span></label>
             <input type="tel" class="form-input" id="phone" name="client_phone" required>
           </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group full-width">
+          <div class="form-group">
             <label class="form-label">Location <span class="required">*</span></label>
             <input type="text" class="form-input" id="user_location" name="location" placeholder="Address or Area" required>
           </div>
         </div>
 
+       
+
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Geolocation</label>
-            <div style="display:flex;gap:8px;">
+            <div style="display:none;">
               <input type="number" step="any" class="form-input" id="user_lat" name="client_lat" placeholder="Latitude" readonly>
               <input type="number" step="any" class="form-input" id="user_lng" name="client_lng" placeholder="Longitude" readonly>
             </div>
@@ -685,6 +689,12 @@ body {
             </div>
 
             <div id="user-location-status" class="location-status"></div>
+
+            <div style="margin-top:16px;">
+              <label style="font-size:13px;color:#14532d;font-weight:500;">Or select location on map:</label>
+              <div id="user-select-map" style="height:350px;width:100%;border-radius:8px;margin-top:8px;"></div>
+              <div style="font-size:12px;color:#666;margin-top:4px;">Click on the map to set your location.</div>
+            </div>
           </div>
         </div>
 
@@ -921,6 +931,50 @@ function openViewingModal(lot) {
   }
   if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
   if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
+
+  // Force re-initialize modal map
+  setTimeout(() => {
+    const mapDiv = document.getElementById('user-select-map');
+    if (!mapDiv) return;
+    // Remove previous map instance if exists
+    if (mapDiv._leaflet_id) {
+      mapDiv._leaflet_id = null;
+      mapDiv.innerHTML = '';
+    }
+    const map = L.map('user-select-map').setView([13.41, 122.56], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    let marker = null;
+    map.on('click', function(e) {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+      document.getElementById('user_lat').value = lat;
+      document.getElementById('user_lng').value = lng;
+      if (marker) {
+        marker.setLatLng(e.latlng);
+      } else {
+        marker = L.marker(e.latlng, {draggable:true}).addTo(map);
+        marker.on('dragend', function(ev) {
+          const pos = ev.target.getLatLng();
+          document.getElementById('user_lat').value = pos.lat;
+          document.getElementById('user_lng').value = pos.lng;
+        });
+      }
+    });
+    // If lat/lng already set, show marker
+    const lat = document.getElementById('user_lat').value;
+    const lng = document.getElementById('user_lng').value;
+    if (lat && lng) {
+      marker = L.marker([lat, lng], {draggable:true}).addTo(map);
+      map.setView([lat, lng], 14);
+      marker.on('dragend', function(ev) {
+        const pos = ev.target.getLatLng();
+        document.getElementById('user_lat').value = pos.lat;
+        document.getElementById('user_lng').value = pos.lng;
+      });
+    }
+  }, 300);
 }
 
 function closeViewingModal() {

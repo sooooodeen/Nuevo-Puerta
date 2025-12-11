@@ -94,6 +94,7 @@ $conn->query("
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   csrf_check();
 
+  /* Agent toggles availability */
   if (isset($_POST['toggle_avail'])) {
     $isAvail = 1;
     if ($stmt = $conn->prepare("SELECT IFNULL(is_available,1) AS a FROM agent_accounts WHERE id=?")) {
@@ -113,6 +114,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
   }
 
+  /* Agent approves pending viewing (from Upcoming Viewings table) */
+  if (isset($_POST['approve_viewing_id'])) {
+    $vid = (int)$_POST['approve_viewing_id'];
+    if ($stmt = $conn->prepare("UPDATE viewings SET status='scheduled' WHERE id=? AND agent_id=? AND status='pending'")) {
+      $stmt->bind_param('ii', $vid, $agentId);
+      $stmt->execute();
+      $stmt->close();
+    }
+    header('Location: agent_dashboard.php#dashboard');
+    exit;
+  }
+
+  /* Generic viewing status updates (complete / cancelled / etc.) */
   if (isset($_POST['viewing_action'], $_POST['viewing_id'])) {
     $vid = (int)$_POST['viewing_id'];
     $action = $_POST['viewing_action'];
@@ -378,7 +392,7 @@ if ($stmt = $conn->prepare("
   FROM viewings v
   LEFT JOIN lots l           ON v.lot_id = l.id
   LEFT JOIN lot_locations ll ON v.location_id = ll.id
-  WHERE v.agent_id=? AND v.status IN ('scheduled','rescheduled') AND v.preferred_at>=NOW()
+  WHERE v.agent_id=? AND v.status IN ('pending','scheduled','rescheduled') AND v.preferred_at>=NOW()
   ORDER BY v.preferred_at ASC
   LIMIT 12
 ")) {
@@ -663,15 +677,18 @@ if ($stmt = $conn->prepare("
                   <th class="py-2 px-4 text-left border">Date &amp; Time</th>
                   <th class="py-2 px-4 text-left border">Status</th>
                   <th class="py-2 px-4 text-left border">Contact</th>
-                  <th class="py-2 px-4 text-left border">Actions</th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($viewings as $v): ?>
                   <tr class="border-t">
                     <td class="py-2 px-4 border"><?php echo h($v['client_first_name'].' '.$v['client_last_name']); ?></td>
-                    <td class="py-2 px-4 border"><?php echo h($v['lot_no']); ?></td>
-                    <td class="py-2 px-4 border"><?php echo date('M d, Y · h:i A', strtotime($v['preferred_at'])); ?></td>
+                    <td class="py-2 px-4 border">
+                      <?php echo h($v['lot_no']); ?>
+                    </td>
+                    <td class="py-2 px-4 border">
+                      <?php echo date('M d, Y · h:i A', strtotime($v['preferred_at'])); ?>
+                    </td>
                     <td class="py-2 px-4 border">
                       <?php
                         $st = $v['status'];
@@ -685,6 +702,15 @@ if ($stmt = $conn->prepare("
                       <span class="text-xs px-2 py-1 border rounded-full <?php echo $badge; ?>">
                         <?php echo h(ucwords(str_replace('_',' ',$st))); ?>
                       </span>
+                      <?php if ($st === 'pending'): ?>
+                        <form method="post" style="display:inline;">
+                          <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                          <input type="hidden" name="approve_viewing_id" value="<?php echo h($v['id']); ?>">
+                          <button type="submit" class="ml-2 px-3 py-1 rounded bg-green-600 text-white text-xs font-semibold hover:bg-green-700">
+                            Approve
+                          </button>
+                        </form>
+                      <?php endif; ?>
                     </td>
                     <td class="py-2 px-4 border">
                       <div class="text-sm">
@@ -694,58 +720,6 @@ if ($stmt = $conn->prepare("
                         <a href="tel:<?php echo h($v['client_phone']); ?>" class="text-green-700 hover:underline">
                           <?php echo h($v['client_phone']); ?>
                         </a>
-                      </div>
-                    </td>
-                    <td class="py-2 px-4 border">
-                      <div class="grid grid-cols-2 gap-2">
-                        <div>
-                          <a class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                             href="resched_viewing.php?id=<?php echo (int)$v['id']; ?>">
-                              <span style="display:inline-flex;align-items:center;gap:4px;">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M12 7v5l4 2" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                <span style="color:#2e7d32;font-weight:600;">Resched</span>
-                              </span>
-                            </a>
-                        </div>
-                        <div>
-                          <form method="post">
-                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="completed">
-                                      <span style="display:inline-flex;align-items:center;gap:4px;">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 13l3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                        <span style="color:#2e7d32;font-weight:600;">Completed</span>
-                                      </span>
-                                    </button>
-                          </form>
-                        </div>
-                        <div>
-                          <form method="post">
-                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="no_show_client">
-                                      <span style="display:inline-flex;align-items:center;gap:4px;">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 7l10 10M17 7l-10 10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
-                                        <span style="color:#2e7d32;font-weight:600;">Client No-show</span>
-                                      </span>
-                                    </button>
-                          </form>
-                        </div>
-                        <div>
-                          <form method="post">
-                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-                            <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
-                            <button class="px-2 py-1 text-xs border rounded-lg hover:shadow w-full block text-center"
-                                    name="viewing_action" value="cancelled">
-                                      <span style="display:inline-flex;align-items:center;gap:4px;">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2e7d32"/><path d="M7 7l10 10M17 7l-10 10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
-                                        <span style="color:#2e7d32;font-weight:600;">Cancelled</span>
-                                      </span>
-                                    </button>
-                          </form>
-                        </div>
                       </div>
                     </td>
                   </tr>
@@ -1048,6 +1022,9 @@ if ($stmt = $conn->prepare("
                     <span class="px-2 py-1 rounded-full text-xs font-medium <?php echo $badge; ?>">
                       <?php echo h(ucfirst($st)); ?>
                     </span>
+                      <?php if ($st === 'cancelled' && !empty($v['cancellation_reason'])): ?>
+                        <br><small class="text-red-700">Reason: <?php echo h($v['cancellation_reason']); ?></small>
+                      <?php endif; ?>
                   </td>
                   <td class="py-3 px-4 border">
                     <?php if (in_array($v['status'], ['requested', 'scheduled'])): ?>
@@ -1059,14 +1036,38 @@ if ($stmt = $conn->prepare("
                           <button class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
                                   name="viewing_action" value="completed">✓ Complete</button>
                         </form>
-                        <form method="post" style="display: inline;">
+                        <button type="button" class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 mt-1 cancel-init-btn" id="cancel-init-btn-<?php echo (int)$v['id']; ?>" onclick="showCancelReason(this, <?php echo (int)$v['id']; ?>)">✗ Cancel</button>
+                        <form method="post" class="cancel-reason-form" id="cancel-reason-form-<?php echo (int)$v['id']; ?>" style="display:none; width:100%;">
                           <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                           <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                           <input type="hidden" name="redirect_to" value="viewings">
-                          <button class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
-                                  name="viewing_action" value="cancelled">✗ Cancel</button>
+                          <textarea name="cancellation_reason" rows="2" class="border rounded px-2 py-1 text-xs mb-1 w-full" placeholder="Reason for cancellation (required)" required></textarea>
+                          <button class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 mt-1" name="viewing_action" value="cancelled">Submit Cancellation</button>
+                          <button type="button" class="px-2 py-1 text-xs bg-gray-300 text-gray-800 rounded hover:bg-gray-400 mt-1 ml-2" onclick="hideCancelReason(<?php echo (int)$v['id']; ?>)">Cancel</button>
                         </form>
                       </div>
+                    <script>
+                    function showCancelReason(btn, id) {
+                      // Hide all other cancel reason forms
+                      document.querySelectorAll('.cancel-reason-form').forEach(function(f) { f.style.display = 'none'; });
+                      // Show the relevant form
+                      var form = document.getElementById('cancel-reason-form-' + id);
+                      if (form) {
+                        form.style.display = 'block';
+                        form.scrollIntoView({behavior: 'smooth', block: 'center'});
+                      }
+                      // Hide the original cancel button for this row
+                      var cancelBtn = document.getElementById('cancel-init-btn-' + id);
+                      if (cancelBtn) cancelBtn.style.display = 'none';
+                    }
+                    function hideCancelReason(id) {
+                      var form = document.getElementById('cancel-reason-form-' + id);
+                      if (form) form.style.display = 'none';
+                      // Show the original cancel button again
+                      var cancelBtn = document.getElementById('cancel-init-btn-' + id);
+                      if (cancelBtn) cancelBtn.style.display = 'inline-block';
+                    }
+                    </script>
                     <?php else: ?>
                       <span class="text-gray-500 text-xs">No actions available</span>
                     <?php endif; ?>

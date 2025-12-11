@@ -17,7 +17,7 @@ function deleteRow(btn) {
         msg.style.display = '';
         setTimeout(() => { msg.style.display = 'none'; }, 3000);
       } else {
-        alert('Failed to delete sale.');
+        showFeedback('error', 'Failed to delete sale.');
       }
     });
   }
