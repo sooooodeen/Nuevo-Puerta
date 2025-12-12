@@ -350,6 +350,7 @@
     
     <header style="text-align: left;">
         <h1>Discover House and Lot for Sale</h1>
+        <a href="../index.html" style="display:inline-block;margin-top:8px;margin-bottom:8px;color:#2563eb;text-decoration:underline;font-weight:bold;">Go to Landing Page</a>
         <br>
         <input type="text" placeholder="Enter a Barangay or Lot Number">
     </header>

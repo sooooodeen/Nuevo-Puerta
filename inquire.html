@@ -12,7 +12,25 @@
     <input type="email" name="email" placeholder="Email" required>
     <input type="text" name="phone" placeholder="Mobile Number" required>
     <input type="text" name="location" placeholder="Preferred Location or Lot">
-    <input type="date" name="preferred_date" required>
+
+    <!-- Agent selection -->
+    <label for="agent_id">Select Agent:</label>
+    <select name="agent_id" id="agent_id" required>
+      <option value="">-- Select Agent --</option>
+    </select>
+
+    <!-- Date selection (populated by JS) -->
+    <label for="available_date">Available Date:</label>
+    <select name="available_date" id="available_date" required>
+      <option value="">-- Select Date --</option>
+    </select>
+
+    <!-- Time slot selection (populated by JS) -->
+    <label for="time_slot">Available Time:</label>
+    <select name="time_slot" id="time_slot" required>
+      <option value="">-- Select Time --</option>
+    </select>
+
     <textarea name="note" placeholder="Notes or questions"></textarea>
     <label>
       <input type="checkbox" name="consent" required>
@@ -25,5 +43,58 @@
     <input type="hidden" name="lot_id" value="">
     <button type="submit">Submit Request</button>
   </form>
+
+  <script>
+    // Fetch agents and their available slots
+    async function fetchAgents() {
+      const res = await fetch('get_all_agents.php');
+      const agents = await res.json();
+      const agentSelect = document.getElementById('agent_id');
+      agents.forEach(agent => {
+        const opt = document.createElement('option');
+        opt.value = agent.id;
+        opt.textContent = agent.first_name + ' ' + agent.last_name;
+        agentSelect.appendChild(opt);
+      });
+    }
+
+    async function fetchDates(agentId) {
+      const res = await fetch('get_agent_slots.php?agent_id=' + agentId);
+      const slots = await res.json();
+      const dateSelect = document.getElementById('available_date');
+      dateSelect.innerHTML = '<option value="">-- Select Date --</option>';
+      const uniqueDates = [...new Set(slots.map(s => s.available_date))];
+      uniqueDates.forEach(date => {
+        const opt = document.createElement('option');
+        opt.value = date;
+        opt.textContent = date;
+        dateSelect.appendChild(opt);
+      });
+      document.getElementById('time_slot').innerHTML = '<option value="">-- Select Time --</option>';
+    }
+
+    async function fetchTimes(agentId, date) {
+      const res = await fetch('get_agent_slots.php?agent_id=' + agentId + '&date=' + date);
+      const slots = await res.json();
+      const timeSelect = document.getElementById('time_slot');
+      timeSelect.innerHTML = '<option value="">-- Select Time --</option>';
+      slots.forEach(slot => {
+        const opt = document.createElement('option');
+        opt.value = slot.time_slot;
+        opt.textContent = slot.time_slot;
+        timeSelect.appendChild(opt);
+      });
+    }
+
+    document.getElementById('agent_id').addEventListener('change', function() {
+      if (this.value) fetchDates(this.value);
+    });
+    document.getElementById('available_date').addEventListener('change', function() {
+      const agentId = document.getElementById('agent_id').value;
+      if (agentId && this.value) fetchTimes(agentId, this.value);
+    });
+
+    fetchAgents();
+  </script>
 </body>
 </html>

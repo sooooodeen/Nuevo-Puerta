@@ -1,6 +1,10 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
+<?php
+session_start();
+require_once __DIR__ . '/includes/user_helpers.php';
+// Now you can use userHasAccount() anywhere in this file
+// Example: if (userHasAccount()) { ... }
+?>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>El Nuevo Puerta Real Estate</title>
@@ -482,7 +486,11 @@ header div { /* For the sub-heading/slogan */
             <li><a href="contact.html">Contact</a></li>
         </ul>
         <div class="nav-right">
-            <a href="Login/login.php" class="login-btn">Login</a>
+            <?php if (userHasAccount()): ?>
+                <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
+            <?php else: ?>
+                <a href="Login/login.php" class="login-btn">Login</a>
+            <?php endif; ?>
         </div>
     </nav>
 

@@ -988,6 +988,9 @@ body{font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--gre
 
   <main class="main-content">
     <section class="dashboard-section" id="home" style="display:block;">
+            <div style="text-align:right;margin-bottom:10px;">
+              <a href="index.php" style="color:#2563eb;text-decoration:underline;font-weight:bold;font-size:1rem;">Go to Landing Page</a>
+            </div>
       <div style="margin-bottom:18px;">
         <h2 style="font-size:2rem;font-weight:700;margin-bottom:2px;">Welcome, <?php echo h($user['first_name']); ?></h2>
         <div style="color:var(--muted);font-size:1.1rem; margin-bottom: 12px;">Monitor your lots, viewings, and payments.</div>

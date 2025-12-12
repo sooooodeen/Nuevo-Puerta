@@ -1,3 +1,4 @@
+
 <?php
 /* agent_dashboard.php — static sidebar SPA with white icons and section switching */
 
@@ -449,6 +450,38 @@ if ($stmt = $conn->prepare("
   if ($res) $leads = $res->fetch_all(MYSQLI_ASSOC);
   $stmt->close();
 }
+
+// Handle agent time slot form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
+  csrf_check();
+  $avail_date = $_POST['avail_date'] ?? '';
+  $time_slot = $_POST['time_slot'] ?? '';
+  $max_clients = (int)($_POST['max_clients'] ?? 1);
+  $errors = [];
+  if (!$avail_date || !$time_slot || $max_clients < 1) {
+    $errors[] = 'All fields are required and max clients must be at least 1.';
+  }
+  if (empty($errors)) {
+    $stmt = $conn->prepare("INSERT INTO agent_time_slots (agent_id, available_date, time_slot, max_clients) VALUES (?, ?, ?, ?)");
+    $stmt->bind_param('isss', $agentId, $avail_date, $time_slot, $max_clients);
+    $stmt->execute();
+    $stmt->close();
+    $slot_success = true;
+  } else {
+    $slot_error = implode(' ', $errors);
+  }
+}
+
+// Fetch agent's time slots
+$agent_time_slots = [];
+$stmt = $conn->prepare("SELECT * FROM agent_time_slots WHERE agent_id=? ORDER BY available_date DESC, time_slot ASC");
+$stmt->bind_param('i', $agentId);
+$stmt->execute();
+$res = $stmt->get_result();
+while ($row = $res->fetch_assoc()) {
+  $agent_time_slots[] = $row;
+}
+$stmt->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -655,7 +688,77 @@ if ($stmt = $conn->prepare("
         </div>
       </section>
 
+      <!-- Agent Availability Section -->
       <section class="mt-8">
+        <div class="bg-white rounded-2xl border shadow p-6 mb-8">
+          <div class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <span style="display:inline-flex;align-items:center;margin-right:6px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="12" rx="9" ry="6" fill="#2e7d32"/><circle cx="12" cy="12" r="2.5" fill="#fff"/></svg>
+            </span> Set Your Availability
+          </div>
+          <?php if (!empty($availability_success)): ?>
+            <div class="mb-3 p-2 rounded bg-green-100 text-green-800 text-sm">Availability saved!</div>
+          <?php elseif (!empty($availability_error)): ?>
+            <div class="mb-3 p-2 rounded bg-red-100 text-red-800 text-sm"><?php echo h($availability_error); ?></div>
+          <?php endif; ?>
+          <?php if (!empty($slot_success)): ?>
+            <div id="slot-success-msg" class="mb-3 p-2 rounded bg-green-100 text-green-800 text-sm">Time slot added successfully!</div>
+          <?php elseif (!empty($slot_error)): ?>
+            <div id="slot-error-msg" class="mb-3 p-2 rounded bg-red-100 text-red-800 text-sm"><?php echo h($slot_error); ?></div>
+          <?php endif; ?>
+          <script>
+            setTimeout(function() {
+              var msg = document.getElementById('slot-success-msg');
+              if (msg) msg.style.display = 'none';
+              var err = document.getElementById('slot-error-msg');
+              if (err) err.style.display = 'none';
+            }, 3000);
+          </script>
+          <form method="post" class="flex flex-wrap gap-4 items-end">
+            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <input type="date" name="avail_date" class="border rounded px-3 py-2" required>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Time Slot</label>
+              <input type="time" name="time_slot" class="border rounded px-3 py-2" required>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients (for this slot)</label>
+              <input type="number" name="max_clients" class="border rounded px-3 py-2" min="1" value="1" required>
+            </div>
+            <button type="submit" name="save_time_slot" class="bg-green-700 text-white px-5 py-2 rounded font-semibold hover:bg-green-800">Add Slot</button>
+          </form>
+
+          <!-- Display agent's time slots -->
+          <?php if (!empty($agent_time_slots)): ?>
+            <div class="mt-6">
+              <div class="font-semibold text-gray-700 mb-2">Your Time Slots</div>
+              <div class="overflow-x-auto">
+                <table class="min-w-full border rounded text-sm">
+                  <thead>
+                    <tr class="bg-gray-50 text-gray-700">
+                      <th class="py-2 px-4 text-left border">Date</th>
+                      <th class="py-2 px-4 text-left border">Time Slot</th>
+                      <th class="py-2 px-4 text-left border">Max Clients</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach ($agent_time_slots as $slot): ?>
+                      <tr class="border-t">
+                        <td class="py-2 px-4 border"><?php echo h(date('M d, Y', strtotime($slot['available_date']))); ?></td>
+                        <td class="py-2 px-4 border"><?php echo h(date('h:i A', strtotime($slot['time_slot']))); ?></td>
+                        <td class="py-2 px-4 border"><?php echo h($slot['max_clients']); ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          <?php endif; ?>
+        </div>
+        <!-- ...existing code for Upcoming Viewings section... -->
         <div class="bg-white rounded-2xl border shadow p-6">
           <div class="flex items-center gap-2 font-semibold text-gray-800 mb-4">
             <span style="display:inline-flex;align-items:center;margin-right:6px;">
