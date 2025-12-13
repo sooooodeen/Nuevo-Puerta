@@ -1,4 +1,3 @@
-
 <?php
 /* agent_dashboard.php — static sidebar SPA with white icons and section switching */
 
@@ -463,10 +462,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
   }
   if (empty($errors)) {
     $stmt = $conn->prepare("INSERT INTO agent_time_slots (agent_id, available_date, time_slot, max_clients) VALUES (?, ?, ?, ?)");
-    $stmt->bind_param('isss', $agentId, $avail_date, $time_slot, $max_clients);
-    $stmt->execute();
-    $stmt->close();
-    $slot_success = true;
+    if ($stmt === false) {
+      $slot_error = 'Prepare failed: ' . $conn->error;
+    } else {
+      $stmt->bind_param('issi', $agentId, $avail_date, $time_slot, $max_clients);
+      if (!$stmt->execute()) {
+        $slot_error = 'Execute failed: ' . $stmt->error;
+      } else {
+        $slot_success = true;
+      }
+      $stmt->close();
+    }
   } else {
     $slot_error = implode(' ', $errors);
   }
@@ -1090,15 +1096,17 @@ $stmt->close();
                   </td>
                   <td class="py-3 px-4 border">
                     <div class="text-sm">
-                      <?php if (!empty($v['location_name']) || (!empty($v['block_number']) && !empty($v['lot_number']))): ?>
-                        <strong><?php echo h($v['location_name'] ?? ''); ?></strong>
-                        <?php if (!empty($v['block_number']) && !empty($v['lot_number'])): ?>
-                          <br><small class="text-gray-600">
-                            Block <?php echo h($v['block_number']); ?>, Lot <?php echo h($v['lot_number']); ?>
-                            <?php if (!empty($v['lot_size'])): ?>(<?php echo h($v['lot_size']); ?> sqm)<?php endif; ?>
-                          </small>
-                        <?php endif; ?>
-                      <?php else: ?>
+                      <?php if (!empty($v['location_name'])): ?>
+                        <strong><?php echo h($v['location_name']); ?></strong>
+                      <?php endif; ?>
+                      <?php if (!empty($v['block_number']) && !empty($v['lot_number'])): ?>
+                        <br><small class="text-gray-600">
+                          Block <?php echo h($v['block_number']); ?>, Lot <?php echo h($v['lot_number']); ?>
+                          <?php if (!empty($v['lot_size'])): ?> (<?php echo h(number_format($v['lot_size'], 2)); ?> sqm)<?php endif; ?>
+                          <?php if (!empty($v['lot_price'])): ?><br>₱<?php echo h(number_format($v['lot_price'], 2)); ?><?php endif; ?>
+                        </small>
+                      <?php endif; ?>
+                      <?php if (empty($v['location_name']) && empty($v['block_number']) && empty($v['lot_number'])): ?>
                         <span class="text-gray-500">Lot <?php echo h($v['lot_no'] ?: 'N/A'); ?></span>
                       <?php endif; ?>
                     </div>
@@ -1570,5 +1578,3 @@ function getAgentLocation() {
   }
 }
 </script>
-</body>
-</html>

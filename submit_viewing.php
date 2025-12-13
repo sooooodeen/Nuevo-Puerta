@@ -16,17 +16,20 @@ if ($conn->connect_error) {
 $agent_id          = isset($_POST['agent_id']) && $_POST['agent_id'] !== '' ? (int)$_POST['agent_id'] : null;
 $user_id           = null; // guests have no account
 
-$client_first_name = trim($_POST['firstName']  ?? '');
-$client_last_name  = trim($_POST['lastName']   ?? '');
-$client_email      = trim($_POST['email']      ?? '');
-$client_phone      = trim($_POST['phone']      ?? '');
+$client_first_name  = trim($_POST['client_first_name']  ?? '');
+$client_middle_name = trim($_POST['client_middle_name'] ?? '');
+$client_last_name   = trim($_POST['client_last_name']   ?? '');
+$client_email       = trim($_POST['client_email']       ?? '');
+$client_phone       = trim($_POST['client_phone']       ?? '');
+$location           = trim($_POST['location']           ?? '');
+$notes              = trim($_POST['notes']              ?? '');
 
-$lot_no_raw        = trim($_POST['lot_no']             ?? '');
-$preferred_at      = trim($_POST['preferredDateTime']  ?? '');
-$status            = 'pending';
+$lot_no_raw         = trim($_POST['lot_no']             ?? '');
+$preferred_at       = trim($_POST['preferredDateTime']  ?? '');
+$status             = 'pending';
 
-$client_lat        = ($_POST['latitude']  ?? '') === '' ? null : floatval($_POST['latitude']);
-$client_lng        = ($_POST['longitude'] ?? '') === '' ? null : floatval($_POST['longitude']);
+$client_lat         = ($_POST['client_lat']  ?? '') === '' ? null : floatval($_POST['client_lat']);
+$client_lng         = ($_POST['client_lng'] ?? '') === '' ? null : floatval($_POST['client_lng']);
 
 // NEW: get location_id and lot_id from POST
 $location_id       = isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null;
@@ -55,10 +58,11 @@ if ($lot_id !== null) {
 }
 
 // ---------------- INSERT VIEWING ----------------
+
 $sql = "INSERT INTO viewings
-    (agent_id, user_id, client_first_name, client_last_name, client_email, client_phone,
-     lot_no, preferred_at, status, client_lat, client_lng, location_id, lot_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+    (agent_id, user_id, client_first_name, client_middle_name, client_last_name, client_email, client_phone,
+     lot_no, preferred_at, status, client_lat, client_lng, location_id, lot_id, notes, location, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
 
 $stmt = $conn->prepare($sql);
 
@@ -72,6 +76,7 @@ if (!$stmt) {
   agent_id      i
   user_id       i
   client_first  s
+  client_middle s
   client_last   s
   email         s
   phone         s
@@ -82,20 +87,39 @@ if (!$stmt) {
   client_lng    d
   location_id   i
   lot_id        i
+  notes         s
+  location      s
 */
-$types = "iisssssssddii";
+$types = "iissssssssddiiss";
 
 $stmt->bind_param(
     $types,
     $agent_id, $user_id,
-    $client_first_name, $client_last_name, $client_email, $client_phone,
+    $client_first_name, $client_middle_name, $client_last_name, $client_email, $client_phone,
     $lot_no, $preferred_at, $status,
     $client_lat, $client_lng,
-    $location_id, $lot_id
+    $location_id, $lot_id,
+    $notes, $location
 );
 
 if ($stmt->execute()) {
-    echo json_encode(['success' => true, 'id' => $stmt->insert_id]);
+    // Fetch full lot details if lot_id is present
+    $lot_details = null;
+    if ($lot_id) {
+        $lotQuery = $conn->prepare("SELECT block_number, lot_number, lot_size, lot_price FROM lots WHERE id = ?");
+        $lotQuery->bind_param("i", $lot_id);
+        $lotQuery->execute();
+        $lotResult = $lotQuery->get_result();
+        if ($lotRow = $lotResult->fetch_assoc()) {
+            $lot_details = $lotRow;
+        }
+        $lotQuery->close();
+    }
+    echo json_encode([
+        'success' => true,
+        'id' => $stmt->insert_id,
+        'lot_details' => $lot_details
+    ]);
 } else {
     echo json_encode(['success' => false, 'error' => $stmt->error]);
 }

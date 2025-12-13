@@ -595,6 +595,56 @@ body {
 #suggestedAgent, #agentActions, #otherAgentSelect {
   display: none;
 }
+
+/* Modal for user messages */
+#userMessageModal {
+  display: none;
+  position: fixed;
+  z-index: 2000;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.32);
+  align-items: center;
+  justify-content: center;
+}
+#userMessageModal > div {
+  background: #fff;
+  padding: 32px 28px 24px 28px;
+  border-radius: 12px;
+  max-width: 350px;
+  width: 90vw;
+  box-shadow: 0 8px 32px rgba(44, 62, 80, 0.18);
+  position: relative;
+  text-align: center;
+}
+#userMessageModalText {
+  font-size: 1.08em;
+  color: #222;
+  margin-bottom: 18px;
+}
+#userMessageModal button {
+  background: #23613b;
+  color: #fff;
+  padding: 8px 22px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1em;
+  cursor: pointer;
+}
+#userMessageModalCloseBtn {
+  display: none;
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  color: #888;
+  cursor: pointer;
+}
   </style>
 </head>
 <body>
@@ -706,7 +756,14 @@ body {
             <div id="suggestedAgent" style="margin-top:10px;"></div>
 
             <div id="agentActions" style="margin-top:10px;display:none;">
-              <button type="button" id="pickSuggestedAgentBtn" style="background:#23613b;color:#fff;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;margin-right:8px;">Pick This Agent</button>
+              <button type="button" id="pickSuggestedAgentBtn" class="pick-agent-btn" style="background:#23613b;color:#fff;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;margin-right:8px;transition:background 0.2s,box-shadow 0.2s;">Pick This Agent</button>
+              </style>
+              <style>
+              .pick-agent-btn:hover, .pick-agent-btn:focus {
+                background: #1a4726 !important;
+                box-shadow: 0 2px 8px rgba(44, 62, 80, 0.15);
+              }
+              </style>
               <button type="button" id="chooseOtherAgentBtn" style="background:#e6e6e6;color:#23613b;padding:6px 16px;border:none;border-radius:5px;cursor:pointer;">Choose Other Agent</button>
             </div>
             <div id="otherAgentSelect" style="margin-top:10px;display:none;">
@@ -716,10 +773,13 @@ body {
           </div>
         </div>
 
+
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Preferred Date & Time</label>
-            <input type="datetime-local" class="form-input" id="preferredDateTime" name="preferred_date" required>
+            <select class="form-input" id="agentTimeSlot" name="preferredDateTime" required disabled>
+              <option value="">Please pick an agent first</option>
+            </select>
           </div>
         </div>
 
@@ -766,6 +826,15 @@ body {
 
       <button type="submit">Submit Request</button>
     </form>
+  </div>
+</div>
+
+<!-- Modal for user messages -->
+<div id="userMessageModal" style="display:none;position:fixed;z-index:9999;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.32);align-items:center;justify-content:center;">
+  <div style="background:#fff;padding:32px 28px 24px 28px;border-radius:12px;max-width:350px;width:90vw;box-shadow:0 8px 32px rgba(44,62,80,0.18);position:relative;text-align:center;">
+    <div id="userMessageModalText" style="font-size:1.08em;color:#222;margin-bottom:18px;"></div>
+    <button onclick="closeUserMessageModal()" style="background:#23613b;color:#fff;padding:8px 22px;border:none;border-radius:6px;font-weight:600;font-size:1em;cursor:pointer;">OK</button>
+    <button id="userMessageModalCloseBtn" style="display:none;position:absolute;top:10px;right:14px;background:none;border:none;font-size:1.5em;color:#888;cursor:pointer;">&times;</button>
   </div>
 </div>
 
@@ -1042,7 +1111,7 @@ document.getElementById('getAgentBtn').onclick = function () {
   const lng = document.getElementById('user_lng').value.trim();
 
   if (!location && (!lat || !lng)) {
-    alert('Please enter your address or latitude/longitude.');
+    showUserMessageModal('Please enter your address or latitude/longitude.');
     return;
   }
 
@@ -1059,11 +1128,14 @@ document.getElementById('getAgentBtn').onclick = function () {
 
       if (data && data.id) {
         agentDiv.innerHTML = `
-          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;">
-            <img src="${data.photo}" alt="Agent Photo" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #e6e6e6;">
-            <div>
-              <div style="font-weight:700;color:#23613b;font-size:1.1em;">${data.name}</div>
-              <div style="font-size:0.98em;color:#444;">${data.email}<br>${data.mobile}<br>${data.city}${data.address ? ', ' + data.address : ''}</div>
+          <div class="agent-card">
+            <div class="agent-card-photo">
+              <img src="${data.photo}" alt="Agent Photo">
+            </div>
+            <div class="agent-card-info">
+              <div class="agent-card-name">${data.name}</div>
+              <div class="agent-card-contact">${data.email}<br>${data.mobile}</div>
+              <div class="agent-card-location">${data.city}${data.address ? ', ' + data.address : ''}</div>
             </div>
           </div>`;
         agentDiv.dataset.agentId = data.id;
@@ -1071,7 +1143,7 @@ document.getElementById('getAgentBtn').onclick = function () {
         document.getElementById('agentActions').style.display = 'block';
         document.getElementById('otherAgentSelect').style.display = 'none';
       } else {
-        agentDiv.textContent = 'No agent found near your location.';
+        agentDiv.innerHTML = '<div class="agent-card agent-card-empty">No agent found near your location.</div>';
         agentDiv.style.display = 'block';
         delete agentDiv.dataset.agentId;
         document.getElementById('agentActions').style.display = 'none';
@@ -1099,14 +1171,17 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
 
   const formData = new FormData();
   formData.append('agent_id', agent_id);
-  formData.append('firstName', document.getElementById('firstName').value);
-  formData.append('lastName', document.getElementById('lastName').value);
-  formData.append('email', document.getElementById('email').value);
-  formData.append('phone', document.getElementById('phone').value);
+  formData.append('client_first_name', document.getElementById('firstName').value);
+  formData.append('client_middle_name', document.getElementById('middleName').value);
+  formData.append('client_last_name', document.getElementById('lastName').value);
+  formData.append('client_email', document.getElementById('email').value);
+  formData.append('client_phone', document.getElementById('phone').value);
+  formData.append('location', document.getElementById('user_location').value);
   formData.append('lot_no', lot_no);
-  formData.append('preferredDateTime', document.getElementById('preferredDateTime').value || '');
-  formData.append('latitude', document.getElementById('user_lat').value || '');
-  formData.append('longitude', document.getElementById('user_lng').value || '');
+  formData.append('preferredDateTime', document.getElementById('agentTimeSlot').value || '');
+  formData.append('notes', document.getElementById('notes').value || '');
+  formData.append('client_lat', document.getElementById('user_lat').value || '');
+  formData.append('client_lng', document.getElementById('user_lng').value || '');
   formData.append('location_id', document.getElementById('location_id').value || '');
   formData.append('lot_id', document.getElementById('lot_id').value || '');
 
@@ -1114,13 +1189,12 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
     .then(r => r.json())
     .then((data) => {
       if (data.success) {
-        alert('Your viewing request has been submitted! We will contact you soon.');
-        closeViewingModal();
+        showUserMessageModal('Your viewing request has been submitted! We will contact you soon.', closeViewingModal);
       } else {
-        alert('Error submitting request: ' + (data.error || 'Unknown error'));
+        showUserMessageModal('Error submitting request: ' + (data.error || 'Unknown error'));
       }
     })
-    .catch((err) => alert('Network error: ' + err.message));
+    .catch((err) => showUserMessageModal('Network error: ' + err.message));
 });
 
 /* -------------------- CLICK OUTSIDE TO CLOSE MODAL -------------------- */
@@ -1128,6 +1202,89 @@ window.addEventListener('click', function (event) {
   const modal = document.getElementById('viewingModal');
   if (event.target === modal) closeViewingModal();
 });
+
+// Load agent slots and populate dropdown
+function loadAgentSlots(agentId) {
+  console.log('Loading slots for agent:', agentId);
+  const select = document.getElementById('agentTimeSlot');
+  select.disabled = true;
+  select.innerHTML = '<option value="">Loading available slots...</option>';
+  fetch('get_agent_slots.php?agent_id=' + agentId)
+    .then(res => res.json())
+    .then(slots => {
+      console.log('Slots received:', slots);
+      select.innerHTML = '<option value="">-- Select Date & Time --</option>';
+      // Group slots by date and display number of clients accommodated
+      const grouped = {};
+      slots.forEach(slot => {
+        if (!grouped[slot.available_date]) grouped[slot.available_date] = [];
+        grouped[slot.available_date].push(slot);
+      });
+      Object.keys(grouped).forEach(date => {
+        const optgroup = document.createElement('optgroup');
+        // Format date as e.g. December 25, 2025
+        const dateObj = new Date(date);
+        const dateLabel = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        optgroup.label = dateLabel;
+        grouped[date].forEach(slot => {
+          // Format time as e.g. 12:05 PM
+          const timeLabel = slot.time_slot.length > 5 ? slot.time_slot.slice(0,5) : slot.time_slot;
+          const [h, m] = timeLabel.split(':');
+          const d = new Date(); d.setHours(h, m);
+          const formattedTime = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          const opt = document.createElement('option');
+          opt.value = date + ' ' + slot.time_slot;
+          let label = formattedTime;
+          if (slot.max_clients > 1) {
+            label += ` (${slot.booked_count}/${slot.max_clients} slots taken)`;
+          } else {
+            label += slot.booked_count >= slot.max_clients ? ' (Full)' : ' (Available)';
+          }
+          if (slot.booked_count >= slot.max_clients) {
+            opt.disabled = true;
+            opt.style.color = '#aaa';
+          }
+          opt.textContent = label;
+          optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
+      });
+      select.disabled = false;
+    })
+    .catch(err => {
+      console.error('Error fetching agent slots:', err);
+      select.innerHTML = '<option value="">Could not load slots</option>';
+      select.disabled = true;
+    });
+}
+window.loadAgentSlots = loadAgentSlots;
+
+
+// Delegated event handler for Pick This Agent (works even if button is recreated)
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.id === 'pickSuggestedAgentBtn') {
+    const agentDiv = document.getElementById('suggestedAgent');
+    if (agentDiv && agentDiv.dataset.agentId) {
+      loadAgentSlots(agentDiv.dataset.agentId);
+      document.getElementById('manualAgentSelect').value = '';
+      document.getElementById('otherAgentSelect').style.display = 'none';
+    }
+  }
+});
+
+document.getElementById('manualAgentSelect').onchange = function() {
+  const agentDiv = document.getElementById('suggestedAgent');
+  if (!agentDiv) return;
+  if (this.value) {
+    agentDiv.dataset.agentId = this.value;
+    loadAgentSlots(this.value);
+  } else {
+    delete agentDiv.dataset.agentId;
+    const select = document.getElementById('agentTimeSlot');
+    select.innerHTML = '<option value="">Please pick an agent first</option>';
+    select.disabled = true;
+  }
+};
 
 /* Manual agent list */
 function fetchAllAgentsForSelect() {
@@ -1164,6 +1321,82 @@ document.getElementById('manualAgentSelect').onchange = function() {
     delete agentDiv.dataset.agentId;
   }
 };
+
+
+function showUserMessageModal(message, onClose) {
+  const modal = document.getElementById('userMessageModal');
+  const text = document.getElementById('userMessageModalText');
+  text.textContent = message;
+  modal.style.display = 'flex';
+  // Allow closing with OK button
+  modal.querySelector('button').onclick = function() {
+    modal.style.display = 'none';
+    if (typeof onClose === 'function') onClose();
+  };
+  // Allow closing with X button (hidden by default)
+  document.getElementById('userMessageModalCloseBtn').onclick = function() {
+    modal.style.display = 'none';
+    if (typeof onClose === 'function') onClose();
+  };
+}
+function closeUserMessageModal() {
+  document.getElementById('userMessageModal').style.display = 'none';
+}
 </script>
+</body>
+<style>
+/* Agent Card Styles */
+.agent-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: #f9fafb;
+  border: 1.5px solid #e6e6e6;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(44,62,80,0.07);
+  padding: 14px 18px;
+  margin-bottom: 6px;
+  transition: box-shadow 0.18s;
+}
+.agent-card:hover {
+  box-shadow: 0 4px 16px rgba(44,62,80,0.13);
+}
+.agent-card-photo img {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2.5px solid #23613b22;
+  background: #fff;
+}
+.agent-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-card-name {
+  font-weight: 700;
+  color: #23613b;
+  font-size: 1.18em;
+  margin-bottom: 2px;
+}
+.agent-card-contact {
+  font-size: 0.99em;
+  color: #444;
+  margin-bottom: 2px;
+}
+.agent-card-location {
+  font-size: 0.97em;
+  color: #6b7280;
+}
+.agent-card-empty {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1.5px solid #fca5a5;
+  border-radius: 10px;
+  padding: 10px 14px;
+  text-align: center;
+}
+</style>
 </body>
 </html>

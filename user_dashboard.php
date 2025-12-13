@@ -1282,9 +1282,30 @@ body{font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--gre
             $isOverdue = $dateTime && ($dateTime < $now) && in_array($statusRaw, $pendingStates, true);
             $badgeText = $isOverdue ? 'Overdue' : (!empty($viewing['status']) ? ucwords(str_replace('_',' ', $viewing['status'])) : 'Scheduled');
             $badgeClass = $isOverdue ? 'overdue' : ($statusRaw === 'done' ? 'done' : ($statusRaw === 'cancelled' ? 'cancelled' : ''));
+            // Fetch lot details if available
+            $lotDetails = [];
+            if (!empty($viewing['lot_id'])) {
+                $lotStmt = $conn->prepare("SELECT ll.location_name, l.block_number, l.lot_number, l.lot_size FROM lots l LEFT JOIN lot_locations ll ON l.location_id = ll.id WHERE l.id = ?");
+                $lotStmt->bind_param("i", $viewing['lot_id']);
+                $lotStmt->execute();
+                $lotRes = $lotStmt->get_result();
+                if ($lotRow = $lotRes->fetch_assoc()) {
+                    $lotDetails = $lotRow;
+                }
+                $lotStmt->close();
+            }
         ?>
           <tr>
-            <td>Lot <?php echo h($viewing['lot_no']); ?></td>
+            <td>
+              <?php if (!empty($lotDetails['location_name'])): ?>
+                <strong><?php echo h($lotDetails['location_name']); ?></strong><br>
+              <?php endif; ?>
+              <?php if (!empty($lotDetails['block_number']) && !empty($lotDetails['lot_number'])): ?>
+                <small class="text-gray-600">Block <?php echo h($lotDetails['block_number']); ?>, Lot <?php echo h($lotDetails['lot_number']); ?><?php if (!empty($lotDetails['lot_size'])): ?> (<?php echo h(number_format($lotDetails['lot_size'], 2)); ?> sqm)<?php endif; ?></small>
+              <?php else: ?>
+                Lot <?php echo h($viewing['lot_no']); ?>
+              <?php endif; ?>
+            </td>
             <td>
               <?php echo $dateTime ? $dateTime->format('M d, Y • h:i A') : '—'; ?>
             </td>
@@ -1352,27 +1373,6 @@ body{font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--gre
               <option value="Bank Deposit">Bank Deposit</option>
               <option value="GCash">GCash</option>
               <option value="PayMaya">PayMaya</option>
-              <option value="Cash">Cash</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-
-          <div class="pay-item pay-ref">
-            <label>Reference No.</label>
-            <input type="text" id="pay_ref" placeholder="Bank/GCash ref no.">
-          </div>
-
-          <div class="pay-item pay-desc">
-            <label>Description</label>
-            <input type="text" id="pay_desc" placeholder="e.g. Reservation fee">
-          </div>
-
-          <div class="pay-item pay-actions">
-            <button id="submitPaymentBtn" class="btn" type="button">Submit Payment</button>
-            <button id="cancelPaymentBtn" class="btn ghost" type="button">Cancel</button>
-            <div id="paymentStatus" style="margin-left:auto;font-weight:600;display:none;"></div>
-          </div>
-        </form>
       </div>
 
       <!-- Payment history table -->
