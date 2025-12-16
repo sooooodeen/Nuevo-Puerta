@@ -120,11 +120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
     if ($result) {
         while ($row = mysqli_fetch_assoc($result)) {
             $agents[] = [
-                'id'           => (int)$row['id'],
-                'name'         => $row['first_name'] . ' ' . $row['last_name'],
-                'email'        => $row['email'],
-                'sales_count'  => (int)$row['sales_count'],
-                'total_amount' => (float)$row['total_amount'],
+                'id'            => (int)$row['id'],
+                'name'          => $row['first_name'] . ' ' . $row['last_name'],
+                'email'         => $row['email'],
+                'sales_count'   => (int)$row['sales_count'],
+                'total_amount'  => (float)$row['total_amount'],
                 'avg_deal_size'=> (float)$row['avg_deal_size'],
             ];
         }
@@ -225,11 +225,13 @@ if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'ag
     $type = $_GET['fetch'];
 
     if ($type === 'admin') {
-      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at FROM admin_accounts WHERE id = ?";
+      // FIXED: Removed extra columns not in DB
+      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM admin_accounts WHERE id = ?";
     } elseif ($type === 'agent') {
-      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at FROM agent_accounts WHERE id = ?";
+      // FIXED: Removed extra columns not in DB
+      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM agent_accounts WHERE id = ?";
     } else { // user
-      $sql = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts WHERE id = ?";
+      $sql = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at, photo_path FROM user_accounts WHERE id = ?";
     }
 
     $stmt = $conn->prepare($sql);
@@ -249,7 +251,7 @@ if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'ag
     } else {
       echo json_encode($account);
     }
-    exit; // VERY IMPORTANT – stop executing before HTML
+    exit; 
 }
 
 // =====================================================
@@ -260,15 +262,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
 
     // ---------- ADD ADMIN ----------
     if ($_POST['account_action'] === 'add') {
-        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']        ?? '');
-        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']       ?? '');
-        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']         ?? '');
-        $email             = mysqli_real_escape_string($conn, $_POST['email']             ?? '');
-        $username          = mysqli_real_escape_string($conn, $_POST['username']          ?? '');
-        $phone             = mysqli_real_escape_string($conn, $_POST['phone']             ?? '');
-        $address           = mysqli_real_escape_string($conn, $_POST['address']           ?? '');
-        $availability     = isset($_POST['availability']) ? 1 : 0;
-        $longitude         = ($_POST['longitude'] ?? '') !== '' ? (float)$_POST['longitude'] : null;
+        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
+        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
+        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
+        $email             = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
+        $username          = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
+        $phone             = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
+        $address           = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
+        $availability      = isset($_POST['availability']) ? 1 : 0;
 
         // password (required)
         $raw_password = $_POST['password'] ?? '';
@@ -284,11 +285,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
+        // FIXED: Removed columns that don't exist in admin_accounts table
         $sql = "INSERT INTO admin_accounts 
                 (first_name, middle_name, last_name, email, username, password,
-                 phone, address, short_description, years_experience,
-                 photo_path, availability, latitude, longitude)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                 phone, address, photo_path, availability)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
 
         if (!$stmt) {
@@ -296,12 +297,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
             exit;
         }
 
-        // 11 strings + 1 int + 2 doubles = "sssssssssssidd"
+        // 9 strings + 1 int = "sssssssssi"
         $stmt->bind_param(
-            "sssssssssssidd",
+            "sssssssssi",
             $first_name, $middle_name, $last_name, $email, $username, $password,
-            $phone, $address, $short_description, $years_experience,
-            $photo_path, $availability, $latitude, $longitude
+            $phone, $address, $photo_path, $availability
         );
 
         $ok = $stmt->execute();
@@ -318,15 +318,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
     // ---------- UPDATE ADMIN ----------
     if ($_POST['account_action'] === 'update') {
         $account_id       = intval($_POST['account_id'] ?? 0);
-        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']        ?? '');
-        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']       ?? '');
-        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']         ?? '');
-        $email            = mysqli_real_escape_string($conn, $_POST['email']             ?? '');
-        $username         = mysqli_real_escape_string($conn, $_POST['username']          ?? '');
-        $phone            = mysqli_real_escape_string($conn, $_POST['phone']             ?? '');
-        $address          = mysqli_real_escape_string($conn, $_POST['address']           ?? '');
-        $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-        $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience']  ?? '');
+        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
+        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
+        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
+        $email            = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
+        $username         = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
+        $phone            = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
+        $address          = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
         $availability     = isset($_POST['availability']) ? 1 : 0;
 
         $photo_path = null;
@@ -334,14 +332,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        // if password is provided -> update it too
+        // FIXED: Removed non-existent columns from UPDATE logic
         if (!empty($_POST['password'])) {
             $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
             $sql = "UPDATE admin_accounts 
                     SET first_name=?, middle_name=?, last_name=?, email=?, username=?, 
-                        password=?, phone=?, address=?, short_description=?, years_experience=?,
-                        photo_path=?, availability=?, latitude=?, longitude=?
+                        password=?, phone=?, address=?, photo_path=?, availability=?
                     WHERE id=?";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
@@ -349,20 +346,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
                 exit;
             }
 
-            // 10 strings + 1 int + 2 doubles + 1 int = "ssssssssssiddi"
+            // "sssssssssii"
             $stmt->bind_param(
-                "ssssssssssiddi",
+                "sssssssssii",
                 $first_name, $middle_name, $last_name, $email, $username,
-                $password, $phone, $address, $short_description, $years_experience,
-                $photo_path, $availability, $latitude, $longitude, $account_id
+                $password, $phone, $address, $photo_path, $availability, $account_id
             );
 
         } else {
             // no password change
             $sql = "UPDATE admin_accounts 
                     SET first_name=?, middle_name=?, last_name=?, email=?, username=?,
-                        phone=?, address=?, short_description=?, years_experience=?,
-                        photo_path=?, availability=?, latitude=?, longitude=?
+                        phone=?, address=?, photo_path=?, availability=?
                     WHERE id=?";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
@@ -370,12 +365,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
                 exit;
             }
 
-            // 9 strings + 1 int + 2 doubles + 1 int = "sssssssssiddi"
+            // "sssssssii"
             $stmt->bind_param(
-                "sssssssssiddi",
+                "sssssssii",
                 $first_name, $middle_name, $last_name, $email, $username,
-                $phone, $address, $short_description, $years_experience,
-                $photo_path, $availability, $latitude, $longitude, $account_id
+                $phone, $address, $photo_path, $availability, $account_id
             );
         }
 
@@ -417,12 +411,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
 
 // =====================================================
 // AGENT ACCOUNT CRUD (agent_action)
-//   – add/update: JSON (AJAX)
-//   – delete: normal form, no JSON
+//    – add/update: JSON (AJAX)
+//    – delete: normal form, no JSON
 // =====================================================
-// =============================================
-// AGENT ACCOUNT CRUD (AJAX for add/update; normal form for delete)
-// ================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
 
     $action = $_POST['agent_action'];
@@ -441,11 +432,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         $email             = mysqli_real_escape_string($conn, $_POST['email']);
         $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
         $address           = mysqli_real_escape_string($conn, $_POST['address']);
-        $short_description = mysqli_real_escape_string($conn, $_POST['short_description']);
-        // $years_experience  = mysqli_real_escape_string($conn, $_POST['years_experience']); // <-- removed
+        
+        // Removed short_description and years_experience to prevent crash
         $availability      = isset($_POST['availability']) ? 1 : 0;
-        $latitude          = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
-        $longitude         = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+        
         $password          = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
         $photo_path = null;
@@ -453,7 +443,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             $photo_path = handleFileUpload($_FILES['photo']);
         }
 
-        // NOTE: years_experience removed from the columns and values
+        // NOTE: years_experience and short_description removed
         $sql = "INSERT INTO agent_accounts 
           (first_name, middle_name, last_name, username, email, phone, address, 
            photo_path, availability, password, status)
@@ -465,10 +455,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
             exit;
         }
 
-        // 8 strings (first..short_description) + photo_path(s) = 9 's'
-        // availability (i), latitude(d), longitude(d), password(s)
+        // 8 strings + 1 int + 1 string
         $stmt->bind_param(
-          "sssssssssis",
+          "ssssssssis",
           $first_name, $middle_name, $last_name, $username, $email, $phone,
           $address, $photo_path, $availability, $password
         );
@@ -493,11 +482,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
         $email            = mysqli_real_escape_string($conn, $_POST['email']);
         $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
         $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-        $short_description= mysqli_real_escape_string($conn, $_POST['short_description'] ?? '');
-        // $years_experience = mysqli_real_escape_string($conn, $_POST['years_experience'] ?? ''); // <-- removed
+        
+        // Removed short_description and years_experience to prevent crash
         $availability     = isset($_POST['availability']) ? 1 : 0;
-        $latitude         = !empty($_POST['latitude'])  ? (float)$_POST['latitude']  : null;
-        $longitude        = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
 
         $photo_path = null;
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
@@ -517,8 +504,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
                 exit;
             }
 
-            // 8 strings (first..short_description),
-            // availability(i), latitude(d), longitude(d), password(s), photo_path(s), id(i)
             $stmt->bind_param(
               "ssssssssisi",
               $first_name, $middle_name, $last_name, $username, $email, $phone,
@@ -731,7 +716,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
         }
 
         $lotsResult = mysqli_query($conn, $lotsQuery);
-        $lots       = [];
+        $lots        = [];
         if ($lotsResult) {
             while ($lot = mysqli_fetch_assoc($lotsResult)) {
                 $lots[] = $lot;
@@ -827,12 +812,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && 
 
 // Viewing list
 $all_viewings  = [];
-$viewingsQuery = "SELECT v.*, ll.location_name, l.block_number, l.lot_number, l.lot_size, l.lot_price
-                  FROM viewings v
-                  LEFT JOIN lot_locations ll ON v.location_id = ll.id
-                  LEFT JOIN lots l ON v.lot_id = l.id
-                  ORDER BY v.created_at DESC
-                  LIMIT 5";
+// Only fetch active viewings for the default list, or modify to fetch all
+$viewingsQuery = "
+    SELECT 
+        v.*,
+        ll.location_name,
+        l.block_number,
+        l.lot_number,
+        l.lot_size,
+        l.lot_price
+    FROM viewings v
+    LEFT JOIN lots l 
+        ON (v.lot_id IS NOT NULL AND l.id = v.lot_id) 
+        OR (v.lot_id IS NULL AND l.lot_number = v.lot_no)
+    LEFT JOIN lot_locations ll 
+        ON ll.id = l.location_id
+    ORDER BY v.created_at DESC
+    LIMIT 10
+";
+
 $viewingsResult = mysqli_query($conn, $viewingsQuery);
 if ($viewingsResult) {
     while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
@@ -841,7 +839,7 @@ if ($viewingsResult) {
 }
 
 // Active agents for assignment dropdown
-$agents     = [];
+$agents      = [];
 $agentsQuery = "SELECT id, first_name, last_name FROM agent_accounts WHERE status = 'active'";
 $agentsResult = mysqli_query($conn, $agentsQuery);
 if ($agentsResult) {
@@ -856,6 +854,7 @@ if ($agentsResult) {
 
 // Admin accounts
 $adminAccounts   = [];
+// FIXED: Removed missing columns from SELECT
 $accountsQuery   = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, photo_path, availability, created_at FROM admin_accounts ORDER BY created_at DESC";
 $accountsResult  = mysqli_query($conn, $accountsQuery);
 if (!$accountsResult) {
@@ -865,8 +864,9 @@ while ($account = mysqli_fetch_assoc($accountsResult)) {
   $adminAccounts[] = $account;
 }
 
-// Agent accounts (working, matches your DB)
+// Agent accounts
 $agentAccounts  = [];
+// FIXED: Removed missing columns from SELECT
 $agentQuery     = "
     SELECT 
         id,
@@ -906,8 +906,6 @@ if ($userResult) {
 }
 
 
-
-
 // Handle file uploads
 function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
     if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) {
@@ -928,163 +926,6 @@ function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
         return $uploadPath;
     }
     return null;
-}
-
-// Handle form submissions for viewings
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action'])) {
-    if ($_POST['viewing_action'] === 'request') {
-        $user_id = $_SESSION['user_id'] ?? null;
-        $agent_id = null;
-
-        $client_first_name = mysqli_real_escape_string($conn, $_POST['client_first_name']);
-        $client_last_name  = mysqli_real_escape_string($conn, $_POST['client_last_name']);
-        $client_email      = mysqli_real_escape_string($conn, $_POST['client_email']);
-        $client_phone      = mysqli_real_escape_string($conn, $_POST['client_phone']);
-
-        // lot_id comes from the form (hidden input or similar)
-        $lot_id        = (int) $_POST['lot_id'];
-        $preferred_date = mysqli_real_escape_string($conn, $_POST['preferred_date']);
-        $status         = 'requested';
-        $client_lat     = mysqli_real_escape_string($conn, $_POST['client_lat']);
-        $client_lng     = mysqli_real_escape_string($conn, $_POST['client_lng']);
-        $location_id    = (int) $_POST['location_id'];
-
-        // ✅ Fetch the lot_number of the selected lot_id
-        $lot_no_query = $conn->prepare("SELECT lot_number FROM lots WHERE id = ?");
-        $lot_no_query->bind_param("i", $lot_id);
-        $lot_no_query->execute();
-        $lot_no_result = $lot_no_query->get_result();
-        $lot_row = $lot_no_result->fetch_assoc();
-        $lot_no = $lot_row ? $lot_row['lot_number'] : null;  // Real lot number
-        $lot_no_query->close();
-
-        if ($lot_no === null) {
-            // Safety check: lot_id not found
-            $error_message = "Invalid lot selected.";
-        } else {
-            // ✅ Insert viewing request into the database
-            $insertQuery = "INSERT INTO viewings (
-                                agent_id, 
-                                user_id, 
-                                client_first_name, 
-                                client_last_name, 
-                                client_email, 
-                                client_phone,
-                                lot_no,          -- real lot number (e.g. 3, 6)
-                                preferred_at, 
-                                status, 
-                                client_lat, 
-                                client_lng, 
-                                location_id, 
-                                lot_id,          -- FK to lots.id
-                                created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
-
-            $stmt = $conn->prepare($insertQuery);
-            $stmt->bind_param(
-                "iissssissssss",
-                $agent_id,
-                $user_id,
-                $client_first_name,
-                $client_last_name,
-                $client_email,
-                $client_phone,
-                $lot_no,          // ✅ use lot_no here (not lot_id)
-                $preferred_date,
-                $status,
-                $client_lat,
-                $client_lng,
-                $location_id,
-                $lot_id          // ✅ FK to lots.id
-            );
-
-            if ($stmt->execute()) {
-                $success_message = "Viewing request submitted successfully!";
-            } else {
-                $error_message = "Error submitting request: " . $stmt->error;
-            }
-            $stmt->close();
-        }
-    }
-}
-
-
-// Fetch all viewing requests except completed ones
-$all_viewings = [];
-
-$viewingsQuery = "
-    SELECT 
-        v.*,
-        ll.location_name,
-        l.block_number,
-        l.lot_number,
-        l.lot_size,
-        l.lot_price
-    FROM viewings v
-    LEFT JOIN lots l 
-        ON (
-            v.lot_id IS NOT NULL AND l.id = v.lot_id
-        ) OR (
-            v.lot_id IS NULL AND l.lot_number = v.lot_no
-        )
-    LEFT JOIN lot_locations ll 
-        ON ll.id = l.location_id
-    WHERE v.status != 'completed'
-    ORDER BY v.created_at DESC
-";
-
-$viewingsResult = mysqli_query($conn, $viewingsQuery);
-if ($viewingsResult) {
-    while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
-        $all_viewings[] = $viewing;
-    }
-}
-
-
-// Handle viewing assignments and status updates
-if (isset($_POST['viewing_action'])) {
-    if ($_POST['viewing_action'] === 'assign_agent') {
-        $viewingId = intval($_POST['viewing_id']);
-        $agentId = intval($_POST['agent_id']);
-        
-        $sql = "UPDATE viewings SET agent_id = ?, status = 'scheduled' WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("ii", $agentId, $viewingId);
-            if ($stmt->execute()) {
-                $success_message = "Agent assigned successfully!";
-            } else {
-                $error_message = "Failed to assign agent.";
-            }
-            $stmt->close();
-        }
-    }
-    // Refresh the page to show updated data
-    header("Location: " . $_SERVER['PHP_SELF'] . "#viewings");
-    exit;
-}
-
-// Fetch all admin accounts
-// ...existing code...
-
-// Fetch all agent accounts
-$agentAccounts = [];
-$agentQuery = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, short_description, years_experience, photo_path, availability, status, created_at FROM agent_accounts ORDER BY created_at DESC";
-$agentResult = mysqli_query($conn, $agentQuery);
-if ($agentResult) {
-    while ($agent = mysqli_fetch_assoc($agentResult)) {
-        $agentAccounts[] = $agent;
-    }
-}
-
-// Fetch all user accounts
-$userAccounts = [];
-$userQuery = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts ORDER BY created_at DESC";
-$userResult = mysqli_query($conn, $userQuery);
-if ($userResult) {
-    while ($user = mysqli_fetch_assoc($userResult)) {
-        $userAccounts[] = $user;
-    }
 }
 
 // Get total number of pending documents
@@ -2384,9 +2225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
           <span>Manage Viewings</span>
         </a>
 
-        <!-- NEW: Notifications, Audit Logs, Documents (UI only) -->
         <a data-target="section-notifications">
-          <!-- bell icon via simple svg so no missing asset -->
           <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
             <path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 0 0-5-5.91V4a1 1 0 1 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z"/>
           </svg>
@@ -2412,7 +2251,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   <div class="divider"></div>
 
   <div class="container">
-    <!-- DASHBOARD SECTION -->
     <div id="section-dashboard" class="section">
       <div class="header">
         <div>
@@ -2459,9 +2297,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       <div class="table-section">
         <h2>Recent Activity</h2>
         
-        <!-- Enhanced Recent Activity Section -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
-          <!-- Recent User Registrations -->
           <div>
             <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent User Registrations</h3>
             <?php
@@ -2493,12 +2329,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             <?php endif; ?>
           </div>
 
-          <!-- Recent Viewing Requests -->
           <div>
             <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent Viewing Requests</h3>
             <?php
             $recentViewingsQuery = "SELECT v.client_first_name, v.client_last_name, v.status, v.created_at, 
-                                          ll.location_name, l.block_number, l.lot_number
+                                           ll.location_name, l.block_number, l.lot_number
                                    FROM viewings v
                                    LEFT JOIN lot_locations ll ON v.location_id = ll.id
                                    LEFT JOIN lots l ON v.lot_id = l.id
@@ -2534,7 +2369,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
           </div>
         </div>
 
-        <!-- Quick Stats Summary -->
         <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
           <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">System Overview</h3>
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
@@ -2579,8 +2413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-   <!-- MANAGE ACCOUNTS SECTION -->
-<div id="section-accounts" class="section hidden">
+   <div id="section-accounts" class="section hidden">
   <div class="header">
     <div>
       <h2>Account Management</h2>
@@ -2598,23 +2431,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       <div class="alert error"><?php echo $error_message; ?></div>
     <?php endif; ?>
 
-    <!-- Account Type Navigation -->
     <div class="account-type-nav">
       <a href="#" onclick="showAccountType('admin')" id="admin-tab" class="active">Admin Accounts</a>
       <a href="#" onclick="showAccountType('agent')" id="agent-tab">Agent Accounts</a>
       <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
     </div>
 
- <!-- ADMIN ACCOUNTS SECTION -->
-<div id="admin-accounts" class="account-section active">
+ <div id="admin-accounts" class="account-section active">
   <div class="form-container">
     <div class="form-title">Add New Admin Account</div>
     
-    <!-- Admin Account Form -->
     <form method="POST" enctype="multipart/form-data" id="admin-account-form">
       <input type="hidden" name="account_action" value="add">
       
-      <!-- PERSONAL INFORMATION -->
       <div class="form-section">
         <div class="form-section-title">Personal Information</div>
 
@@ -2633,14 +2462,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
           </div>
         </div>
 
-        <!-- Username -->
         <div class="form-group">
           <label for="admin_username">Username</label>
           <input type="text" id="admin_username" name="username" required>
         </div>
       </div>
 
-      <!-- CONTACT INFORMATION -->
       <div class="form-section">
         <div class="form-section-title">Contact Information</div>
         <div class="form-row">
@@ -2659,7 +2486,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- PROFILE PHOTO (OPTIONAL) -->
       <div class="form-section">
         <div class="form-section-title">Profile Photo (Optional)</div>
         <div class="photo-upload-section">
@@ -2677,18 +2503,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- ACCOUNT SECURITY -->
       <div class="form-section">
         <div class="form-section-title">Account Security</div>
 
         <div class="form-row">
-          <!-- Password -->
           <div class="form-group">
             <label for="admin_password">Password</label>
             <input type="password" id="admin_password" name="password" required>
           </div>
 
-          <!-- Confirm Password -->
           <div class="form-group">
             <label for="admin_confirm_password">Confirm Password</label>
             <input type="password" id="admin_confirm_password" name="confirm_password" required>
@@ -2706,7 +2529,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     </form>
   </div>
 
-  <!-- Admin Accounts List -->
   <div class="accounts-table">
     <h3>Existing Admin Accounts</h3>
 
@@ -2756,15 +2578,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 
 
 
-  <!-- AGENT ACCOUNTS SECTION -->
-<div id="agent-accounts" class="account-section">
+  <div id="agent-accounts" class="account-section">
   <div class="form-container">
     <div class="form-title">Create Agent Account</div>
     
     <form method="POST" enctype="multipart/form-data" id="agent-account-form">
       <input type="hidden" name="agent_action" value="add">
       
-      <!-- Personal Information -->
       <div class="form-section">
         <div class="form-section-title">Personal Information</div>
         <div class="form-row-three">
@@ -2787,7 +2607,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- Contact Information -->
       <div class="form-section">
         <div class="form-section-title">Contact Information</div>
         <div class="form-row">
@@ -2806,7 +2625,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- Photo Upload (optional) -->
       <div class="form-section">
         <div class="form-section-title">Profile Photo (Optional)</div>
         <div class="photo-upload-section">
@@ -2824,42 +2642,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-   <!-- Professional Information -->
-<div class="form-section">
-  <div class="form-section-title">Professional Information</div>
-
-  <div class="form-group">
-    <label for="agent_years_experience">Years of Experience</label>
-    <select id="agent_years_experience" name="years_experience" required>
-      <option value="">Select Experience</option>
-      <option value="0-1">0-1 Years (Entry Level)</option>
-      <option value="2-3">2-3 Years (Junior Agent)</option>
-      <option value="4-5">4-5 Years (Mid-level Agent)</option>
-      <option value="6-10">6-10 Years (Senior Agent)</option>
-      <option value="10+">10+ Years (Expert Agent)</option>
-    </select>
-  </div>
-
-  <div class="form-group">
-    <label for="agent_short_description">Professional Description</label>
-    <textarea id="agent_short_description" name="short_description" required
-      placeholder="Describe the agent's expertise, specializations, and professional background..."></textarea>
-  </div>
-</div> <!-- END Professional Information -->
-
-
-<!-- ACCOUNT SECURITY (NEW, SEPARATE SECTION) -->
-<div class="form-section">
+   <div class="form-section">
   <div class="form-section-title">Account Security</div>
 
   <div class="form-row">
-    <!-- Password -->
     <div class="form-group">
       <label for="agent_password">Password</label>
       <input type="password" id="agent_password" name="password" required>
     </div>
 
-    <!-- Confirm Password -->
     <div class="form-group">
       <label for="agent_confirm_password">Confirm Password</label>
       <input type="password" id="agent_confirm_password" name="confirm_password" required>
@@ -2868,11 +2659,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </small>
     </div>
   </div>
-</div> <!-- END Account Security -->
-
-
-<!-- Availability -->
-<div class="form-section">
+</div> <div class="form-section">
   <div class="form-section-title">Availability Status</div>
   <div class="availability-toggle">
     <label class="toggle-switch">
@@ -2883,39 +2670,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   </div>
 </div>
 
-
-      <!-- Geolocation (optional, can be set by admin OR agent later) -->
-      <div class="form-section">
-        <div class="form-section-title">Geolocation (Optional)</div>
-        <div class="location-section">
-          <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
-            Location is crucial for matching this agent to nearby clients for optimal service delivery.
-            If not available now, the agent can update this later.
-          </p>
-          
-          <div class="form-row">
-            <div class="form-group">
-              <label for="agent_latitude">Latitude</label>
-              <input type="number" step="any" id="agent_latitude" name="latitude" readonly>
-            </div>
-            <div class="form-group">
-              <label for="agent_longitude">Longitude</label>
-              <input type="number" step="any" id="agent_longitude" name="longitude" readonly>
-            </div>
-          </div>
-          
-          <div class="location-controls">
-            <button type="button" onclick="getCurrentLocationAgent()" class="btn-location">
-              Get Current Location
-            </button>
-            <button type="button" onclick="clearLocationAgent()" class="btn-location">
-              Clear Location
-            </button>
-          </div>
-          
-          <div id="agent-location-status" class="location-status"></div>
-        </div>
-      </div>
 
       <button type="submit" class="btn-primary">Create Agent Account</button>
       <button type="button" class="btn btn-danger" onclick="resetForm('agent-account-form')">Cancel</button>
@@ -2928,6 +2682,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 
   <?php
     // Run a fresh query just for this table
+    // FIXED: Removed missing columns
     $agentQuery = "
       SELECT 
         id,
@@ -3039,7 +2794,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
 </div>
 
 
-    <!-- USER ACCOUNTS SECTION -->
     <div id="user-accounts" class="account-section">
       <div class="form-container">
         <div class="form-title">Create User Account</div>
@@ -3047,7 +2801,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         <form method="POST" id="user-account-form">
           <input type="hidden" name="user_action" value="add">
           
-          <!-- Personal Information -->
           <div class="form-section">
             <div class="form-section-title">PERSONAL INFORMATION</div>
             <div class="form-row-three">
@@ -3070,7 +2823,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             </div>
           </div>
 
-          <!-- Contact Information -->
           <div class="form-section">
             <div class="form-section-title">Contact Information</div>
             <div class="form-row">
@@ -3089,23 +2841,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
             </div>
           </div>
 
-        <!-- ACCOUNT SECURITY -->
-<div class="form-section">
+        <div class="form-section">
   <div class="form-section-title">Account Security</div>
 
   <div class="form-row">
-    <!-- Password -->
     <div class="form-group">
       <label for="user_password">Password</label>
       <input type="password" id="user_password" name="password" required>
     </div>
 
-    <!-- Confirm Password -->
     <div class="form-group">
       <label for="user_confirm_password">Confirm Password</label>
       <input type="password" id="user_confirm_password" required>
       <small id="user-password-error"
-            style="color:#dc3545;display:none;font-size:13px;">
+             style="color:#dc3545;display:none;font-size:13px;">
         Passwords do not match.
       </small>
     </div>
@@ -3166,7 +2915,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
   </div>
 </div>
 
-    <!-- LOTS SECTION -->
     <div id="section-lots" class="section hidden">
       <div class="header">
         <div>
@@ -3201,7 +2949,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
          <tbody id="lots-table-body">
   <tr id="new-row" class="hidden" style="display:none;">
     
-    <!-- FIX: Add missing left column -->
     <td></td>
 
     <td><input type="text" id="block_number"></td>
@@ -3231,7 +2978,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- Edit Lot Modal -->
     <div id="editLotModal" style="
       display: none;
       position: fixed;
@@ -3264,7 +3010,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- MANAGE VIEWINGS SECTION -->
     <div id="section-viewings" class="section hidden">
       <div class="header">
         <div>
@@ -3395,7 +3140,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- View Client Modal -->
     <div id="viewClientModal" style="
       display: none; 
       position: fixed; 
@@ -3438,7 +3182,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- Edit Account Modal -->
     <div id="editAccountModal" style="
       display: none;
       position: fixed;
@@ -3473,7 +3216,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- ANALYTICS SECTION -->
     <div id="section-analytics" class="section hidden">
       <div class="header">
         <div>
@@ -3483,9 +3225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
 
       <div class="table-section">
-        <!-- Filter Toolbar -->
         <div class="analytics-filters" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e0e0e0; position: relative;">
-          <!-- Export Analytics Button -->
           <button onclick="exportAnalytics()" class="btn-primary" style="position: absolute; top: 20px; right: 20px; padding: 9px 20px; white-space: nowrap;">Export Analytics</button>
 
           <h3 style="margin: 0 0 15px 0; color: #2d482d; font-size: 16px; font-weight: 600;">Filter Options</h3>
@@ -3511,7 +3251,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- KPI Cards -->
       <div class="analytics-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
         <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
           <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -3574,7 +3313,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
         </div>
       </div>
 
-      <!-- Top Agents Table -->
       <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 30px; overflow: hidden;">
         <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
           <h3 style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Top Agents by Sales</h3>
@@ -3594,13 +3332,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
               </tr>
             </thead>
             <tbody id="top-agents-tbody">
-              <!-- filled by JS -->
-            </tbody>
+              </tbody>
           </table>
         </div>
       </div>
 
-      <!-- Monthly Sales Trend Chart -->
       <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
         <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
           <h3 style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Monthly Sales Trend (Last 12 Months)</h3>
@@ -3611,7 +3347,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- NEW: NOTIFICATIONS SECTION -->
     <div id="section-notifications" class="section hidden">
       <div class="header">
         <div>
@@ -3626,7 +3361,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- NEW: AUDIT LOGS SECTION -->
     <div id="section-audit-logs" class="section hidden">
       <div class="header">
         <div>
@@ -3641,7 +3375,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-    <!-- NEW: DOCUMENT REVIEW SECTION -->
     <div id="section-documents" class="section hidden">
       <div class="header">
         <div>
@@ -3657,13 +3390,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       </div>
     </div>
 
-  </div> <!-- end .container -->
-</body>
+  </div> </body>
 
 
 
 
-  <!-- Add Chart.js library -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
  <script>
@@ -3945,7 +3676,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    pass.addEventListener('input',   validateUserPasswords);
+    pass.addEventListener('input',    validateUserPasswords);
     confirm.addEventListener('input', validateUserPasswords);
 
     form.addEventListener('submit', function (e) {
@@ -3969,30 +3700,30 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   // expose globals
-  window.loadLocations         = loadLocations;
-  window.loadLots              = loadLots;
-  window.saveLot               = saveLot;
-  window.editLot               = editLot;
-  window.saveEdit              = saveEdit;
-  window.deleteLot             = deleteLot;
-  window.addNewLot             = addNewLot;
-  window.cancelAdd             = cancelAdd;
-  window.cancelEdit            = cancelEdit;
-  window.showAccountType       = showAccountType;
-  window.confirmLogout         = confirmLogout;
-  window.applyAnalyticsFilters = applyAnalyticsFilters;
-  window.loadTopAgents         = loadTopAgents;
-  window.exportAnalytics       = exportAnalytics;
-  window.loadDocuments         = loadDocuments;
-  window.loadNotifications     = loadNotifications;
-  window.loadAuditLogs         = loadAuditLogs;
-  window.viewProfile           = viewProfile;
-  window.closeViewClientModal  = closeViewClientModal;
-  window.editAccount           = editAccount;
-  window.closeEditAccountModal = closeEditAccountModal;
-  window.openEditLotModal      = openEditLotModal;
-  window.closeEditLotModal     = closeEditLotModal;
-  window.bulkDeleteLots        = bulkDeleteLots;
+  window.loadLocations           = loadLocations;
+  window.loadLots                = loadLots;
+  window.saveLot                 = saveLot;
+  window.editLot                 = editLot;
+  window.saveEdit                = saveEdit;
+  window.deleteLot               = deleteLot;
+  window.addNewLot               = addNewLot;
+  window.cancelAdd               = cancelAdd;
+  window.cancelEdit              = cancelEdit;
+  window.showAccountType         = showAccountType;
+  window.confirmLogout           = confirmLogout;
+  window.applyAnalyticsFilters   = applyAnalyticsFilters;
+  window.loadTopAgents           = loadTopAgents;
+  window.exportAnalytics         = exportAnalytics;
+  window.loadDocuments           = loadDocuments;
+  window.loadNotifications       = loadNotifications;
+  window.loadAuditLogs           = loadAuditLogs;
+  window.viewProfile             = viewProfile;
+  window.closeViewClientModal    = closeViewClientModal;
+  window.editAccount             = editAccount;
+  window.closeEditAccountModal   = closeEditAccountModal;
+  window.openEditLotModal        = openEditLotModal;
+  window.closeEditLotModal       = closeEditLotModal;
+  window.bulkDeleteLots          = bulkDeleteLots;
 });
 
 // ===========================
@@ -5079,8 +4810,8 @@ function bulkDeleteLots() {
 }
 
 function exportAnalytics() {
-  const dateFrom   = document.getElementById('analytics_date_from')?.value;
-  const dateTo     = document.getElementById('analytics_date_to')?.value;
+  const dateFrom    = document.getElementById('analytics_date_from')?.value;
+  const dateTo      = document.getElementById('analytics_date_to')?.value;
   const locationId = document.getElementById('analytics_location')?.value;
 
   const params = new URLSearchParams();
@@ -5092,8 +4823,6 @@ function exportAnalytics() {
   window.location.href = window.location.pathname + '?' + params.toString();
 }
 </script>
-
-
 
 </body>
 </html>

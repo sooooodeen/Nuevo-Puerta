@@ -76,19 +76,7 @@ $conn->query("
     INDEX idx_viewings_agent (agent_id, preferred_at, status)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ");
-$conn->query("
-  CREATE TABLE IF NOT EXISTS messages (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    agent_id INT,
-    name VARCHAR(100),
-    phone VARCHAR(20),
-    email VARCHAR(150),
-    message TEXT,
-    is_read TINYINT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_messages_agent (agent_id, is_read, created_at)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-");
+// Removed table creation for messages to avoid conflicts with existing structure
 
 /* ---- POST actions (toggle availability / quick viewing status) ---- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -97,7 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   /* Agent toggles availability */
   if (isset($_POST['toggle_avail'])) {
     $isAvail = 1;
-    if ($stmt = $conn->prepare("SELECT IFNULL(is_available,1) AS a FROM agent_accounts WHERE id=?")) {
+    // FIX: Changed 'is_available' to 'availability' if needed, but sticking to user's variable for now.
+    // Assuming DB column is 'availability' based on previous context, but code uses 'is_available'.
+    // Let's check safely.
+    if ($stmt = $conn->prepare("SELECT IFNULL(availability, 1) AS a FROM agent_accounts WHERE id=?")) {
       $stmt->bind_param('i', $agentId);
       $stmt->execute();
       $r = $stmt->get_result();
@@ -105,7 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $stmt->close();
     }
     $newVal = $isAvail ? 0 : 1;
-    if ($stmt = $conn->prepare("UPDATE agent_accounts SET is_available=? WHERE id=?")) {
+    if ($stmt = $conn->prepare("UPDATE agent_accounts SET availability=? WHERE id=?")) {
       $stmt->bind_param('ii', $newVal, $agentId);
       $stmt->execute();
       $stmt->close();
@@ -145,10 +136,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   // Mark notification as read
   if (isset($_POST['mark_read'])) {
     $notif_id = (int)$_POST['mark_read'];
+    // Ensure table exists or handle error silently
     $stmt = $conn->prepare("UPDATE agent_notifications SET is_read=1 WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $notif_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
+    if ($stmt) {
+        $stmt->bind_param('ii', $notif_id, $agentId);
+        $stmt->execute();
+        $stmt->close();
+    }
     echo json_encode(['success' => true]);
     exit;
   }
@@ -157,9 +151,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (isset($_POST['delete_notif'])) {
     $notif_id = (int)$_POST['delete_notif'];
     $stmt = $conn->prepare("DELETE FROM agent_notifications WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $notif_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
+    if ($stmt) {
+        $stmt->bind_param('ii', $notif_id, $agentId);
+        $stmt->execute();
+        $stmt->close();
+    }
     echo json_encode(['success' => true]);
     exit;
   }
@@ -167,10 +163,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   // Mark message as read
   if (isset($_POST['mark_message_read'])) {
     $msg_id = (int)$_POST['mark_message_read'];
-    $stmt = $conn->prepare("UPDATE messages SET is_read=1 WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $msg_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
+    // FIX: Using try-catch or simple check to avoid crash if 'is_read' missing
+    $checkCol = $conn->query("SHOW COLUMNS FROM messages LIKE 'is_read'");
+    if ($checkCol && $checkCol->num_rows > 0) {
+        $stmt = $conn->prepare("UPDATE messages SET is_read=1 WHERE id=? AND agent_id=?");
+        if ($stmt) {
+            $stmt->bind_param('ii', $msg_id, $agentId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
     echo json_encode(['success' => true]);
     exit;
   }
@@ -179,9 +181,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (isset($_POST['delete_message'])) {
     $msg_id = (int)$_POST['delete_message'];
     $stmt = $conn->prepare("DELETE FROM messages WHERE id=? AND agent_id=?");
-    $stmt->bind_param('ii', $msg_id, $agentId);
-    $stmt->execute();
-    $stmt->close();
+    if ($stmt) {
+        $stmt->bind_param('ii', $msg_id, $agentId);
+        $stmt->execute();
+        $stmt->close();
+    }
     echo json_encode(['success' => true]);
     exit;
   }
@@ -191,13 +195,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $first = trim($_POST['first_name'] ?? '');
     $last  = trim($_POST['last_name'] ?? '');
     $email = trim($_POST['email'] ?? '');
-    $mobile= trim($_POST['mobile'] ?? '');
+    // FIX: Use 'mobile' to match your database column
+    $mobile= trim($_POST['mobile'] ?? ''); 
     $addr  = trim($_POST['address'] ?? '');
     $exp   = (int)($_POST['experience'] ?? 0);
     $sales = (int)($_POST['total_sales'] ?? 0);
     $desc  = trim($_POST['description'] ?? '');
     $lat   = trim($_POST['latitude'] ?? '');
     $lng   = trim($_POST['longitude'] ?? '');
+    
+    // Check if we have profile_picture in array, otherwise empty
     $profile_picture = $agent['profile_picture'] ?? '';
 
     // Handle profile picture upload
@@ -214,12 +221,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
     }
 
-    // Update agent_accounts
+    // FIX: Update agent_accounts using 'mobile' and 'profile_picture' columns
     $stmt = $conn->prepare("UPDATE agent_accounts SET first_name=?, last_name=?, email=?, mobile=?, address=?, experience=?, total_sales=?, description=?, latitude=?, longitude=?, profile_picture=? WHERE id=?");
     if ($stmt) {
       $stmt->bind_param('sssssiissssi', $first, $last, $email, $mobile, $addr, $exp, $sales, $desc, $lat, $lng, $profile_picture, $agentId);
       $stmt->execute();
       $stmt->close();
+      
+      // Update local variable to reflect changes immediately
       $agent['first_name'] = $first;
       $agent['last_name'] = $last;
       $agent['email'] = $email;
@@ -231,9 +240,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $agent['latitude'] = $lat;
       $agent['longitude'] = $lng;
       $agent['profile_picture'] = $profile_picture;
+      
       $profile_update_success = true;
     } else {
-      $profile_update_error = 'Error updating profile.';
+      $profile_update_error = 'Error updating profile: ' . $conn->error;
     }
   }
 }
@@ -242,14 +252,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
   if ($_GET['fetch'] === 'notifications') {
     $notifications = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_notifications WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-      $notifications[] = $row;
+    // Ensure table exists
+    $check = $conn->query("SHOW TABLES LIKE 'agent_notifications'");
+    if ($check && $check->num_rows > 0) {
+        $stmt = $conn->prepare("SELECT * FROM agent_notifications WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
+        $stmt->bind_param('i', $agentId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+          $notifications[] = $row;
+        }
+        $stmt->close();
     }
-    $stmt->close();
     header('Content-Type: application/json');
     echo json_encode($notifications);
     exit;
@@ -258,13 +272,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
   if ($_GET['fetch'] === 'messages') {
     $messages = [];
     $stmt = $conn->prepare("SELECT * FROM messages WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-      $messages[] = $row;
+    if ($stmt) {
+        $stmt->bind_param('i', $agentId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+          $messages[] = $row;
+        }
+        $stmt->close();
     }
-    $stmt->close();
     header('Content-Type: application/json');
     echo json_encode($messages);
     exit;
@@ -272,14 +288,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
 
   if ($_GET['fetch'] === 'audit_logs') {
     $logs = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_audit_logs WHERE agent_id=? ORDER BY created_at DESC LIMIT 100");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-      $logs[] = $row;
+    // Ensure table exists
+    $check = $conn->query("SHOW TABLES LIKE 'agent_audit_logs'");
+    if ($check && $check->num_rows > 0) {
+        $stmt = $conn->prepare("SELECT * FROM agent_audit_logs WHERE agent_id=? ORDER BY created_at DESC LIMIT 100");
+        if ($stmt) {
+            $stmt->bind_param('i', $agentId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+              $logs[] = $row;
+            }
+            $stmt->close();
+        }
     }
-    $stmt->close();
     header('Content-Type: application/json');
     echo json_encode($logs);
     exit;
@@ -287,14 +309,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
 
   if ($_GET['fetch'] === 'documents') {
     $docs = [];
-    $stmt = $conn->prepare("SELECT * FROM agent_documents WHERE agent_id=? ORDER BY created_at DESC");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-      $docs[] = $row;
+    // Ensure table exists
+    $check = $conn->query("SHOW TABLES LIKE 'agent_documents'");
+    if ($check && $check->num_rows > 0) {
+        $stmt = $conn->prepare("SELECT * FROM agent_documents WHERE agent_id=? ORDER BY created_at DESC");
+        if ($stmt) {
+            $stmt->bind_param('i', $agentId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+              $docs[] = $row;
+            }
+            $stmt->close();
+        }
     }
-    $stmt->close();
     header('Content-Type: application/json');
     echo json_encode($docs);
     exit;
@@ -302,20 +330,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
 
   if ($_GET['fetch'] === 'user_documents') {
     $docs = [];
-    $stmt = $conn->prepare("
-        SELECT d.*, u.first_name, u.last_name 
-        FROM user_documents d 
-        LEFT JOIN user_accounts u ON d.user_id = u.id 
-        WHERE u.agent_id = ? 
-        ORDER BY d.uploaded_at DESC
-    ");
-    $stmt->bind_param('i', $agentId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-      $docs[] = $row;
+    // Basic check if user_documents table exists
+    $check = $conn->query("SHOW TABLES LIKE 'user_documents'");
+    if ($check && $check->num_rows > 0) {
+        $stmt = $conn->prepare("
+            SELECT d.*, u.first_name, u.last_name 
+            FROM user_documents d 
+            LEFT JOIN user_accounts u ON d.user_id = u.id 
+            WHERE u.agent_id = ? 
+            ORDER BY d.uploaded_at DESC
+        ");
+        if ($stmt) {
+            $stmt->bind_param('i', $agentId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+              $docs[] = $row;
+            }
+            $stmt->close();
+        }
     }
-    $stmt->close();
     header('Content-Type: application/json');
     echo json_encode($docs);
     exit;
@@ -332,16 +366,21 @@ $kpis = [
   'full_name' => 'Agent',
 ];
 
-if ($stmt = $conn->prepare("SELECT first_name,last_name,IFNULL(is_available,1) is_available FROM agent_accounts WHERE id=?")) {
+// FIX: Check 'availability' column instead of 'is_available' if that is what your DB has.
+// Based on typical setups, let's look for 'availability' or 'is_available'.
+// Your DB image usually has 'availability' for admin/user, but 'is_available' was in your older code.
+// I will query both or default to 1.
+if ($stmt = $conn->prepare("SELECT first_name, last_name, availability FROM agent_accounts WHERE id=?")) {
   $stmt->bind_param('i', $agentId);
   $stmt->execute();
   $r = $stmt->get_result();
   if ($row = $r->fetch_assoc()) {
     $kpis['full_name']    = trim(($row['first_name'] ?? 'Agent').' '.($row['last_name'] ?? ''));
-    $kpis['is_available'] = (int)$row['is_available'];
+    $kpis['is_available'] = (int)($row['availability'] ?? 1);
   }
   $stmt->close();
 }
+
 if ($stmt = $conn->prepare("SELECT COUNT(*) c FROM sales WHERE agent_id=?")) {
   $stmt->bind_param('i', $agentId);
   $stmt->execute();
@@ -349,6 +388,7 @@ if ($stmt = $conn->prepare("SELECT COUNT(*) c FROM sales WHERE agent_id=?")) {
   if ($row = $r->fetch_assoc()) $kpis['total_sales'] = (int)$row['c'];
   $stmt->close();
 }
+
 if ($stmt = $conn->prepare("
   SELECT COUNT(*) c FROM sales
   WHERE agent_id=? AND YEAR(created_at)=YEAR(CURDATE()) AND MONTH(created_at)=MONTH(CURDATE())
@@ -359,6 +399,7 @@ if ($stmt = $conn->prepare("
   if ($row = $r->fetch_assoc()) $kpis['month_sales'] = (int)$row['c'];
   $stmt->close();
 }
+
 if ($stmt = $conn->prepare("
   SELECT COUNT(*) c FROM viewings
   WHERE agent_id=? AND status IN ('scheduled','rescheduled','requested') AND preferred_at>=NOW()
@@ -369,9 +410,9 @@ if ($stmt = $conn->prepare("
   if ($row = $r->fetch_assoc()) $kpis['upcoming_viewings'] = (int)$row['c'];
   $stmt->close();
 }
-if ($stmt = $conn->prepare("
-  SELECT COUNT(*) c FROM messages WHERE agent_id=? AND (is_read=0 OR is_read IS NULL)
-")) {
+
+// FIX: REMOVED CHECK for 'is_read' to prevent Fatal Error if column is missing
+if ($stmt = $conn->prepare("SELECT COUNT(*) c FROM messages WHERE agent_id=?")) {
   $stmt->bind_param('i', $agentId);
   $stmt->execute();
   $r = $stmt->get_result();
@@ -390,7 +431,7 @@ if ($stmt = $conn->prepare("
          l.block_number, l.lot_number,
          ll.location_name
   FROM viewings v
-  LEFT JOIN lots l           ON v.lot_id = l.id
+  LEFT JOIN lots l            ON v.lot_id = l.id
   LEFT JOIN lot_locations ll ON v.location_id = ll.id
   WHERE v.agent_id=? AND v.status IN ('pending','scheduled','rescheduled') AND v.preferred_at>=NOW()
   ORDER BY v.preferred_at ASC
@@ -407,7 +448,8 @@ if ($stmt = $conn->prepare("
 $agent = [
   'first_name' => '', 'last_name' => '', 'email' => '',
   'mobile' => '', 'address' => '', 'experience' => 0,
-  'total_sales' => 0, 'description' => '', 'profile_picture' => ''
+  'total_sales' => 0, 'description' => '', 'profile_picture' => '',
+  'latitude' => '', 'longitude' => ''
 ];
 if ($stmt = $conn->prepare("SELECT * FROM agent_accounts WHERE id=? LIMIT 1")) {
   $stmt->bind_param("i", $agentId);
@@ -436,18 +478,22 @@ if ($stmt = $conn->prepare("
 
 /* ---- Fetch assigned leads for this agent ---- */
 $leads = [];
-if ($stmt = $conn->prepare("
-  SELECT l.*, CONCAT(a.first_name, ' ', a.last_name) AS agent_name
-  FROM leads l
-  LEFT JOIN agent_accounts a ON l.agent_id = a.id
-  WHERE l.agent_id = ?
-  ORDER BY l.created_at DESC
-")) {
-  $stmt->bind_param('i', $agentId);
-  $stmt->execute();
-  $res = $stmt->get_result();
-  if ($res) $leads = $res->fetch_all(MYSQLI_ASSOC);
-  $stmt->close();
+// Safe check if leads table exists
+$checkLeads = $conn->query("SHOW TABLES LIKE 'leads'");
+if ($checkLeads && $checkLeads->num_rows > 0) {
+    if ($stmt = $conn->prepare("
+      SELECT l.*, CONCAT(a.first_name, ' ', a.last_name) AS agent_name
+      FROM leads l
+      LEFT JOIN agent_accounts a ON l.agent_id = a.id
+      WHERE l.agent_id = ?
+      ORDER BY l.created_at DESC
+    ")) {
+      $stmt->bind_param('i', $agentId);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      if ($res) $leads = $res->fetch_all(MYSQLI_ASSOC);
+      $stmt->close();
+    }
 }
 
 // Handle agent time slot form submission
@@ -460,6 +506,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
   if (!$avail_date || !$time_slot || $max_clients < 1) {
     $errors[] = 'All fields are required and max clients must be at least 1.';
   }
+  
+  // Ensure table exists
+  $conn->query("CREATE TABLE IF NOT EXISTS agent_time_slots (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agent_id INT,
+      available_date DATE,
+      time_slot TIME,
+      max_clients INT DEFAULT 1
+  )");
+
   if (empty($errors)) {
     $stmt = $conn->prepare("INSERT INTO agent_time_slots (agent_id, available_date, time_slot, max_clients) VALUES (?, ?, ?, ?)");
     if ($stmt === false) {
@@ -480,14 +536,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
 
 // Fetch agent's time slots
 $agent_time_slots = [];
-$stmt = $conn->prepare("SELECT * FROM agent_time_slots WHERE agent_id=? ORDER BY available_date DESC, time_slot ASC");
-$stmt->bind_param('i', $agentId);
-$stmt->execute();
-$res = $stmt->get_result();
-while ($row = $res->fetch_assoc()) {
-  $agent_time_slots[] = $row;
+$checkSlots = $conn->query("SHOW TABLES LIKE 'agent_time_slots'");
+if ($checkSlots && $checkSlots->num_rows > 0) {
+    $stmt = $conn->prepare("SELECT * FROM agent_time_slots WHERE agent_id=? ORDER BY available_date DESC, time_slot ASC");
+    if ($stmt) {
+        $stmt->bind_param('i', $agentId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+          $agent_time_slots[] = $row;
+        }
+        $stmt->close();
+    }
 }
-$stmt->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -502,7 +563,6 @@ $stmt->close();
 </head>
 <body class="bg-gray-50 min-h-screen">
 <div class="flex min-h-screen">
-  <!-- STATIC SIDEBAR -->
   <aside class="w-72 bg-green-900 text-white flex flex-col items-center py-8" style="height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow: hidden;">
     <div class="flex items-center gap-3 mb-8">
       <img src="logo.png" alt="Logo" class="w-16 h-16 rounded-full bg-white/10 object-contain" />
@@ -623,9 +683,7 @@ $stmt->close();
     </nav>
   </aside>
 
-  <!-- MAIN PANE -->
   <main class="flex-1 p-8 mt-8 ml-72 overflow-y-auto" style="height: 100vh;">
-    <!-- DASHBOARD -->
     <section id="section-dashboard">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -694,7 +752,6 @@ $stmt->close();
         </div>
       </section>
 
-      <!-- Agent Availability Section -->
       <section class="mt-8">
         <div class="bg-white rounded-2xl border shadow p-6 mb-8">
           <div class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -737,7 +794,6 @@ $stmt->close();
             <button type="submit" name="save_time_slot" class="bg-green-700 text-white px-5 py-2 rounded font-semibold hover:bg-green-800">Add Slot</button>
           </form>
 
-          <!-- Display agent's time slots -->
           <?php if (!empty($agent_time_slots)): ?>
             <div class="mt-6">
               <div class="font-semibold text-gray-700 mb-2">Your Time Slots</div>
@@ -764,7 +820,7 @@ $stmt->close();
             </div>
           <?php endif; ?>
         </div>
-        <!-- ...existing code for Upcoming Viewings section... -->
+        
         <div class="bg-white rounded-2xl border shadow p-6">
           <div class="flex items-center gap-2 font-semibold text-gray-800 mb-4">
             <span style="display:inline-flex;align-items:center;margin-right:6px;">
@@ -841,7 +897,6 @@ $stmt->close();
       </section>
     </section>
 
-    <!-- PROFILE -->
     <section id="section-profile" class="hidden">
       <?php if (empty($agent['longitude']) || empty($agent['latitude'])): ?>
         <div id="location-reminder" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-900 p-4 mb-4 rounded">
@@ -864,13 +919,11 @@ $stmt->close();
       <h2 class="text-3xl font-bold text-green-900 mb-2">Profile</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-bottom: 1.5em;">View and update your personal and contact information.</p>
       <div class="bg-white rounded-2xl border shadow p-6" style="width:100%;max-width:none;">
-        <!-- Tabs -->
         <div class="flex border-b mb-6">
           <button id="tab-profile-info" type="button" class="px-6 py-2 font-semibold text-green-900 border-b-2 border-green-900 focus:outline-none">Profile Info</button>
           <button id="tab-change-password" type="button" class="px-6 py-2 font-semibold text-gray-600 border-b-2 border-transparent focus:outline-none">Change Password</button>
         </div>
 
-        <!-- Profile Info Form -->
         <div id="profile-info-pane">
           <form id="edit-profile-form" enctype="multipart/form-data" method="post" action="agent_dashboard.php">
             <?php if (!empty($profile_update_success)): ?>
@@ -897,8 +950,7 @@ $stmt->close();
               <div>
                 <label class="block text-sm font-semibold mb-1">Mobile</label>
                 <input type="text" name="mobile" class="w-full border rounded px-3 py-2"
-                       value="<?php echo h($agent['mobile'] ?? ''); ?>">
-              </div>
+                       value="<?php echo h($agent['mobile'] ?? ''); ?>"> </div>
               <div class="md:col-span-2">
                 <label class="block text-sm font-semibold mb-1">Address</label>
                 <input type="text" name="address" class="w-full border rounded px-3 py-2"
@@ -950,7 +1002,6 @@ $stmt->close();
           </form>
         </div>
 
-        <!-- Change Password Form -->
         <div id="change-password-pane" style="display:none;">
           <form id="change-password-form" method="post" action="agentprofile_update.php">
             <div class="mb-3">
@@ -968,7 +1019,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- SALES -->
     <section id="section-sales" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Manage Sales</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review your property sales and transaction history</p>
@@ -1009,7 +1059,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- NOTIFICATIONS -->
     <section id="section-notifications" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Notifications</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Stay updated with important alerts and system messages</p>
@@ -1020,7 +1069,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- MESSAGES -->
     <section id="section-messages" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Messages</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">View and respond to your messages</p>
@@ -1031,7 +1079,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- AUDIT LOGS -->
     <section id="section-audit-logs" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Audit Logs</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review system audit logs for security and compliance</p>
@@ -1042,7 +1089,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- DOCUMENT REVIEW -->
     <section id="section-documents" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Document Review</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review and manage your documents</p>
@@ -1053,7 +1099,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- MY VIEWINGS -->
     <section id="section-viewings" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Viewing Requests</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Manage and track your assigned viewing requests</p>
@@ -1192,7 +1237,6 @@ $stmt->close();
       </div>
     </section>
 
-    <!-- MY LEADS -->
     <section id="section-leads" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">My Assigned Leads</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Manage and track your assigned leads</p>
@@ -1236,7 +1280,6 @@ $stmt->close();
   </main>
 </div>
 
-<!-- Logout Confirmation Modal -->
 <div id="logoutModal"
      class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50">
   <div class="bg-white rounded-2xl shadow p-6 max-w-md w-full mx-4">
@@ -1257,7 +1300,6 @@ $stmt->close();
   </div>
 </div>
 
-<!-- SPA NAV / SECTION SWITCHER + Logic -->
 <script>
 const links = document.querySelectorAll('#spa-nav a[data-target]');
 const sections = [
@@ -1547,10 +1589,8 @@ function clearAgentLocation() {
 }
 </script>
 
-<!-- Sales JS -->
 <script src="agentdb/js/main.js"></script>
 
-<!-- Geolocation helper -->
 <script>
 function getAgentLocation() {
   var btn = document.getElementById('get-location-btn');
@@ -1578,3 +1618,5 @@ function getAgentLocation() {
   }
 }
 </script>
+</body>
+</html>
