@@ -187,10 +187,11 @@ $upcomingViewings = [];
 $recentActivities = [];
 
 if (hasTable($conn,'viewings')) {
-    // Safe column selection
-    $statusCol = hasColumn($conn,'viewings','status') ? 'status' : "'' as status";
+    // FIX: Add 'v.' prefix to explicitly select status from the viewings table
+    $statusCol = hasColumn($conn,'viewings','status') ? 'v.status' : "'' as status";
+    
     $agentJoin = hasTable($conn,'agent_accounts') ? "LEFT JOIN agent_accounts a ON v.agent_id = a.id" : "";
-    $agentCols = hasTable($conn,'agent_accounts') ? ", a.first_name, a.last_name, a.email as agent_email" : "";
+    $agentCols = hasTable($conn,'agent_accounts') ? ", a.first_name as agent_first, a.last_name as agent_last, a.email as agent_email" : "";
 
     // Fetch Viewings
     $sql = "SELECT v.id, v.lot_no, v.preferred_at, $statusCol $agentCols 
@@ -206,8 +207,8 @@ if (hasTable($conn,'viewings')) {
         $data = $res->fetch_all(MYSQLI_ASSOC);
         // Split into upcoming and recent for notifications
         foreach($data as $row) {
-            $upcomingViewings[] = $row; // Use same data for viewings list
-            $recentActivities[] = $row; // Use same data for notifications
+            $upcomingViewings[] = $row; 
+            $recentActivities[] = $row; 
         }
     }
     $stmt->close();
