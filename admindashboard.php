@@ -574,7 +574,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
         $username      = mysqli_real_escape_string($conn, $_POST['username']);
         $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
         $email         = mysqli_real_escape_string($conn, $_POST['email']);
-        $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number']);
+        $mobile_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
         $address       = mysqli_real_escape_string($conn, $_POST['address']);
         $password      = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
@@ -584,7 +584,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
         }
 
         $sql  = "INSERT INTO user_accounts 
-                 (first_name, middle_name, username, last_name, email, mobile_number, address, password, photo_path)
+                 (first_name, middle_name, username, last_name, email, phone_number, address, password, photo_path)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
 
@@ -596,7 +596,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
         $stmt->bind_param(
             "sssssssss",
             $first_name, $middle_name, $username, $last_name, $email,
-            $mobile_number, $address, $password, $photo_path
+            $phone_number, $address, $password, $photo_path
         );
 
         $ok = $stmt->execute();
@@ -617,7 +617,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
         $username      = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
         $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
         $email         = mysqli_real_escape_string($conn, $_POST['email']);
-        $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number'] ?? '');
+        $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? '');
         $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
 
         $photo_path   = null;
@@ -629,11 +629,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
             'username=?',
             'last_name=?',
             'email=?',
-            'mobile_number=?',
+            'phone_number=?',
             'address=?'
         ];
         $bind_types  = "sssssss";
-        $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address];
+        $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $phone_number, $address];
 
         if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             $photo_path = handleFileUpload($_FILES['photo']);
@@ -1344,6 +1344,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       min-height: 100vh;
     }
 
+    /* Unified UI controls: consistent buttons and form fields */
+    button, input[type="button"], input[type="submit"], .btn {
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 6px;
+      min-width: 88px;
+      box-shadow: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+
+    .btn-primary {
+      background: #2d6b2d;
+      color: #ffffff;
+      border: 1px solid #276126;
+    }
+    .btn-primary:hover { background: #25551f; }
+
+    .btn-danger {
+      background-color: #dc3545;
+      color: #ffffff;
+      border: 1px solid #c82333;
+    }
+    .btn-danger:hover { background-color: #c82333; }
+
+    .btn.gray, .btn-secondary {
+      background: #f1f1f1;
+      color: #333333;
+      border: 1px solid #dcdcdc;
+    }
+    .btn.gray:hover, .btn-secondary:hover { background: #e6e6e6; }
+
+    .btn-small {
+      padding: 4px 8px;
+      font-size: 13px;
+      min-width: auto;
+      border-radius: 5px;
+    }
+
+    input[type="text"], input[type="email"], input[type="password"],
+    input[type="number"], input[type="date"], input[type="datetime-local"],
+    select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #222222;
+      outline: none;
+      transition: box-shadow .15s ease, border-color .15s ease;
+      box-sizing: border-box;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: #7aa97a;
+      box-shadow: 0 0 0 3px rgba(42, 139, 73, 0.12);
+    }
+
+    .form-group label {
+      font-size: 13px;
+      margin-bottom: 6px;
+      display: block;
+      color: #2d482d;
+    }
     .sidebar-wrapper {
   background-color: transparent;
   padding: 25px;
@@ -2831,8 +2900,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
                 <input type="email" id="user_email" name="email" required>
               </div>
               <div class="form-group">
-                <label for="user_mobile">Mobile Number</label>
-                <input type="tel" id="user_mobile" name="mobile_number" required>
+                <label for="user_mobile">Phone</label>
+                <input type="tel" id="user_mobile" name="Phone_number" required>
               </div>
             </div>
             <div class="form-group">
@@ -4691,7 +4760,7 @@ function editAccount(id, type = 'admin') {
       if (type === 'agent') {
         html += `
           <div class="form-group">
-            <label>Phone</label>
+            <label>Phone Number</label>
             <input type="text" name="phone" value="${account.phone || ''}">
           </div>
         `;
