@@ -267,7 +267,7 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
 .sidebar { width:280px; background:var(--green); color:var(--white); padding:30px 0; position:fixed; top:0; bottom:0; overflow-y:auto; transition:0.3s; z-index:1000; }
 .sidebar-logo { text-align:center; margin-bottom:30px; padding:0 20px; }
 .sidebar-logo img { width:70px; height:70px; border-radius:50%; background:rgba(255,255,255,0.1); padding:5px; margin-bottom:10px; }
-.sidebar-logo h2 { margin:0; font-size:20px; font-weight:700; letter-spacing:1px; }
+.sidebar-logo h2 { margin:0; font-size:20px; font-weight:700; letter-spacing:1px; color: var(--white); }
 .sidebar-logo span { font-size:12px; opacity:0.8; letter-spacing:2px; text-transform:uppercase; }
 
 .sidebar-user { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.1); margin:0 20px 30px; padding:12px; border-radius:12px; }
@@ -276,10 +276,24 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
 .sidebar-user h3 { margin:0; font-size:14px; font-weight:600; }
 .sidebar-user span { font-size:11px; opacity:0.8; }
 
-.nav-link { display:flex; align-items:center; gap:12px; padding:14px 25px; color:rgba(255,255,255,0.8); text-decoration:none; transition:0.2s; border-left:4px solid transparent; font-size:15px; }
-.nav-link:hover, .nav-link.active { background:rgba(255,255,255,0.1); color:#fff; border-left-color:#fff; }
-.nav-link i { width:20px; text-align:center; font-size:18px; }
+.nav-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 25px;
+    color: rgba(255,255,255,0.8);
+    text-decoration: none;
+    transition: 0.2s;
+    border-left: 4px solid transparent;
+    font-size: 15px;
+}
 
+.nav-link:hover,
+.nav-link.active {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    border-left: 4px solid transparent;     /* ← force transparent = no visible line */
+}
 /* --- Main Content --- */
 .main-content { margin-left:280px; flex:1; padding:30px 40px; }
 .section { display:none; animation: fadeIn 0.4s ease; }
