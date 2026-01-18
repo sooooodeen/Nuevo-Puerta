@@ -1413,27 +1413,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
       display: block;
       color: #2d482d;
     }
-    .sidebar-wrapper {
-  background-color: transparent;
-  padding: 25px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  height: 100vh;
-  position: sticky;
-  top: 0;
-  left: 0;
-  z-index: 100;
-}
+
 .sidebar {
-  width: 275px;
+  width: 290px;
   background-color: #14532d;
-  border-radius: 5px;
+  border-radius: 0px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 40px 15px;
-  height: 95vh; /* Fill full viewport height */
+  padding: 40px 25px;
+  height: 100vh; /* Fill full viewport height */
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   position: sticky;
   top: 0;
@@ -1527,14 +1515,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetc
     .nav a:hover {
       background-color: #288d45a9;
     }
-
-    .nav a.active {
-      background-color: #288d45a9;
-      color: #ffffffff;
-      border-left: 6px solid #ffffffff;
-      font-weight: 600;
-    }
-
+    
     .nav-icon {
       width: 24px;
       height: 24px;
