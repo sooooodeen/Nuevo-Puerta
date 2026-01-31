@@ -558,7 +558,6 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
 <title>Agent Dashboard</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  .nav-active { background-color: rgb(22 101 52 / .45); }
 </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
