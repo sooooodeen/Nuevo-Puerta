@@ -1323,26 +1323,6 @@ aside::-webkit-scrollbar, .sidebar::-webkit-scrollbar { width:0; height:0; }
   </main>
 </div>
 
-<div id="logoutModal"
-     class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50">
-  <div class="bg-white rounded-2xl shadow p-6 max-w-md w-full mx-4">
-    <h3 class="text-lg font-semibold text-gray-900 mb-2">Logout</h3>
-    <p class="text-gray-600 mb-6">
-      Are you sure you want to logout? You will need to login again to access your dashboard.
-    </p>
-    <div class="flex gap-3 justify-end">
-      <button onclick="closeLogoutModal()"
-              class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
-        Cancel
-      </button>
-      <button onclick="proceedLogout()"
-              class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
-        Logout
-      </button>
-    </div>
-  </div>
-</div>
-
 <script>
 const links = document.querySelectorAll('#spa-nav a[data-target]');
 let sections = [
@@ -1421,29 +1401,49 @@ const map = {
 };
 showSection(map[hash] || 'section-dashboard');
 
-// Logout modal functions
-function confirmLogout() {
-  const modal = document.getElementById('logoutModal');
-  if (modal) modal.classList.remove('hidden');
-}
+// Admin-style dynamic logout confirm modal
+function confirmLogout(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  if (document.getElementById('admin-logout-modal')) return;
 
-function closeLogoutModal() {
-  const modal = document.getElementById('logoutModal');
-  if (modal) modal.classList.add('hidden');
-}
+  const modal = document.createElement('div');
+  modal.id = 'admin-logout-modal';
+  modal.innerHTML = `
+    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; align-items: center; justify-content: center; font-family: 'Segoe UI', sans-serif;">
+      <div style="background: white; padding: 0; border-radius: 8px; width: 400px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+        <div style="padding: 24px 24px 16px 24px;">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 32px; height: 32px; background: #fff3cd; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 4px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9V13M12 17H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12z" stroke="#856404" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div style="flex: 1;">
+              <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600; color: #212529;">Confirm Logout</h3>
+              <p style="margin: 0; font-size: 16px; color: #6c757d;">Are you sure you want to logout? You will need to login again to access your dashboard.</p>
+            </div>
+          </div>
+        </div>
+        <div style="padding: 20px 24px 24px 24px; display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid #e9ecef;">
+          <button id="cancel-logout" style="background: #f8f9fa; color: #6c757d; border: 1px solid #ced4da; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Cancel</button>
+          <button id="confirm-logout" style="background: #dc3545; color: white; border: 1px solid #dc3545; padding: 10px 20px; border-radius: 4px; font-size: 16px; cursor: pointer; min-width: 90px;">Logout</button>
+        </div>
+      </div>
+    </div>
+  `;
 
-function proceedLogout() {
-  window.location.href = 'logout.php';
-}
+  document.body.appendChild(modal);
 
-// Close modal when clicking outside
-const logoutModal = document.getElementById('logoutModal');
-if (logoutModal) {
-  logoutModal.addEventListener('click', function(e) {
-    if (e.target === this) {
-      closeLogoutModal();
-    }
-  });
+  const cancelBtn = modal.querySelector('#cancel-logout');
+  const okBtn = modal.querySelector('#confirm-logout');
+
+  function removeModal() { if (modal && modal.parentNode) modal.parentNode.removeChild(modal); }
+
+  cancelBtn && cancelBtn.addEventListener('click', function(){ removeModal(); });
+  okBtn && okBtn.addEventListener('click', function(){ window.location.href = 'logout.php'; });
+
+  function escHandler(ev){ if(ev.key === 'Escape') { removeModal(); document.removeEventListener('keydown', escHandler); } }
+  document.addEventListener('keydown', escHandler);
 }
 
 // Notifications
