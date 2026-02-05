@@ -265,6 +265,10 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
 
 /* --- Sidebar --- */
 .sidebar { width:280px; background:var(--green); color:var(--white); padding:30px 0; position:fixed; top:0; bottom:0; overflow-y:auto; transition:0.3s; z-index:1000; }
+
+/* Hide native scrollbar in the sidebar (remove scroll line) */
+.sidebar { scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar::-webkit-scrollbar { width: 0; height: 0; }
 .sidebar-logo { text-align:center; margin-bottom:30px; padding:0 20px; }
 .sidebar-logo img { width:70px; height:70px; border-radius:50%; background:rgba(255,255,255,0.1); padding:5px; margin-bottom:10px; }
 .sidebar-logo h2 { margin:0; font-size:20px; font-weight:700; letter-spacing:1px; color: var(--white); }
@@ -280,19 +284,21 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 25px;
-    color: rgba(255,255,255,0.8);
+    padding: 12px 22px;
+    color: rgba(255,255,255,0.9);
     text-decoration: none;
-    transition: 0.2s;
+    transition: background 0.18s, color 0.18s, transform 0.12s;
     border-left: 4px solid transparent;
     font-size: 15px;
+    margin: 6px 14px;               /* spacing between items so hover boxes don't touch */
+    border-radius: 8px;             /* rounded corners for the hover box */
 }
 
 .nav-link:hover,
 .nav-link.active {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.06); /* softer hover so it reads as subtle */
     color: #fff;
-    border-left: 4px solid transparent;     /* ← force transparent = no visible line */
+    transform: translateY(-1px);
 }
 /* --- Main Content --- */
 .main-content { margin-left:280px; flex:1; padding:30px 40px; }
@@ -356,6 +362,10 @@ tr:last-child td { border-bottom:none; }
     .main-content { margin-left:0; padding:20px; }
     .mobile-menu-btn { display:block; }
 }
+
+/* Logout icon flip and white text for logout link */
+.logout-icon { display:inline-block; transform: scaleX(-1); -webkit-transform: scaleX(-1); }
+.logout-link { color: #ffffff !important; }
 </style>
 </head>
 <body>
@@ -385,7 +395,7 @@ tr:last-child td { border-bottom:none; }
             <a href="#documents" class="nav-link" onclick="switchTab('documents', this)"><i class="fa fa-folder-open"></i> Documents</a>
             <a href="#notifications" class="nav-link" onclick="switchTab('notifications', this)"><i class="fa fa-bell"></i> Notifications</a>
             <a href="#agent" class="nav-link" onclick="switchTab('agent', this)"><i class="fa fa-user-tie"></i> My Agent</a>
-            <a href="logout.php" class="nav-link" style="margin-top:20px; color:#ffadad;"><i class="fa fa-sign-out-alt"></i> Logout</a>
+            <a href="logout.php" class="nav-link logout-link" style="margin-top:20px;"><i class="fa fa-sign-out-alt logout-icon"></i> Logout</a>
         </nav>
     </aside>
 
