@@ -558,11 +558,55 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
 <title>Agent Dashboard</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
+/* Sidebar appearance: match user/admin nav sizing and hide native scrollbar */
+aside, .sidebar { scrollbar-width: none; -ms-overflow-style: none; }
+aside::-webkit-scrollbar, .sidebar::-webkit-scrollbar { width:0; height:0; }
+
+#spa-nav a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px;
+  color: rgba(255,255,255,0.95);
+  text-decoration: none;
+  transition: background 0.18s, color 0.18s, transform 0.12s;
+  border-left: 4px solid transparent;
+  font-size: 15px;
+  margin: 6px 14px;
+  border-radius: 8px;
+}
+
+#spa-nav a:hover,
+#spa-nav a.nav-active {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.logout-icon { display:inline-block; transform: scaleX(1); -webkit-transform: scaleX(1); }
+.logout-link { color: #ffffff !important; }
+
+/* Sections: animate out then in for smooth transitions.
+   Place sections absolutely inside the main container to avoid layout jumps. */
+      .section {
+        display: none;
+      }
+
+      /* Show active section and animate like user/admin dashboards */
+      .section.active {
+        display: block;
+        animation: fadeIn 0.36s ease;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
 </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 <div class="flex min-h-screen">
-  <aside class="w-72 bg-green-900 text-white flex flex-col items-center py-8" style="height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow: hidden;">
+  <aside class="bg-green-900 text-white flex flex-col items-center py-8 sidebar" style="width:280px; height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow: hidden;">
     <div class="flex items-center gap-3 mb-8">
       <img src="logo.png" alt="Logo" class="w-16 h-16 rounded-full bg-white/10 object-contain" />
       <div>
@@ -671,8 +715,8 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
           </a>
         </li>
         <li>
-          <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-            <svg class="w-5 h-5 mr-3 text-white" viewBox="0 0 24 24" fill="currentColor">
+          <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800 logout-link">
+            <svg class="w-5 h-5 mr-3 text-white logout-icon" viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 13v-2H7V8l-5 4 5 4v-3zM20 3h-8v2h8v14h-8v2h8a2 2 0 002-2V5a2 2 0 00-2-2z"/>
             </svg>
             Logout
@@ -682,7 +726,7 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
     </nav>
   </aside>
 
-  <main class="flex-1 p-8 mt-8 ml-72 overflow-y-auto" style="height: 100vh;">
+  <main class="flex-1 p-8 mt-8" style="margin-left:280px;">
     <section id="section-dashboard">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -1301,7 +1345,7 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
 
 <script>
 const links = document.querySelectorAll('#spa-nav a[data-target]');
-const sections = [
+let sections = [
   'section-dashboard',
   'section-profile',
   'section-viewings',
@@ -1313,21 +1357,42 @@ const sections = [
   'section-documents'
 ].map(id => document.getElementById(id));
 
+// Ensure every section element has the `.section` class and remove Tailwind's `hidden`
+sections.forEach(s => {
+  if (!s) return;
+  if (!s.classList.contains('section')) s.classList.add('section');
+  if (s.classList.contains('hidden')) s.classList.remove('hidden');
+});
+
+// Rebuild sections array to only include existing elements
+sections = sections.filter(Boolean);
+
+// If none are active, set dashboard active by default to avoid stuck UI
+if (!sections.some(s => s.classList.contains('active'))) {
+  const dash = document.getElementById('section-dashboard');
+  if (dash) dash.classList.add('active');
+}
+
 function showSection(id) {
-  sections.forEach(s => s && s.classList.toggle('hidden', s.id !== id));
+  const current = sections.find(s => s && s.classList.contains('active'));
+  const target = sections.find(s => s && s.id === id);
+
   links.forEach(a => a.classList.toggle('nav-active', a.dataset.target === id));
 
-  if (id === 'section-notifications') {
-    loadAgentNotifications();
+  function triggerLoads(sectionId) {
+    if (sectionId === 'section-notifications') loadAgentNotifications();
+    else if (sectionId === 'section-messages') loadAgentMessages();
+    else if (sectionId === 'section-audit-logs') loadAgentAuditLogs();
+    else if (sectionId === 'section-documents') loadAgentDocuments();
   }
-  if (id === 'section-messages') {
-    loadAgentMessages();
+
+  // Immediate swap of `active` class — transitions handle the fade.
+  if (current && current !== target) {
+    current.classList.remove('active');
   }
-  if (id === 'section-audit-logs') {
-    loadAgentAuditLogs();
-  }
-  if (id === 'section-documents') {
-    loadAgentDocuments();
+  if (target) {
+    target.classList.add('active');
+    requestAnimationFrame(() => triggerLoads(id));
   }
 }
 
