@@ -3,16 +3,16 @@ session_start();
 
 // Database Connection
 $servername = "localhost";
-$username   = "root";
-$password   = "";
-$dbname     = "nuevopuerta";
+$username = "root";
+$password = "";
+$dbname = "nuevopuerta";
+$port = 3306;
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+$conn = new mysqli($servername, $username, $password, $dbname, $port);
 
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
-
 $error_message = "";
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {

@@ -14,6 +14,49 @@
       exit;
   }
 
+// =====================================================
+// SINGLE LOT FETCH FOR EDIT MODAL (JSON, GET)
+// =====================================================
+if (isset($_GET['fetch']) && $_GET['fetch'] === 'single_lot' && isset($_GET['id'])) {
+  header('Content-Type: application/json');
+  $id = intval($_GET['id']);
+  $sql = "SELECT l.*, ll.location_name 
+      FROM lots l 
+      LEFT JOIN lot_locations ll ON l.location_id = ll.id 
+      WHERE l.id = ? LIMIT 1";
+  if (!$conn) {
+    echo json_encode(['error' => 'DB connection error']);
+    exit;
+  }
+  $stmt = $conn->prepare($sql);
+  if (!$stmt) {
+    echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
+    exit;
+  }
+  if (!$stmt->bind_param("i", $id)) {
+    echo json_encode(['error' => 'Bind param failed: ' . $stmt->error]);
+    exit;
+  }
+  if (!$stmt->execute()) {
+    echo json_encode(['error' => 'Execute failed: ' . $stmt->error]);
+    exit;
+  }
+  $result = $stmt->get_result();
+  if (!$result) {
+    echo json_encode(['error' => 'Get result failed: ' . $stmt->error]);
+    $stmt->close();
+    exit;
+  }
+  $lot = $result->fetch_assoc();
+  $stmt->close();
+  if (!$lot) {
+    echo json_encode(['error' => 'Lot not found for id: ' . $id]);
+  } else {
+    echo json_encode($lot);
+  }
+  exit;
+}
+// ...existing code...
 
   // =============================================
   // FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
@@ -135,10 +178,69 @@
       exit;
   }
 
+// =============================================
+// LOTS & BLUEPRINT MANAGEMENT (AJAX HANDLERS)
+// =============================================
   // =============================================
   // LOTS CRUD (AJAX: POST action=save/delete/bulk_delete)
   // =============================================
 
+// --- GET REQUESTS (Fetching Data) ---
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
+    header('Content-Type: application/json');
+    $fetch = $_GET['fetch'];
+
+    // 1. FETCH LOCATIONS
+    if ($fetch === 'locations') {
+        $result = mysqli_query($conn, "SELECT id, location_name FROM lot_locations ORDER BY location_name ASC");
+        $locations = [];
+        while ($row = mysqli_fetch_assoc($result)) { $locations[] = $row; }
+        echo json_encode($locations);
+        exit;
+    }
+
+    // 2. FETCH LOTS
+    if ($fetch === 'lots') {
+        $loc_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : 0;
+        $query = "SELECT * FROM lots WHERE location_id = $loc_id ORDER BY block_number, lot_number ASC";
+        $result = mysqli_query($conn, $query);
+        $lots = [];
+        while ($row = mysqli_fetch_assoc($result)) { $lots[] = $row; }
+        echo json_encode($lots);
+        exit;
+    }
+
+    // 3. FETCH BLUEPRINT & COORDINATES
+    if ($fetch === 'blueprint_data') {
+        $loc_id = intval($_GET['location_id']);
+        $bp_query = mysqli_query($conn, "SELECT filename FROM blueprints WHERE location_id = $loc_id LIMIT 1");
+        $bp = mysqli_fetch_assoc($bp_query);
+        
+        $lots_res = mysqli_query($conn, "SELECT * FROM lots WHERE location_id = $loc_id");
+        $lots = [];
+        while($row = mysqli_fetch_assoc($lots_res)) { $lots[] = $row; }
+        
+        echo json_encode([
+            'image' => $bp ? 'blueprints/' . $bp['filename'] : null, 
+            'lots' => $lots
+        ]);
+        exit;
+    }
+}
+
+// --- POST REQUESTS (Saving/Deleting Data) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    $action = $_POST['action'];
+
+    // 4. SAVE / UPDATE LOT
+    if ($action === 'save') {
+        $block_number = mysqli_real_escape_string($conn, $_POST['block_number']);
+        $lot_number   = mysqli_real_escape_string($conn, $_POST['lot_number']);
+        $lot_size     = mysqli_real_escape_string($conn, $_POST['lot_size']);
+        $lot_price    = mysqli_real_escape_string($conn, $_POST['lot_price']);
+        $location_id  = intval($_POST['location_id']);
+        $status       = mysqli_real_escape_string($conn, $_POST['status'] ?? 'Available');
   // Save / update lot
   if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
       isset($_POST['action']) && $_POST['action'] === 'save') {
@@ -150,6 +252,16 @@
       $location_id  = mysqli_real_escape_string($conn, $_POST['location_id']);
       $status       = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
 
+        if (!empty($_POST['lot_id'])) {
+            $lot_id = intval($_POST['lot_id']);
+            $sql = "UPDATE lots SET block_number='$block_number', lot_number='$lot_number', lot_size='$lot_size', lot_price='$lot_price', location_id='$location_id', status='$status' WHERE id=$lot_id";
+        } else {
+            $sql = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status) VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status')";
+        }
+        $res = mysqli_query($conn, $sql);
+        echo json_encode(['success' => $res, 'error' => mysqli_error($conn)]);
+        exit;
+    }
       if (!empty($_POST['lot_id'])) {
           $lot_id = intval($_POST['lot_id']);
           $updateQuery = "UPDATE lots SET
@@ -170,11 +282,32 @@
           $msg     = $success ? 'Lot added successfully' : mysqli_error($conn);
       }
 
+    // 5. SAVE MAP COORDINATES
+    if ($action === 'save_map') {
+        $lot_id = intval($_POST['lot_id']);
+        $coords = $_POST['coords']; // JSON string
+        $stmt = $conn->prepare("UPDATE lots SET coordinates = ? WHERE id = ?");
+        $stmt->bind_param("si", $coords, $lot_id);
+        if ($stmt->execute()) {
+          echo json_encode(['success' => true]);
+        } else {
+          echo json_encode(['success' => false, 'error' => $conn->error]);
+        }
+        $stmt->close();
+        exit;
+    }
       header('Content-Type: application/json');
       echo json_encode(['success' => (bool)$success, 'message' => $msg]);
       exit;
   }
 
+    // 6. DELETE SINGLE
+    if ($action === 'delete') {
+        $lot_id = intval($_POST['lot_id']);
+        $ok = mysqli_query($conn, "DELETE FROM lots WHERE id = $lot_id");
+        echo json_encode(['success' => $ok]);
+        exit;
+    }
   // Delete single lot
   if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
       isset($_POST['action']) && $_POST['action'] === 'delete') {
@@ -190,6 +323,29 @@
       ]);
       exit;
   }
+
+    // 7. BULK DELETE
+    if ($action === 'bulk_delete') {
+        $ids = json_decode($_POST['lot_ids'], true);
+        if (!$ids) { echo json_encode(['success' => false, 'error' => 'No IDs provided']); exit; }
+        $idList = implode(',', array_map('intval', $ids));
+        $ok = mysqli_query($conn, "DELETE FROM lots WHERE id IN ($idList)");
+        echo json_encode(['success' => $ok]);
+        exit;
+    }
+}
+
+// --- FETCH SINGLE LOT (AJAX: ?fetch=lot&id=..)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'lot' && isset($_GET['id'])) {
+  $lot_id = intval($_GET['id']);
+  $query = "SELECT * FROM lots WHERE id = $lot_id LIMIT 1";
+  $result = mysqli_query($conn, $query);
+  $lot = $result ? mysqli_fetch_assoc($result) : null;
+  header('Content-Type: application/json');
+  echo json_encode($lot);
+  exit;
+}
+
 
   // Bulk delete lots
   if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
@@ -1331,6 +1487,30 @@
   }
   ?>
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Dashboard</title>
+  <script>
+      // Global variable for storing polygon points for the modal
+      let polygonPoints = [];
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        document.querySelectorAll('.alert.success, .alert.error').forEach(function(el) {
+          el.style.display = 'none';
+        });
+      }, 3000);
+    });
+  </script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', sans-serif;
+    }
   <!DOCTYPE html>
   <html lang="en">
   <head>
@@ -1797,10 +1977,43 @@
         border: 1px solid #f5c6cb;
       }
 
+    .location-dropdown {
+      margin-bottom: 20px;
+    }
+
       .location-dropdown {
         margin-bottom: 20px;
       }
 
+    .status-badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+      color: #fff !important;
+      background-color: #888;
+    }
+    .status-scheduled {
+      background-color: #28a745 !important;
+    }
+    .status-pending, .status-requested {
+      background-color: #ffc107 !important;
+    }
+    .status-completed {
+      background-color: #17a2b8 !important;
+    }
+    .status-cancelled {
+      background-color: #dc3545 !important;
+    }
+    .status-available {
+      background-color: #28a745 !important;
+    }
+    .status-sold {
+      background-color: #dc3545 !important;
+    }
+    .status-reserved {
+      background-color: #ffc107 !important;
+    }
       .status-badge {
         padding: 4px 12px;
         border-radius: 20px;
@@ -2275,6 +2488,100 @@
         resize: vertical;
       }
 
+    .status-reschedule_requested {
+  background-color: #f4d03f;
+  color: #234;
+}
+
+/* =============================================
+   MAPPING TOOL SPECIFIC CSS
+   ============================================= */
+
+/* 1. Ensure the drawing layer is responsive and visible */
+#draw-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  user-select: none;
+  z-index: 10;
+}
+
+/* Plus sign/cell cursor when drawing */
+#draw-layer.drawing-cursor {
+  cursor: cell !important;
+}
+
+/* Fix: Start Drawing Polygon button hover effect */
+.start-polygon-btn:hover {
+  background: #c8e6c9 !important;
+  color: #1b2e1b !important;
+  border-color: #1b2e1b !important;
+  box-shadow: 0 2px 8px rgba(44, 167, 44, 0.08) !important;
+  cursor: pointer !important;
+}
+
+/* 2. Base style for all lot boxes (Pins) on the map */
+.map-box {
+    position: absolute;
+    border: 2px solid #fff;
+    box-sizing: border-box;
+    pointer-events: none; /* Allows you to click "through" existing boxes to draw new ones */
+    z-index: 5;
+}
+
+/* 3. Match colors with your .status-badge classes */
+.map-box.status-available { 
+    background: rgba(212, 237, 218, 0.5); /* Match #d4edda */
+    border-color: #155724; 
+}
+.map-box.status-sold { 
+    background: rgba(248, 215, 218, 0.5); /* Match #f8d7da */
+    border-color: #721c24; 
+}
+.map-box.status-reserved { 
+    background: rgba(255, 243, 205, 0.5); /* Match #fff3cd */
+    border-color: #856404; 
+}
+
+/* 4. The box currently being drawn or edited */
+.map-box.active-edit {
+    border: 2px dashed #ffff00 !important;
+    background: rgba(255, 255, 0, 0.3) !important;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    z-index: 20;
+}
+
+/* 5. Tooltip/Instruction positioning */
+.mapper-instr {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.4;
+    pointer-events: none;
+    z-index: 100;
+    border-left: 4px solid #2ecc71;
+}
+
+  </style>
+</head>
+<body onload="loadLocations()">
+  <div class="sidebar-wrapper">
+    <div class="sidebar">
+    <div class="logo-title" style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+  <img src="assets/a.png" alt="Logo" class="profile-pic" style="width:60px;height:60px;border-radius:50%;object-fit:cover;background-color:transparent;">
+  <div style="display:flex;flex-direction:column;justify-content:center;line-height:1;">
+    <h2 style="font-weight:700;font-size:1.18rem;letter-spacing:1px;line-height:1;color:white;margin:0;">NUEVO PUERTA</h2>
+    <span style="font-size:0.95rem;letter-spacing:0.5px;color:white;opacity:0.9;line-height:1;">REAL ESTATE</span>
+  </div>
+</div>
       .status-reschedule_requested {
     background-color: #f4d03f;
     color: #234;
@@ -2339,6 +2646,53 @@
             <span>Document Review</span>
           </a>
 
+        <a href="#" onclick="confirmLogout()">
+          <img src="assets/ic_baseline-logout.png" alt="Logout Icon" class="nav-icon">
+          <span>Logout</span>
+        </a>
+      </div>
+</div>
+
+<!-- Edit Lot Modal -->
+<div id="editLotModal" style="display:none; position:fixed; z-index:3000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.6); justify-content:center; align-items:center;">
+  <div style="background:#fff; padding:24px; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,0.3); width:95%; max-width:400px; position:relative;">
+    <span onclick="closeEditLotModal()" style="color:#aaa; float:right; font-size:32px; font-weight:normal; line-height:1; cursor:pointer; margin-left:15px;">&times;</span>
+    <h3 style="color:#3e5f3e; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">Edit Lot</h3>
+    <form id="editLotForm">
+      <input type="hidden" id="edit_lot_id" name="lot_id">
+      <div class="form-group">
+        <label for="edit_block_number">Block Number</label>
+        <input type="text" id="edit_block_number" name="block_number" required>
+      </div>
+      <div class="form-group">
+        <label for="edit_lot_number">Lot Number</label>
+        <input type="text" id="edit_lot_number" name="lot_number" required>
+      </div>
+      <div class="form-group">
+        <label for="edit_lot_size">Lot Size</label>
+        <input type="text" id="edit_lot_size" name="lot_size" required>
+      </div>
+      <div class="form-group">
+        <label for="edit_lot_price">Lot Price</label>
+        <input type="text" id="edit_lot_price" name="lot_price" required>
+      </div>
+      <div class="form-group">
+        <label for="edit_status">Status</label>
+        <select id="edit_status" name="status" required>
+          <option value="Available">Available</option>
+          <option value="Sold">Sold</option>
+          <option value="Reserved">Reserved</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="edit_location_id">Location ID</label>
+        <input type="text" id="edit_location_id" name="location_id" required>
+      </div>
+      <button type="submit" class="btn-primary" style="margin-top:18px;">Save Changes</button>
+    </form>
+  </div>
+</div>
+  </div>
           <a href="#" onclick="confirmLogout()">
             <img src="assets/ic_baseline-logout.png" alt="Logout Icon" class="nav-icon logout-icon">
             <span>Logout</span>
@@ -2876,6 +3230,13 @@
         Edit
       </button>
 
+    <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this agent account?')">
+      <input type="hidden" name="agent_action" value="delete">
+      <input type="hidden" name="agent_id" value="<?php echo (int)$agent['id']; ?>">
+      <button type="submit" class="btn-small btn-danger">Delete</button>
+    </form>
+  </div>
+</td>
       <form method="POST" onsubmit="return confirm('Are you sure you want to delete this agent account?');">
         <input type="hidden" name="agent_action" value="delete">
         <input type="hidden" name="agent_id" value="<?php echo (int)$agent['id']; ?>">
@@ -2922,6 +3283,23 @@
               </div>
             </div>
 
+          <div class="form-section">
+            <div class="form-section-title">CONTACT INFORMATION</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="user_email">Email</label>
+                <input type="email" id="user_email" name="email" required>
+              </div>
+              <div class="form-group">
+                <label for="user_mobile">Phone</label>
+                <input type="tel" id="user_mobile" name="Phone_number" required>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="user_address">Address</label>
+              <textarea id="user_address" name="address" required></textarea>
+            </div>
+          </div>
             <div class="form-section">
               <div class="form-section-title">Contact Information</div>
               <div class="form-row">
@@ -2940,6 +3318,8 @@
               </div>
             </div>
 
+        <div class="form-section">
+  <div class="form-section-title">ACCOUNT SECURITY</div>
           <div class="form-section">
     <div class="form-section-title">Account Security</div>
 
@@ -3014,6 +3394,13 @@
     </div>
   </div>
 
+  <div id="section-lots" class="section hidden">
+    <div class="header">
+        <div>
+            <h2>Manage Lots</h2>
+            <small>Create, edit, and manage property lots</small>
+        </div>
+    </div>
       <div id="section-lots" class="section hidden">
         <div class="header">
           <div>
@@ -3022,6 +3409,13 @@
           </div>
         </div>
 
+    <div class="table-section">
+        <div class="location-dropdown" style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+            <label for="location_id" style="font-weight:500; min-width:90px;">Location:</label>
+            <select id="location_id" name="location_id" style="flex:1; min-width:250px;" onchange="loadLots(this.value)">
+                <option value="" disabled selected>Please select a location first</option>
+                </select>
+        </div>
         <div class="table-section">
           <div class="location-dropdown" style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
     <label for="location_id" style="font-weight:500; min-width:90px;">Location:</label>
@@ -3030,8 +3424,58 @@
             </select>
           </div>
 
+        <div id="lot-message" style="margin-bottom:15px;display:none;padding:10px 18px;border-radius:6px;font-size:15px;"></div>
+
+        <div style="margin-bottom: 18px;">
+            <button onclick="openGeneralMapper()" class="btn-map" style="background-color: #2d482d; color: white; padding: 10px 20px; border:none; border-radius: 5px; cursor:pointer;">
+                🗺️ View Full Blueprint Map
+            </button>
+        </div>
           <div id="lot-message" style="margin-bottom:15px;display:none;padding:10px 18px;border-radius:6px;font-size:15px;"></div>
 
+        <table id="lots-table">
+            <thead>
+                <tr>
+                    <th id="select-all-header"></th>
+                    <th>Block Number</th>
+                    <th>Lot Number</th>
+                    <th>Lot Size</th>
+                    <th>Lot Price</th>
+                    <th>Status</th>
+                    <th>Map Position</th> <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="lots-table-body">
+                </tbody>
+        </table>
+
+        <div style="margin-top: 20px; display: flex; gap: 10px;">
+            <button onclick="addNewLot()" class="btn-primary">+ Add New Lot</button>
+            <button onclick="bulkDeleteLots()" class="btn-danger">Delete Selected</button>
+        </div>
+    </div>
+</div>
+
+<div id="mapperModal" class="modal" style="display:none; position:fixed; z-index:3000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.8);">
+    <div class="modal-content" style="background:#fff; margin:2% auto; width:90%; height:90%; border-radius:10px; display:flex; flex-direction:column; overflow:hidden;">
+        
+
+        <div class="modal-header" style="padding:15px; background:#2d482d; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+          <h3 id="mapperTitle">Lot Mapper</h3>
+          <span id="mapperCloseBtn" style="cursor:pointer; font-size:24px;">&times;</span>
+        </div>
+
+        <div class="modal-body" style="flex:1; display:flex; background:#444; overflow:auto; position:relative; justify-content:center; align-items:flex-start; padding:20px;">
+            <div id="map-container" style="position:relative; display:flex; align-items:center; justify-content:center; background:#fff; box-shadow:0 0 20px rgba(0,0,0,0.5); width:80vw; height:75vh; overflow:hidden;">
+              <img id="blueprint-img" src="" style="display:block; max-width:100%; max-height:100%; margin:auto; cursor:grab; touch-action:none;">
+              <div id="draw-layer" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></div>
+            </div>
+            
+            <div style="position:absolute; bottom:20px; left:20px; background:rgba(0,0,0,0.7); color:#fff; padding:10px 15px; border-radius:5px; pointer-events:none; z-index:100;">
+                <b>Instructions:</b> Click and drag to draw a box. <br>
+                Green = Available | Yellow = Reserved | Red = Sold
+            </div>
+        </div>
           <table id="lots-table">
             <thead>
               <tr>
@@ -3077,6 +3521,51 @@
         </div>
       </div>
 
+        <div class="modal-footer" style="padding:15px; background:#f4f4f4; border-top:1px solid #ddd; display:flex; justify-content:flex-end; gap:10px;">
+          <button type="button" id="startPolygonBtn" class="start-polygon-btn" style="padding:10px 20px; border:1px solid #2d482d; border-radius:5px; background:#e8f5e9; color:#2d482d; font-weight:bold; cursor:pointer; margin-right:10px;" onclick="startPolygonDrawing()">Start Drawing Polygon</button>
+          <button type="button" id="mapperCancelBtn" style="padding:10px 20px; border:1px solid #ccc; border-radius:5px; background:white; cursor:pointer;">Cancel</button>
+          <button type="button" onclick="saveMapping()" style="padding:10px 25px; border:none; border-radius:5px; background:#2d482d; color:white; font-weight:bold; cursor:pointer;">Save Pin Location</button>
+        </div>
+    <script>
+    // Ensure both the X and Cancel buttons close the modal
+    document.addEventListener('DOMContentLoaded', function() {
+      var closeBtn = document.getElementById('mapperCloseBtn');
+      var cancelBtn = document.getElementById('mapperCancelBtn');
+      if (closeBtn) closeBtn.onclick = closeMapperModal;
+      if (cancelBtn) cancelBtn.onclick = closeMapperModal;
+
+      // Panzoom for blueprint image
+      var blueprintImg = document.getElementById('blueprint-img');
+      if (blueprintImg) {
+        var lastPanzoom = blueprintImg._panzoomInstance;
+        if (lastPanzoom) lastPanzoom.dispose();
+        var panzoomInstance = panzoom(blueprintImg, {
+          maxZoom: 5,
+          minZoom: 0.3,
+          bounds: false,
+          boundsPadding: 0.1,
+          zoomDoubleClickSpeed: 1,
+        });
+        blueprintImg._panzoomInstance = panzoomInstance;
+      }
+    });
+    </script>
+    <style>
+      /* Hover effect for Start Drawing Polygon button */
+      .start-polygon-btn:hover {
+        background: #c8e6c9;
+        color: #1b2e1b;
+        border-color: #1b2e1b;
+        box-shadow: 0 2px 8px rgba(44, 167, 44, 0.08);
+        cursor: cell;
+      }
+    </style>
+    <!-- Panzoom.js CDN -->
+    <script src="https://unpkg.com/@panzoom/panzoom/dist/panzoom.min.js"></script>
+    </script>
+
+    </div>
+</div>
       <div id="editLotModal" style="
         display: none;
         position: fixed;
@@ -3861,6 +4350,34 @@
     }
   }
 
+// =============================================
+// =============================================
+// 1. LOCATION & TABLE LOADING
+// =============================================
+
+function loadLocations() {
+  fetch(window.location.pathname + '?fetch=locations')
+    .then(response => response.json())
+    .then(locations => {
+      const selects = ['location_id', 'analytics_location'];
+      selects.forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (select) {
+          const isAnalytics = selectId === 'analytics_location';
+          select.innerHTML = isAnalytics
+            ? '<option value="">All Locations</option>'
+            : '<option value="" disabled selected>Please select a location first</option>';
+          locations.forEach(location => {
+            const option = document.createElement('option');
+            option.value = location.id;
+            option.textContent = location.location_name;
+            select.appendChild(option);
+          });
+        }
+      });
+    })
+    .catch(error => console.error('Error loading locations:', error));
+}
   // ===========================
   // LOTS MANAGEMENT FUNCTIONS
   // ===========================
@@ -3888,6 +4405,21 @@
       .catch(error => console.error('Error loading locations:', error));
   }
 
+/**
+ * FIXED: loadLots function
+ */
+function loadLots(locationId = '') {
+  if (!locationId) return;
+
+  fetch(`${window.location.pathname}?fetch=lots&location_id=${locationId}`)
+    .then(response => response.json())
+    .then(data => {
+      // 1. Update global variable for the Edit Modal to use
+      currentLotsData = data; 
+
+      const tbody = document.getElementById('lots-table-body');
+      const selectAllHeader = document.getElementById('select-all-header');
+      if (!tbody || !selectAllHeader) return;
   function loadLots(locationId = '') {
     fetch(`${window.location.pathname}?fetch=lots&location_id=${locationId}`)
       .then(response => response.json())
@@ -3896,6 +4428,531 @@
         const newRow = document.getElementById('new-row');
         if (!tbody) return;
 
+      // 2. Handle Select All Checkbox
+      if (data && data.length > 0) {
+        selectAllHeader.innerHTML = '<input type="checkbox" id="select-all-lots">';
+        setTimeout(() => {
+          const selectAll = document.getElementById('select-all-lots');
+          if (selectAll) {
+            selectAll.onclick = function() {
+              const checkboxes = document.querySelectorAll('.lot-checkbox');
+              checkboxes.forEach(cb => { cb.checked = selectAll.checked; });
+            };
+          }
+        }, 0);
+      } else {
+        selectAllHeader.innerHTML = '';
+      }
+
+      // 3. Define the "New Row" HTML (Hidden by default)
+      // Note: Added empty <td> to match column count
+      const newRowHtml = `
+        <tr id="new-row" style="display:none;">
+          <td></td>
+          <td><input type="text" id="add_block_number" placeholder="Blk"></td>
+          <td><input type="text" id="add_lot_number" placeholder="Lot"></td>
+          <td><input type="text" id="add_lot_size" placeholder="Sqm"></td>
+          <td><input type="text" id="add_lot_price" placeholder="Price"></td>
+          <td>
+            <select id="add_status">
+              <option value="Available">Available</option>
+              <option value="Sold">Sold</option>
+              <option value="Reserved">Reserved</option>
+            </select>
+          </td>
+          <td></td> <td>
+            <button class="btn-primary" onclick="saveLot()">Save</button>
+            <button class="btn-danger" onclick="cancelAdd()">Cancel</button>
+          </td>
+        </tr>`;
+      
+      tbody.innerHTML = newRowHtml;
+
+      // 4. Populate Data
+      if (!data || data.length === 0) {
+        tbody.innerHTML += '<tr><td colspan="8" style="text-align: center; padding: 20px;">No lots found for this location.</td></tr>';
+      } else {
+        data.forEach(lot => {
+          // Check if coordinates exist
+          const isMapped = (lot.coordinates && lot.coordinates.length > 5);
+          
+          const row = `
+            <tr data-id="${lot.id}">
+              <td><input type="checkbox" class="lot-checkbox" value="${lot.id}"></td>
+              <td>${lot.block_number}</td>
+              <td>${lot.lot_number}</td>
+              <td>${lot.lot_size} sqm</td>
+              <td>₱${parseFloat(lot.lot_price).toLocaleString()}</td>
+              <td><span class="status-badge status-${lot.status.toLowerCase()}">${lot.status}</span></td>
+              <td>
+                <button class="btn-map-sm" onclick="openMapper(${lot.id}, ${locationId}, '${lot.block_number}', '${lot.lot_number}')">
+                  ${isMapped ? '✅ Edit Pin' : '📍 Set Pin'}
+                </button>
+              </td>
+              <td>
+                <button class="btn-action-edit" onclick="openEditLotModal(${lot.id})">Edit</button>
+                <button class="btn-action-delete" onclick="deleteLot(${lot.id})">Delete</button>
+              </td>
+            </tr>`;
+          tbody.insertAdjacentHTML('beforeend', row);
+        });
+      }
+    })
+    .catch(error => console.error('Error loading lots:', error));
+}
+// =============================================
+// 2. MAPPING TOOL FUNCTIONS (FIXED)
+// Close the Mapper Modal and clean up listeners
+function closeMapperModal() {
+  var modal = document.getElementById('mapperModal');
+  if (modal) modal.style.display = 'none';
+  var layer = document.getElementById('draw-layer');
+  if (layer) {
+    layer.onmousedown = null;
+    layer.onmousemove = null;
+    layer.onmouseup = null;
+    layer.onmouseleave = null;
+    layer.style.pointerEvents = 'none';
+    layer.innerHTML = '';
+  }
+  var img = document.getElementById('blueprint-img');
+  if (img) img.src = '';
+}
+// =============================================
+
+let currentMappingLotId = null; 
+
+function openMapper(lotId, locId, block, lot) {
+        // Add OK button for confirming shape, placed inside #map-container
+        let mapContainer = document.getElementById('map-container');
+        let okBtn = document.createElement('button');
+        okBtn.textContent = 'OK';
+        okBtn.style.position = 'absolute';
+        okBtn.style.bottom = '20px';
+        okBtn.style.right = '20px';
+        okBtn.style.zIndex = '200';
+        okBtn.style.padding = '8px 18px';
+        okBtn.style.background = '#2d482d';
+        okBtn.style.color = '#fff';
+        okBtn.style.border = 'none';
+        okBtn.style.borderRadius = '5px';
+        okBtn.style.fontSize = '16px';
+        okBtn.style.display = 'none';
+        okBtn.onclick = function() {
+          if (isPolygonDrawing && polygonPoints.length >= 3) {
+            isPolygonDrawing = false;
+            drawPolygon(true, currentStatus); // Close shape and fill
+            okBtn.style.display = 'none';
+          }
+        };
+        // Remove any previous OK button
+        let oldOkBtn = mapContainer.querySelector('.polygon-ok-btn');
+        if (oldOkBtn) oldOkBtn.remove();
+        okBtn.className = 'polygon-ok-btn';
+        mapContainer.appendChild(okBtn);
+    currentMappingLotId = lotId;
+    const title = document.getElementById('mapperTitle');
+    if (title) title.innerText = `Mapping: Block ${block} - Lot ${lot}`;
+    
+    fetch(`admindashboard.php?fetch=blueprint_data&location_id=${locId}`)
+    .then(r => r.json())
+    .then(data => {
+        if(!data.image) {
+            alert("Please upload a blueprint for this location first!");
+            return;
+        }
+        const img = document.getElementById('blueprint-img');
+        const layer = document.getElementById('draw-layer');
+        if (!img || !layer) return;
+
+        img.src = data.image;
+        layer.innerHTML = '';
+
+        // Draw all polygons for all lots
+        function drawAllPolygons() {
+          layer.innerHTML = '';
+          if (data.lots) {
+            data.lots.forEach(l => {
+              if (l.coordinates) {
+                try {
+                  const c = JSON.parse(l.coordinates);
+                  if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    svg.setAttribute('width', '100%');
+                    svg.setAttribute('height', '100%');
+                    svg.style.position = 'absolute';
+                    svg.style.left = '0';
+                    svg.style.top = '0';
+                    svg.style.pointerEvents = 'none';
+                    let pointsStr = c.points.map(pt => `${pt.x * layer.offsetWidth / 100},${pt.y * layer.offsetHeight / 100}`).join(' ');
+                    let status = (l.status || 'Available').toLowerCase();
+                    let fillColor, strokeColor;
+                    if (status === 'reserved') {
+                      fillColor = 'rgba(255,255,0,0.3)';
+                      strokeColor = 'gold';
+                    } else if (status === 'sold') {
+                      fillColor = 'rgba(255,0,0,0.3)';
+                      strokeColor = 'red';
+                    } else {
+                      fillColor = 'rgba(0,255,0,0.3)';
+                      strokeColor = 'green';
+                    }
+                    let polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                    polygon.setAttribute('points', pointsStr);
+                    polygon.setAttribute('stroke', strokeColor);
+                    polygon.setAttribute('stroke-width', '2');
+                    polygon.setAttribute('fill', fillColor);
+                    svg.appendChild(polygon);
+                    layer.appendChild(svg);
+                  } else {
+                    createBox(layer, c, l.status, l.id == lotId);
+                  }
+                } catch(e) { console.error("Coord parse error", e); }
+              }
+            });
+          }
+        }
+
+        drawAllPolygons();
+
+        // Always clear previous drawings and redraw the selected lot's polygon for editing
+        let selectedLot = data.lots.find(l => l.id == lotId);
+        if (selectedLot && selectedLot.coordinates) {
+          try {
+            let coordsObj = JSON.parse(selectedLot.coordinates);
+            if (coordsObj.type === 'polygon' && Array.isArray(coordsObj.points)) {
+              polygonPoints = coordsObj.points;
+              // Create and append SVG for editing
+              polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              polygonSvg.setAttribute('class', 'active-edit');
+              polygonSvg.setAttribute('width', '100%');
+              polygonSvg.setAttribute('height', '100%');
+              polygonSvg.style.position = 'absolute';
+              polygonSvg.style.left = '0';
+              polygonSvg.style.top = '0';
+              polygonSvg.style.pointerEvents = 'none';
+              layer.appendChild(polygonSvg);
+              setTimeout(() => {
+                if (typeof drawPolygon === 'function') {
+                  drawPolygon(true, selectedLot.status || 'Available');
+                }
+              }, 100);
+            }
+          } catch(e) { console.error('Error parsing lot polygon', e); }
+        } else {
+          polygonPoints = [];
+        }
+
+        // ...existing code for setting up drawing listeners and modal...
+// Add this function in the same scope as your modal drawing logic
+function startPolygonDrawing() {
+  isPolygonDrawing = true;
+  polygonPoints = [];
+  if (polygonSvg && polygonSvg.parentNode) {
+    polygonSvg.parentNode.removeChild(polygonSvg);
+    polygonSvg = null;
+  }
+  // Enable pointer events and set cursor to plus sign (cell)
+  var drawLayer = document.getElementById('draw-layer');
+  if (drawLayer) {
+    drawLayer.style.pointerEvents = 'auto';
+    drawLayer.classList.add('drawing-cursor');
+  }
+  // Also set body cursor for full override during drawing
+  document.body.style.cursor = 'cell';
+  console.log('Polygon drawing mode activated');
+}
+
+// When drawing mode ends, reset cursor
+function stopPolygonDrawing() {
+  var drawLayer = document.getElementById('draw-layer');
+  if (drawLayer) {
+    drawLayer.classList.remove('drawing-cursor');
+    drawLayer.style.cursor = 'crosshair';
+  }
+  document.body.style.cursor = '';
+}
+
+        // --- POLYGON DRAWING MODE ---
+        // Use global polygonPoints and polygonSvg
+        polygonPoints = [];
+        polygonSvg = null;
+        let isPolygonDrawing = false;
+
+        // Ensure drawing mode is OFF when modal opens
+        isPolygonDrawing = false;
+        // Disable pointer events and set default cursor
+        if (layer) {
+          layer.style.pointerEvents = 'none';
+          layer.style.cursor = 'default';
+        }
+
+        // Remove previous listeners and elements
+        layer.onmousedown = null;
+        layer.onmousemove = null;
+        layer.onmouseup = null;
+        layer.onmouseleave = null;
+        layer.onclick = null;
+        layer.ondblclick = null;
+        layer.style.pointerEvents = 'auto';
+        layer.innerHTML = '';
+
+        // Remove any previous "active-edit" box for this lot
+        const oldBox = layer.querySelector('.active-edit');
+        if (oldBox) oldBox.remove();
+
+        // Start polygon drawing on first click
+        layer.onclick = function(e) {
+          if (!isPolygonDrawing) return; // Only allow drawing if mode is active
+          const rect = layer.getBoundingClientRect();
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          // Snap to first point if close enough
+          let autoClosed = false;
+          if (polygonPoints.length >= 2) {
+            let first = polygonPoints[0];
+            let px = first.x * layer.offsetWidth / 100;
+            let py = first.y * layer.offsetHeight / 100;
+            let cx = x * layer.offsetWidth / 100;
+            let cy = y * layer.offsetHeight / 100;
+            let dist = Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+            if (dist < 15 && polygonPoints.length >= 3) { // 15px snap radius
+              isPolygonDrawing = false;
+              drawPolygon(true, currentStatus);
+              okBtn.style.display = 'none';
+              autoClosed = true;
+              // Do NOT remove or clear the polygonSvg or polygonPoints here
+              // The finalized polygon will remain visible
+            }
+          }
+          if (!autoClosed) {
+            polygonPoints.push({x, y});
+            drawPolygon(false, currentStatus);
+            okBtn.style.display = 'block';
+            // Auto-close if last point is close to first after 4+ points
+            if (polygonPoints.length >= 4) {
+              let first = polygonPoints[0];
+              let last = polygonPoints[polygonPoints.length - 1];
+              let px = first.x * layer.offsetWidth / 100;
+              let py = first.y * layer.offsetHeight / 100;
+              let lx = last.x * layer.offsetWidth / 100;
+              let ly = last.y * layer.offsetHeight / 100;
+              let dist = Math.sqrt((px - lx) * (px - lx) + (py - ly) * (py - ly));
+              if (dist < 15) {
+                isPolygonDrawing = false;
+                drawPolygon(true, currentStatus);
+                okBtn.style.display = 'none';
+                // The finalized polygon will remain visible
+              }
+            }
+          }
+        };
+
+        // Double-click to finish polygon
+        layer.ondblclick = function(e) {
+          if (isPolygonDrawing && polygonPoints.length >= 3) {
+            isPolygonDrawing = false;
+            drawPolygon(true, currentStatus); // Close shape
+          }
+        };
+
+        // Draw polygon or polyline with live sides and fill when closed
+        function drawPolygon(close=false, status='Available') {
+          if (!polygonSvg) return;
+          polygonSvg.innerHTML = '';
+          let pointsStr = polygonPoints.map(pt => `${pt.x * layer.offsetWidth / 100},${pt.y * layer.offsetHeight / 100}`).join(' ');
+          let shape;
+          // Status color mapping (case-insensitive)
+          let fillColor, strokeColor;
+          let statusNorm = (status || 'Available').toLowerCase();
+          if (statusNorm === 'reserved') {
+            fillColor = 'rgba(255,255,0,0.3)';
+            strokeColor = 'gold';
+          } else if (statusNorm === 'sold') {
+            fillColor = 'rgba(255,0,0,0.3)';
+            strokeColor = 'red';
+          } else {
+            fillColor = 'rgba(0,255,0,0.3)';
+            strokeColor = 'green';
+          }
+          if (close && polygonPoints.length >= 3) {
+            // Draw filled polygon (no dots)
+            shape = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            shape.setAttribute('points', pointsStr);
+            shape.setAttribute('stroke', strokeColor);
+            shape.setAttribute('stroke-width', '2');
+            shape.setAttribute('fill', fillColor);
+            polygonSvg.appendChild(shape);
+          } else {
+            // Draw live sides (polyline) and dots
+            shape = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+            shape.setAttribute('points', pointsStr);
+            shape.setAttribute('stroke', strokeColor);
+            shape.setAttribute('stroke-width', '2');
+            shape.setAttribute('fill', 'none');
+            polygonSvg.appendChild(shape);
+            // Draw points as circles for visibility
+            polygonPoints.forEach(pt => {
+              let circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              circle.setAttribute('cx', pt.x * layer.offsetWidth / 100);
+              circle.setAttribute('cy', pt.y * layer.offsetHeight / 100);
+              circle.setAttribute('r', 2);
+              circle.setAttribute('fill', strokeColor);
+              circle.setAttribute('stroke', 'black');
+              circle.setAttribute('stroke-width', '1');
+              polygonSvg.appendChild(circle);
+            });
+          }
+        }
+
+        // Use status from lot or default to Available
+        // Find the current lot's status from data.lots
+        let currentStatus = 'Available';
+        if (data.lots && lotId) {
+          let found = data.lots.find(l => l.id == lotId);
+          if (found && found.status) currentStatus = found.status;
+        }
+
+        // Update event handlers to pass status
+        layer.onclick = function(e) {
+          const rect = layer.getBoundingClientRect();
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          if (!isPolygonDrawing) {
+            isPolygonDrawing = true;
+            polygonPoints = [];
+            // Create SVG for polygon
+            polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            polygonSvg.setAttribute('class', 'active-edit');
+            polygonSvg.setAttribute('width', '100%');
+            polygonSvg.setAttribute('height', '100%');
+            polygonSvg.style.position = 'absolute';
+            polygonSvg.style.left = '0';
+            polygonSvg.style.top = '0';
+            polygonSvg.style.pointerEvents = 'none';
+            layer.appendChild(polygonSvg);
+          }
+          polygonPoints.push({x, y});
+          drawPolygon(false, currentStatus);
+        };
+
+        layer.ondblclick = function(e) {
+          if (isPolygonDrawing && polygonPoints.length >= 3) {
+            isPolygonDrawing = false;
+            drawPolygon(true, currentStatus); // Close shape and fill
+          }
+        };
+
+        document.getElementById('mapperModal').style.display = 'block';
+    })
+    .catch(err => alert("Error loading blueprint data."));
+}
+
+// Helper function to draw boxes
+function createBox(container, c, status, isActive) {
+    const box = document.createElement('div');
+    box.className = `map-box status-${status.toLowerCase()}`;
+    if(isActive) box.classList.add('active-edit');
+    
+    box.style.left = c.x + '%'; 
+    box.style.top = c.y + '%';
+    box.style.width = c.w + '%'; 
+    box.style.height = c.h + '%';
+    box.style.position = 'absolute';
+    box.style.border = isActive ? '2px dashed yellow' : '1px solid white';
+    box.style.backgroundColor = isActive ? 'rgba(255,255,0,0.3)' : 'rgba(255,255,255,0.2)';
+    
+    container.appendChild(box);
+}
+
+// Function to open the pin modal and redraw the saved shape
+function openPinModal(lotId) {
+  // 1. Find the lot data from your existing global currentLotsData
+  const lot = currentLotsData.find(l => l.id == lotId);
+  // 2. Clear previous drawings
+  const layer = document.getElementById('draw-layer');
+  layer.innerHTML = '';
+  // 3. If coordinates exist, redraw the polygon automatically
+  if (lot && lot.coordinates) {
+    let coordsObj = JSON.parse(lot.coordinates);
+    if (coordsObj.type === 'polygon' && Array.isArray(coordsObj.points)) {
+      polygonPoints = coordsObj.points;
+      // Create and append SVG if not present
+      polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      polygonSvg.setAttribute('class', 'active-edit');
+      polygonSvg.setAttribute('width', '100%');
+      polygonSvg.setAttribute('height', '100%');
+      polygonSvg.style.position = 'absolute';
+      polygonSvg.style.left = '0';
+      polygonSvg.style.top = '0';
+      polygonSvg.style.pointerEvents = 'none';
+      layer.appendChild(polygonSvg);
+      setTimeout(() => {
+        console.log('Forcing polygon redraw on modal open:', polygonPoints);
+        if (typeof drawPolygon === 'function') {
+          drawPolygon(true, lot.status || 'Available');
+        }
+      }, 100);
+    }
+  }
+}
+
+// --- NEW: Function to Save the Pin to Database ---
+function saveMapping() {
+    // Use edit_lot_id for lot ID (if present), else fallback to currentMappingLotId
+    const lotIdInput = document.getElementById('edit_lot_id');
+    const lotId = lotIdInput ? lotIdInput.value : currentMappingLotId;
+    // polygonPoints should be the array of points for the current shape
+    console.log('saveMapping called. lotId:', lotId, 'polygonPoints:', polygonPoints);
+    // Debug: show what will be saved
+    console.log('Saving coords:', JSON.stringify({type: 'polygon', points: polygonPoints}));
+    // Always save as {type: 'polygon', points: [...]} for consistency
+    const coordsObj = { type: 'polygon', points: polygonPoints };
+    const coordsStr = JSON.stringify(coordsObj);
+
+    const formData = new FormData();
+    formData.append('action', 'save_map');
+    formData.append('lot_id', lotId);
+    formData.append('coords', coordsStr);
+
+    fetch('admindashboard.php', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(res => {
+        if(res.success) {
+            alert('OK! Location Saved.');
+            location.reload(); // Full page reload to see the pinned lot on the map
+        } else {
+            alert("Error saving: " + (res.error || "Unknown error"));
+        }
+    });
+}
+
+     
+// Logic to handle the Edit Modal Submission
+document.getElementById('editLotForm').onsubmit = function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    formData.append('action', 'save');
+    const locationId = document.getElementById('location_id').value;
+    formData.append('location_id', locationId);
+
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(res => {
+        if (res.success) {
+            showLotMessage('Lot updated successfully!', true);
+            closeEditLotModal();
+            loadLots(locationId);
+        } else {
+            alert('Error: ' + res.error);
+        }
+    });
+};
+
+// Logic for Adding a New Lot (The "new-row" Save button)
+function saveLot() {
+  const locationId = document.getElementById('location_id').value;
+  if (!locationId) { alert("Please select a location first."); return; }
         if (newRow) newRow.remove();
         
         tbody.innerHTML = '';
@@ -4120,10 +5177,169 @@
   function approveDocument(id) {
     if (!confirm('Approve this document?')) return;
 
+  const formData = new FormData();
+  formData.append('action', 'save');
+  formData.append('location_id', locationId);
+  formData.append('block_number', document.getElementById('block_number').value);
+  formData.append('lot_number', document.getElementById('lot_number').value);
+  formData.append('lot_size', document.getElementById('lot_size').value);
+  formData.append('lot_price', document.getElementById('lot_price').value);
+  formData.append('status', document.getElementById('status').value);
     const formData = new FormData();
     formData.append('action', 'approve_document');
     formData.append('doc_id', id);
 
+  fetch(window.location.pathname, { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        showLotMessage('Lot added successfully!', true);
+        loadLots(locationId);
+        cancelAdd();
+      } else { alert('Error: ' + res.error); }
+    });
+}
+
+function deleteLot(id) {
+          layer.innerHTML = '';
+          if (data.lots) {
+            data.lots.forEach(l => {
+              if(l.id == lotId && l.coordinates) {
+                try {
+                  const c = JSON.parse(l.coordinates);
+                  if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    svg.setAttribute('width', '100%');
+                    svg.setAttribute('height', '100%');
+                    svg.style.position = 'absolute';
+                    svg.style.left = '0';
+                    svg.style.top = '0';
+                    svg.style.pointerEvents = 'none';
+                    let pointsStr = c.points.map(pt => `${pt.x * layer.offsetWidth / 100},${pt.y * layer.offsetHeight / 100}`).join(' ');
+                    let status = l.status || 'Available';
+                    let fillColor = 'rgba(0,255,0,0.3)';
+                    let strokeColor = 'green';
+                    if (status === 'Reserved') {
+                      fillColor = 'rgba(255,255,0,0.3)';
+                      strokeColor = 'gold';
+                    } else if (status === 'Sold') {
+                      fillColor = 'rgba(255,0,0,0.3)';
+                      strokeColor = 'red';
+                    }
+                    let polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                    polygon.setAttribute('points', pointsStr);
+                    polygon.setAttribute('stroke', strokeColor);
+                    polygon.setAttribute('stroke-width', '2');
+                    polygon.setAttribute('fill', fillColor);
+                    svg.appendChild(polygon);
+                    layer.appendChild(svg);
+                    console.log('Drawn polygon for lot', l.id);
+                  } else {
+                    createBox(layer, c, l.status, true);
+                  }
+                } catch(e) { console.error("Coord parse error", e); }
+              } else if(l.coordinates) {
+                // ...existing code for other lots...
+                try {
+                  console.log('Lot ID:', l.id, 'Coordinates:', l.coordinates);
+                  const c = JSON.parse(l.coordinates);
+                  if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    // Set global polygonPoints and draw the polygon for editing
+                    polygonPoints = c.points;
+                    // Create and append SVG for editing
+                    polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    polygonSvg.setAttribute('class', 'active-edit');
+                    polygonSvg.setAttribute('width', '100%');
+                    polygonSvg.setAttribute('height', '100%');
+                    polygonSvg.style.position = 'absolute';
+                    polygonSvg.style.left = '0';
+                    polygonSvg.style.top = '0';
+                    polygonSvg.style.pointerEvents = 'none';
+                    layer.appendChild(polygonSvg);
+                    setTimeout(() => {
+                      console.log('Forcing polygon redraw on modal open:', polygonPoints);
+                      if (typeof drawPolygon === 'function') {
+                        drawPolygon(true, l.status || 'Available');
+                      }
+                    }, 100);
+                  } else {
+                    createBox(layer, c, l.status, false);
+                  }
+                } catch(e) { console.error("Coord parse error", e); }
+              }
+            });
+          }
+        }
+
+        drawAllPolygons();
+function loadDocuments() {
+        const img = document.getElementById('blueprint-img');
+        const layer = document.getElementById('draw-layer');
+        if (!img || !layer) return;
+
+        img.src = data.image;
+        layer.innerHTML = '';
+
+        // Draw existing pins
+        if (data.lots) {
+            data.lots.forEach(l => {
+              if(l.id == lotId && l.coordinates) {
+                try {
+                  const c = JSON.parse(l.coordinates);
+                  if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    // Set global polygonPoints and draw the polygon for editing
+                    polygonPoints = c.points;
+                    // Create and append SVG for editing
+                    polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    polygonSvg.setAttribute('class', 'active-edit');
+                    polygonSvg.setAttribute('width', '100%');
+                    polygonSvg.setAttribute('height', '100%');
+                    polygonSvg.style.position = 'absolute';
+                    polygonSvg.style.left = '0';
+                    polygonSvg.style.top = '0';
+                    polygonSvg.style.pointerEvents = 'none';
+                    layer.appendChild(polygonSvg);
+                    setTimeout(() => {
+                      console.log('Forcing polygon redraw on modal open:', polygonPoints);
+                      if (typeof drawPolygon === 'function') {
+                        drawPolygon(true, l.status || 'Available');
+                      }
+                    }, 100);
+                  } else {
+                    createBox(layer, c, l.status, false);
+                  }
+                } catch(e) { console.error("Coord parse error", e); }
+              } else if(l.coordinates) {
+                // ...existing code for other lots...
+                try {
+                  console.log('Lot ID:', l.id, 'Coordinates:', l.coordinates);
+                  const c = JSON.parse(l.coordinates);
+                  if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    // Set global polygonPoints and draw the polygon for editing
+                    polygonPoints = c.points;
+                    // Create and append SVG for editing
+                    polygonSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    polygonSvg.setAttribute('class', 'active-edit');
+                    polygonSvg.setAttribute('width', '100%');
+                    polygonSvg.setAttribute('height', '100%');
+                    polygonSvg.style.position = 'absolute';
+                    polygonSvg.style.left = '0';
+                    polygonSvg.style.top = '0';
+                    polygonSvg.style.pointerEvents = 'none';
+                    layer.appendChild(polygonSvg);
+                    setTimeout(() => {
+                      console.log('Forcing polygon redraw on modal open:', polygonPoints);
+                      if (typeof drawPolygon === 'function') {
+                        drawPolygon(true, l.status || 'Available');
+                      }
+                    }, 100);
+                  } else {
+                    createBox(layer, c, l.status, false);
+                  }
+                } catch(e) { console.error("Coord parse error", e); }
+              }
+            });
+        }
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(r => r.json())
       .then(res => {
@@ -4403,6 +5619,35 @@
       return;
     }
 
+  // Registered user/admin/agent via endpoint
+  if ((type === 'user' || type === 'admin' || type === 'agent') && id) {
+    fetch(window.location.pathname + `?fetch=${type}&id=` + encodeURIComponent(id))
+      .then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(account => {
+        if (account && account.id) {
+          let html = `<strong>Name:</strong> ${account.first_name || ''} ${account.middle_name ? account.middle_name + ' ' : ''}${account.last_name || ''}<br>`;
+          if (account.username) html += `<strong>Username:</strong> ${account.username}<br>`;
+          html += `<strong>Email:</strong> ${account.email || 'N/A'}<br>`;
+          if (account.phone) html += `<strong>Mobile:</strong> ${account.phone}<br>`;
+          if (account.mobile_number) html += `<strong>Mobile:</strong> ${account.mobile_number}<br>`;
+          html += `<strong>Address:</strong> ${account.address || 'N/A'}<br>`;
+          if (account.created_at) {
+            const created = new Date(account.created_at).toLocaleDateString();
+            html += `<strong>Registered:</strong> ${created}<br>`;
+          }
+          content.innerHTML = html;
+        } else {
+          content.innerHTML = `<div style="color:#dc3545;">Client not found.</div>`;
+        }
+      })
+      .catch(err => {
+        content.innerHTML = `<div style="color:#dc3545;">Error loading client: ${err.message}</div>`;
+      });
+  }
+}
     // Registered user/admin/agent via endpoint
     if ((type === 'user' || type === 'admin' || type === 'agent') && id) {
       fetch(window.location.pathname + `?fetch=${type}&id=` + encodeURIComponent(id))
@@ -4564,6 +5809,18 @@
 
   const monthlySalesData = <?php echo json_encode($monthly_sales); ?>; 
 
+function loadMonthlySalesChart() {
+  const canvas = document.getElementById('monthly-sales-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const data = monthlySalesData.length ? monthlySalesData : [
+    { month: 'Jan 2024', amount: 150000 },
+    { month: 'Feb 2024', amount: 200000 },
+    { month: 'Mar 2024', amount: 180000 },
+    { month: 'Apr 2024', amount: 250000 },
+    { month: 'May 2024', amount: 300000 },
+    { month: 'Jun 2024', amount: 280000 }
+  ];
   function loadMonthlySalesChart() {
     const canvas = document.getElementById('monthly-sales-chart');
     if (!canvas) return;
@@ -4591,6 +5848,14 @@
     ctx.lineTo(canvas.width - padding, canvas.height - padding);
     ctx.stroke();
 
+  const maxAmount = Math.max(...data.map(item => item.amount), 1);
+  const barWidth = data.length ? width / data.length / 2 : 0;
+
+  data.forEach((item, index) => {
+    const x = padding + index * 2 * barWidth;
+    const barHeight = (item.amount / maxAmount) * (height - 20);
+    const y = canvas.height - padding - barHeight;
+    const color = index % 2 === 0 ? '#28a745' : '#007bff';
     const maxAmount = Math.max(...data.map(item => item.amount), 1);
     const barWidth = width / data.length / 2;
     data.forEach((item, index) => {
@@ -4833,6 +6098,35 @@
     if (modal) modal.style.display = 'none';
   }
 
+// ===========================
+// EDIT LOT MODAL
+// ===========================
+function openEditLotModal(lotId) {
+    // 1. Fetch the specific lot data from the server
+    fetch(`?fetch=single_lot&id=${lotId}`)
+        .then(response => response.json())
+        .then(lot => {
+            if (lot.error) {
+                alert(lot.error);
+                return;
+            }
+            // 2. Map the database fields to your Modal Input IDs
+            // Make sure these IDs (e.g., 'edit_lot_id') match your HTML exactly
+            document.getElementById('edit_lot_id').value = lot.id || '';
+            document.getElementById('edit_block_number').value = lot.block_number || '';
+            document.getElementById('edit_lot_number').value = lot.lot_number || '';
+            document.getElementById('edit_lot_size').value = lot.lot_size || '';
+            document.getElementById('edit_lot_price').value = lot.lot_price || '';
+            document.getElementById('edit_status').value = lot.status || '';
+            document.getElementById('edit_location_id').value = lot.location_id || '';
+            // 3. Show the modal
+            document.getElementById('editLotModal').style.display = 'block';
+        })
+        .catch(err => {
+            console.error("Error fetching lot details:", err);
+            alert("Could not load lot details.");
+        });
+}
   // ===========================
   // EDIT LOT MODAL
   // ===========================
@@ -4923,6 +6217,13 @@
     if (dateTo) params.append('date_to', dateTo);
     if (locationId) params.append('location_id', locationId);
 
+  window.location.href = window.location.pathname + '?' + params.toString();
+}
+
+
+
+
+</script>
     window.location.href = window.location.pathname + '?' + params.toString();
   }
   </script>

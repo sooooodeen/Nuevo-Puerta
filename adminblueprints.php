@@ -3,8 +3,9 @@
 session_start();
 
 // Database connection
+
 $host = 'localhost';
-$dbname = 'lotmanager';
+$dbname = 'nuevopuerta';
 $username = 'root';
 $password = '';
 
