@@ -365,9 +365,9 @@
                   exit;
               }
 
-              // "sssssssii"
+                // "ssssssssii"
               $stmt->bind_param(
-                  "sssssssii",
+                  "ssssssssii",
                   $first_name, $middle_name, $last_name, $email, $username,
                   $phone, $address, $photo_path, $availability, $account_id
               );
@@ -1363,10 +1363,10 @@
       /* Unified UI controls: consistent buttons and form fields */
       button, input[type="button"], input[type="submit"], .btn {
         font-family: inherit;
-        font-size: 14px;
-        padding: 8px 14px;
+        font-size: 15px;
+        padding: 12px 20px;
         border-radius: 6px;
-        min-width: 88px;
+        min-width: 100px;
         box-shadow: none;
         cursor: pointer;
         display: inline-flex;
@@ -1521,6 +1521,7 @@
         display: flex;
         flex-direction: column;
         width: 100%;
+        align-items: stretch;
       }
 
       /* Make admin nav links match the user dashboard `.nav-link` appearance */
@@ -1534,9 +1535,10 @@
         transition: background 0.18s, color 0.18s, transform 0.12s;
         border-left: 4px solid transparent;
         font-size: 15px;
-        margin: 6px 14px;
+        margin: 6px 0;
         border-radius: 8px;
         justify-content: flex-start;
+        width: 100%;
         cursor: pointer;
       }
 
@@ -1734,10 +1736,10 @@
         background-color: #2d482d;
         color: white;
         border: none;
-        padding: 6px 12px;
+        padding: 10px 18px;
         border-radius: 6px;
         cursor: pointer;
-        font-size: 13px;
+        font-size: 14px;
         transition: background-color 0.2s ease-in-out;
         margin: 0 2px;
       }
@@ -1830,10 +1832,10 @@
         background-color: #28a745;
         color: white;
         border: none;
-        padding: 6px 12px;
+        padding: 10px 18px;
         border-radius: 4px;
         cursor: pointer;
-        font-size: 12px;
+        font-size: 14px;
       }
 
       .btn-assign:hover {
@@ -2102,10 +2104,10 @@
       .btn-location {
         background: #f8f9fa;
         border: 1px solid #ddd;
-        padding: 8px 16px;
+        padding: 10px 18px;
         border-radius: 4px;
         cursor: pointer;
-        font-size: 13px;
+        font-size: 14px;
         color: #666;
         transition: all 0.2s;
       }
@@ -2119,9 +2121,9 @@
         background-color: #333;
         color: white;
         border: none;
-        padding: 12px 30px;
+        padding: 14px 36px;
         border-radius: 6px;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 500;
         cursor: pointer;
         transition: background-color 0.2s;
@@ -2250,6 +2252,22 @@
         border-color: #999;
       }
 
+      .accounts-table td .btn-small {
+        margin: 0;
+      }
+
+      .accounts-table td form {
+        display: inline-flex;
+        margin: 0;
+      }
+
+      .accounts-table tbody td:last-child {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }
+
       .btn-danger {
         background: #dc3545;
         color: white;
@@ -2331,11 +2349,15 @@
             <span>Notifications</span>
           </a>
           <a data-target="section-audit-logs">
-            <img src="assets/audit_icon.png" alt="Audit Logs Icon" class="nav-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
+              <path d="M9 2h6a2 2 0 0 1 2 2v2h2a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2zm0 4h6V4H9v2zm-1 5h8a1 1 0 1 0 0-2H8a1 1 0 0 0 0 2zm0 4h8a1 1 0 1 0 0-2H8a1 1 0 0 0 0 2z"/>
+            </svg>
             <span>Audit Logs</span>
           </a>
           <a data-target="section-documents">
-            <img src="assets/document_icon.png" alt="Documents Icon" class="nav-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
+              <path d="M6 2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V7h3.5L13 3.5zM8 11h8a1 1 0 1 0 0-2H8a1 1 0 0 0 0 2zm0 4h8a1 1 0 1 0 0-2H8a1 1 0 0 0 0 2z"/>
+            </svg>
             <span>Document Review</span>
           </a>
 
@@ -2663,9 +2685,9 @@
                 <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['phone'] ?? ''); ?></td>
                 <td style="padding:10px 8px;"><?php echo htmlspecialchars($account['address'] ?? ''); ?></td>
                 <td style="padding:10px 8px;">
-                  <button onclick="viewProfile(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:4px 10px; font-size:11px; margin-right:3px;">View</button>
-                  <button onclick="editAccount(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:4px 10px; font-size:11px; margin-right:3px;">Edit</button>
-                  <button onclick="deleteAdmin(<?php echo (int)$account['id']; ?>)" class="btn-small btn-danger" style="padding:4px 10px; font-size:11px;">Delete</button>
+                  <button onclick="viewProfile(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">View</button>
+                  <button onclick="editAccount(<?php echo (int)$account['id']; ?>, 'admin')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">Edit</button>
+                  <button onclick="deleteAdmin(<?php echo (int)$account['id']; ?>)" class="btn-small btn-danger" style="padding:10px 16px; font-size:13px;">Delete</button>
                 </td>
               </tr>
             <?php endforeach; ?>
@@ -2995,12 +3017,12 @@
                   <td><?php echo htmlspecialchars(substr($user['address'], 0, 50)); ?>...</td>
                   <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
                   <td>
-                    <button onclick="viewProfile(<?php echo $user['id']; ?>, 'user')" class="btn-small">View</button>
-                    <button onclick="editAccount(<?php echo $user['id']; ?>, 'user')" class="btn-small">Edit</button>
+                    <button onclick="viewProfile(<?php echo $user['id']; ?>, 'user')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">View</button>
+                    <button onclick="editAccount(<?php echo $user['id']; ?>, 'user')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">Edit</button>
                     <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this user account?')">
                       <input type="hidden" name="user_action" value="delete">
                       <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
-                      <button type="submit" class="btn-small btn-danger">Delete</button>
+                      <button type="submit" class="btn-small btn-danger" style="padding:10px 16px; font-size:13px;">Delete</button>
                     </form>
                   </td>
                 </tr>
@@ -3203,7 +3225,7 @@
                               <span style="font-size:15px;color:#195c36;font-weight:700;margin-top:2px;\"><?php echo htmlspecialchars($assignedAgent['first_name'] . ' ' . $assignedAgent['last_name']); ?></span>
                               <button type="button"
                                 class="btn-small"
-                                style="padding:4px 10px; font-size:11px; margin-top:8px;"
+                                style="padding:10px 16px; font-size:13px; margin-top:8px;"
                                 onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
                                 View Client
                               </button>
@@ -3219,10 +3241,10 @@
                                 <?php endforeach; ?>
                               </select>
                               <div style="display: flex; gap: 4px; margin-top: 4px;">
-                                <button type="submit" class="btn-small" style="padding:4px 10px; font-size:11px;">Assign</button>
+                                <button type="submit" class="btn-small" style="padding:10px 16px; font-size:13px;">Assign</button>
                                 <button type="button"
                                   class="btn-small"
-                                  style="padding:4px 10px; font-size:11px;"
+                                  style="padding:10px 16px; font-size:13px;"
                                   onclick="viewProfile(<?= $viewing['user_id'] ?: 0 ?>, 'user', event)">
                                   View Client
                                 </button>
@@ -4092,24 +4114,31 @@
           return;
         }
 
-        container.innerHTML = documents.map(doc => `
-          <div style="padding: 12px; margin-bottom: 10px; border-radius: 6px; background: #fff; border: 1px solid #e0e0e0;">
-            <strong>${doc.file_name || 'Untitled Document'}</strong>
-            <div style="font-size: 13px; color: #333;">Type: ${doc.doc_type || 'N/A'}</div>
-            <div style="font-size: 13px; color: #333;">User: ${doc.first_name || ''} ${doc.last_name || ''} (${doc.email || ''})</div>
-            <div style="font-size: 12px; color: #999;">
-              Uploaded: ${doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : 'N/A'}
+        container.innerHTML = documents.map(doc => {
+          const docId = doc.id ?? doc.doc_id ?? doc.document_id;
+          const actionButtons = docId
+            ? `<button class="btn btn-sm btn-primary" onclick="approveDocument(${docId})">Approve</button>
+               <button class="btn btn-sm btn-danger"  onclick="rejectDocument(${docId})">Reject</button>`
+            : '';
+
+          return `
+            <div data-doc-id="${docId ?? ''}" style="padding: 12px; margin-bottom: 10px; border-radius: 6px; background: #fff; border: 1px solid #e0e0e0;">
+              <strong>${doc.file_name || 'Untitled Document'}</strong>
+              <div style="font-size: 13px; color: #333;">Type: ${doc.doc_type || 'N/A'}</div>
+              <div style="font-size: 13px; color: #333;">User: ${doc.first_name || ''} ${doc.last_name || ''} (${doc.email || ''})</div>
+              <div style="font-size: 12px; color: #999;">
+                Uploaded: ${doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : 'N/A'}
+              </div>
+              <div style="font-size: 12px; color: #999;">
+                Status: <span data-doc-status style="font-weight:600;">${doc.status || 'Pending'}</span>
+              </div>
+              <div data-doc-actions style="margin-top: 8px;">
+                ${doc.file_path ? `<a href="${doc.file_path}" target="_blank" class="btn btn-sm btn-secondary">View</a>` : ''}
+                ${actionButtons}
+              </div>
             </div>
-            <div style="font-size: 12px; color: #999;">
-              Status: <span style="font-weight:600;">${doc.status || 'Pending'}</span>
-            </div>
-            <div style="margin-top: 8px;">
-              ${doc.file_path ? `<a href="${doc.file_path}" target="_blank" class="btn btn-sm btn-secondary">View</a>` : ''}
-              <button class="btn btn-sm btn-primary" onclick="approveDocument(${doc.id})">Approve</button>
-              <button class="btn btn-sm btn-danger"  onclick="rejectDocument(${doc.id})">Reject</button>
-            </div>
-          </div>
-        `).join('');
+          `;
+        }).join('');
       })
       .catch(error => {
         container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load user documents.</p>';
@@ -4129,7 +4158,7 @@
       .then(res => {
         if (res.success) {
           alert('Document approved.');
-          loadDocuments();
+          updateDocumentCardStatus(id, 'Approved');
           refreshBadges();
         } else {
           alert('Failed to approve document.');
@@ -4152,13 +4181,28 @@
       .then(res => {
         if (res.success) {
           alert('Document rejected.');
-          loadDocuments();
+          updateDocumentCardStatus(id, 'Rejected');
           refreshBadges();
         } else {
           alert('Failed to reject document.');
         }
       })
       .catch(() => alert('Failed to reject document.'));
+  }
+
+  function updateDocumentCardStatus(id, statusText) {
+    const row = document.querySelector(`[data-doc-id="${id}"]`);
+    if (!row) return;
+
+    const statusEl = row.querySelector('[data-doc-status]');
+    if (statusEl) {
+      statusEl.textContent = statusText;
+    }
+
+    const actions = row.querySelector('[data-doc-actions]');
+    if (actions) {
+      actions.innerHTML = '<span style="color:#2d482d;font-weight:600;">✓ ' + statusText + '</span>';
+    }
   }
 
   // ===========================
