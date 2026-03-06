@@ -23,6 +23,68 @@ body {
     box-sizing: border-box;
     background-color: #f8f8f8; /* Light background for contrast */
     color: #333;
+    opacity: 1;
+    transition: opacity 0.35s ease;
+}
+
+body.page-leave {
+    opacity: 0;
+}
+
+/* ---------------------------------- */
+/* Scroll Reveal Animations */
+/* ---------------------------------- */
+.reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    will-change: opacity, transform;
+}
+
+.reveal-left {
+    transform: translateX(-28px);
+}
+
+.reveal-right {
+    transform: translateX(28px);
+}
+
+.reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.reveal-left.visible,
+.reveal-right.visible {
+    transform: translateX(0);
+}
+
+.reveal-stagger {
+    transition-delay: var(--reveal-delay, 0ms);
+}
+
+.nav-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.theme-toggle {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: transparent;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-toggle:hover {
+    background: rgba(255,255,255,0.12);
 }
 
 /* ---------------------------------- */
@@ -106,6 +168,12 @@ body {
     background: #f4d03f;
     color: #2d4e1e;
     box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+}
+
+.section-divider {
+    width: 100%;
+    height: 1px;
+    background-color: #ddd;
 }
 
 /* ---------------------------------- */
@@ -398,6 +466,108 @@ header div { /* For the sub-heading/slogan */
     color: #555;
     margin: 0 auto 30px auto;
 }
+
+/* ---------------------------------- */
+/* 8. Dark Mode */
+/* ---------------------------------- */
+body.dark-mode {
+    background-color: #0f1410;
+    color: #e5e7e1;
+}
+
+body.dark-mode .main-nav {
+    background: #152417;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .nav-links a {
+    color: #e5e7e1;
+}
+
+body.dark-mode .nav-links a:hover {
+    color: #f4d03f;
+}
+
+body.dark-mode .nav-links li.active a {
+    color: #f4d03f;
+}
+
+body.dark-mode .theme-toggle {
+    border-color: rgba(229,231,225,0.6);
+    color: #e5e7e1;
+}
+
+body.dark-mode .theme-toggle:hover {
+    background: rgba(229,231,225,0.12);
+}
+
+body.dark-mode .login-btn {
+    background: #f4d03f;
+    color: #1f2d1f;
+}
+
+body.dark-mode .features-redesigned {
+    background-color: #0f1410;
+}
+
+body.dark-mode .features-container-wrap {
+    background-color: #131a14;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .features-redesigned h2 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .features-intro {
+    color: #c2c9c0;
+}
+
+body.dark-mode .feature-card {
+    background: #141c16;
+    border-color: #1f2a20;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .feature-card:hover {
+    background: #182219;
+}
+
+body.dark-mode .feature-card h3 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .feature-card p {
+    color: #c2c9c0;
+}
+
+body.dark-mode .buttons a {
+    background: #3a6c28;
+}
+
+body.dark-mode .section-divider {
+    background-color: #242f25;
+}
+
+body.dark-mode .founder-footer {
+    background: #1f2f21;
+}
+
+body.dark-mode .founder-message {
+    color: #e6efe6;
+}
+
+body.dark-mode .social-media {
+    background: #111614;
+}
+
+body.dark-mode .social-media h2 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .social-media p {
+    color: #c2c9c0;
+}
 .icons {
     display: flex;
     justify-content: center;
@@ -486,6 +656,9 @@ header div { /* For the sub-heading/slogan */
             <li><a href="contact.html">Contact</a></li>
         </ul>
         <div class="nav-right">
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" title="Toggle dark mode">
+                <i class="fa fa-moon"></i>
+            </button>
             <?php if (userHasAccount()): ?>
                 <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
             <?php else: ?>
@@ -564,7 +737,7 @@ header div { /* For the sub-heading/slogan */
     </div>
 </section>
 
-    <div style="width: 100%; height: 1px; background-color: #ddd;"></div>
+    <div class="section-divider"></div>
 
     <footer class="founder-footer">
         <div class="founder-container">
@@ -585,7 +758,7 @@ header div { /* For the sub-heading/slogan */
         </div>
     </footer>
 
-    <div style="width: 100%; height: 1px; background-color: #ddd;"></div>
+    <div class="section-divider"></div>
 
     <section class="social-media">
         <h2>Stay Connected with Nuevo Puerta!</h2>
@@ -600,6 +773,67 @@ header div { /* For the sub-heading/slogan */
             </a>
         </div>
     </section>
+
+        <script>
+            (function() {
+                const body = document.body;
+                const toggle = document.getElementById('theme-toggle');
+                const stored = localStorage.getItem('theme');
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const startDark = stored ? stored === 'dark' : prefersDark;
+
+                if (startDark) {
+                    body.classList.add('dark-mode');
+                }
+
+                function syncToggle() {
+                    if (!toggle) return;
+                    const isDark = body.classList.contains('dark-mode');
+                    toggle.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+                    toggle.innerHTML = isDark ? '<i class="fa fa-sun"></i>' : '<i class="fa fa-moon"></i>';
+                }
+
+                if (toggle) {
+                    toggle.addEventListener('click', function() {
+                        body.classList.toggle('dark-mode');
+                        const isDark = body.classList.contains('dark-mode');
+                        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+                        syncToggle();
+                    });
+                }
+
+                syncToggle();
+            })();
+        </script>
+
+        <script>
+            (function() {
+                const revealTargets = document.querySelectorAll(
+                    'header, .features-container-wrap, .feature-card, .founder-footer, .social-media'
+                );
+
+                revealTargets.forEach((el, idx) => {
+                    el.classList.add('reveal');
+                    if (el.classList.contains('feature-card')) {
+                        el.classList.add('reveal-stagger');
+                        el.classList.add(idx % 2 === 0 ? 'reveal-left' : 'reveal-right');
+                        el.style.setProperty('--reveal-delay', `${(idx % 9) * 60}ms`);
+                    }
+                });
+
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.add('visible');
+                        } else {
+                            entry.target.classList.remove('visible');
+                        }
+                    });
+                }, { threshold: 0.15, rootMargin: '0px 0px -10% 0px' });
+
+                revealTargets.forEach(el => observer.observe(el));
+            })();
+        </script>
 
 </body>
 </html>

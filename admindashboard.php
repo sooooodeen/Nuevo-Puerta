@@ -1,4 +1,4 @@
-  <?php
+ <?php
   session_start();
   // Database connection settings
   $servername = "localhost";
@@ -14,6 +14,25 @@
       exit;
   }
 
+  // =============================================
+  // CREATE PIN LOCATIONS TABLE IF NOT EXISTS
+  // =============================================
+  $createTableSQL = "CREATE TABLE IF NOT EXISTS pin_locations (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    lot_id INT NOT NULL UNIQUE,
+    polygon_coordinates LONGTEXT,
+    pin_status VARCHAR(50) DEFAULT 'Available',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE
+  )";
+  mysqli_query($conn, $createTableSQL);
+  
+  // Add pin_status column to existing tables
+  mysqli_query($conn, "ALTER TABLE pin_locations ADD COLUMN IF NOT EXISTS pin_status VARCHAR(50) DEFAULT 'Available'");
+  // Add payment columns to lots table for Manage Lots payment tracking
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_type VARCHAR(30) DEFAULT 'Fully Paid'");
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_amount DECIMAL(12,2) DEFAULT NULL");
 
   // =============================================
   // FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
@@ -149,6 +168,32 @@
       $lot_price    = mysqli_real_escape_string($conn, $_POST['lot_price']);
       $location_id  = mysqli_real_escape_string($conn, $_POST['location_id']);
       $status       = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
+        $payment_type = isset($_POST['payment_type']) ? mysqli_real_escape_string($conn, $_POST['payment_type']) : 'Fully Paid';
+        $payment_amount_raw = isset($_POST['payment_amount']) ? trim($_POST['payment_amount']) : '';
+        $payment_amount = 'NULL';
+
+          if (!in_array($payment_type, ['Down Payment', 'Fully Paid', 'Not Applicable'], true)) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => 'Invalid payment type']);
+          exit;
+        }
+
+          if ($status === 'Available') {
+            // Available lots should not have payment details yet.
+            $payment_type = 'Not Applicable';
+            $payment_amount = 'NULL';
+          } elseif ($payment_type === 'Not Applicable') {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => 'Select Down Payment or Fully Paid for non-available lots']);
+            exit;
+          } elseif ($payment_type === 'Down Payment') {
+          if ($payment_amount_raw === '' || !is_numeric($payment_amount_raw) || (float)$payment_amount_raw <= 0) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => 'Please enter a valid down payment amount']);
+            exit;
+          }
+          $payment_amount = (float)$payment_amount_raw;
+        }
 
       if (!empty($_POST['lot_id'])) {
           $lot_id = intval($_POST['lot_id']);
@@ -158,14 +203,21 @@
                           lot_size     = '$lot_size',
                           lot_price    = '$lot_price',
                           location_id  = '$location_id',
-                          status       = '$status'
+                  status       = '$status',
+                  payment_type = '$payment_type',
+                  payment_amount = $payment_amount
                           WHERE id = $lot_id";
 
           $success = mysqli_query($conn, $updateQuery);
+          if ($success) {
+            // Keep blueprint pin color/status accurate when status is edited from Manage Lots.
+            $syncPinStatusQuery = "UPDATE pin_locations SET pin_status = '$status' WHERE lot_id = $lot_id";
+            mysqli_query($conn, $syncPinStatusQuery);
+          }
           $msg     = $success ? 'Lot updated successfully' : mysqli_error($conn);
       } else {
-          $insertQuery = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status)
-                          VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status')";
+          $insertQuery = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status, payment_type, payment_amount)
+                  VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status', '$payment_type', $payment_amount)";
           $success = mysqli_query($conn, $insertQuery);
           $msg     = $success ? 'Lot added successfully' : mysqli_error($conn);
       }
@@ -215,7 +267,243 @@
   }
 
 
+  // =============================================
+  // PIN LOCATION ENDPOINTS (AJAX)
+  // =============================================
+  
+  // GET: Fetch blueprint for a location
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && 
+      isset($_GET['fetch']) && $_GET['fetch'] === 'blueprint') {
+      $lot_id = intval($_GET['lot_id'] ?? 0);
+      
+      // Get lot and its location
+      $lotQuery = "SELECT l.*, loc.location_name FROM lots l 
+                   LEFT JOIN lot_locations loc ON l.location_id = loc.id 
+                   WHERE l.id = $lot_id";
+      $lotResult = mysqli_query($conn, $lotQuery);
+      $lot = $lotResult ? mysqli_fetch_assoc($lotResult) : null;
+      
+      if (!$lot) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => 'Lot not found']);
+          exit;
+      }
+      
+      // Get blueprint for this location
+      $blueprintQuery = "SELECT filename FROM blueprints WHERE location_id = " . $lot['location_id'] . " LIMIT 1";
+      $blueprintResult = mysqli_query($conn, $blueprintQuery);
+      $blueprint = $blueprintResult ? mysqli_fetch_assoc($blueprintResult) : null;
+      
+        // Get existing pin location for current lot
+        $pinQuery = "SELECT polygon_coordinates, pin_status FROM pin_locations WHERE lot_id = $lot_id";
+        $pinResult = mysqli_query($conn, $pinQuery);
+        $pin = $pinResult ? mysqli_fetch_assoc($pinResult) : null;
+
+        // Get all saved pins in this location (for multi-lot rendering on same blueprint)
+        $allPins = [];
+        $allPinsQuery = "
+          SELECT p.lot_id, p.polygon_coordinates, p.pin_status
+          FROM pin_locations p
+          INNER JOIN lots l ON l.id = p.lot_id
+          WHERE l.location_id = " . (int)$lot['location_id'];
+        $allPinsResult = mysqli_query($conn, $allPinsQuery);
+        if ($allPinsResult) {
+          while ($row = mysqli_fetch_assoc($allPinsResult)) {
+            $allPins[] = [
+              'lot_id' => (int)$row['lot_id'],
+              'coordinates' => json_decode($row['polygon_coordinates'], true),
+              'pin_status' => $row['pin_status'] ?: 'Available'
+            ];
+          }
+        }
+      
+      header('Content-Type: application/json');
+      echo json_encode([
+          'success' => true,
+          'lot' => $lot,
+          'blueprint' => $blueprint ? 'blueprints/' . $blueprint['filename'] : null,
+          'pin' => $pin ? json_decode($pin['polygon_coordinates'], true) : null,
+          'pin_status' => $pin ? $pin['pin_status'] : null,
+          'all_pins' => $allPins
+      ]);
+      exit;
+  }
+  
+  // POST: Save pin location
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
+      isset($_POST['action']) && $_POST['action'] === 'save_pin') {
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $coordinates = mysqli_real_escape_string($conn, $_POST['polygon_coordinates'] ?? '');
+      $pin_status = mysqli_real_escape_string($conn, $_POST['pin_status'] ?? 'Available');
+      
+      if (!$lot_id || !$coordinates) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => 'Missing lot_id or coordinates']);
+          exit;
+      }
+      
+      // Check if pin exists
+      $checkQuery = "SELECT id FROM pin_locations WHERE lot_id = $lot_id";
+      $checkResult = mysqli_query($conn, $checkQuery);
+      $exists = mysqli_fetch_assoc($checkResult);
+      
+      if ($exists) {
+          // Update
+          $updateQuery = "UPDATE pin_locations SET polygon_coordinates = '$coordinates', pin_status = '$pin_status' WHERE lot_id = $lot_id";
+          $success = mysqli_query($conn, $updateQuery);
+      } else {
+          // Insert
+          $insertQuery = "INSERT INTO pin_locations (lot_id, polygon_coordinates, pin_status) VALUES ($lot_id, '$coordinates', '$pin_status')";
+          $success = mysqli_query($conn, $insertQuery);
+      }
+      
+      // Automatically update the lot's status to match the pin_status
+      if ($success) {
+          $updateLotStatusQuery = "UPDATE lots SET status = '$pin_status' WHERE id = $lot_id";
+          mysqli_query($conn, $updateLotStatusQuery);
+      }
+      
+      header('Content-Type: application/json');
+      echo json_encode([
+          'success' => (bool)$success,
+          'message' => $success ? 'Pin location and lot status saved successfully' : mysqli_error($conn)
+      ]);
+      exit;
+  }
+  
+  // GET: Fetch pin location
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && 
+      isset($_GET['fetch']) && $_GET['fetch'] === 'pin_location') {
+      $lot_id = intval($_GET['lot_id'] ?? 0);
+      
+      $pinQuery = "SELECT polygon_coordinates FROM pin_locations WHERE lot_id = $lot_id";
+      $pinResult = mysqli_query($conn, $pinQuery);
+      $pin = $pinResult ? mysqli_fetch_assoc($pinResult) : null;
+      
+      header('Content-Type: application/json');
+      echo json_encode([
+          'success' => true,
+          'pin' => $pin ? json_decode($pin['polygon_coordinates'], true) : null
+      ]);
+      exit;
+  }
+
+
+    // POST: Save new location
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
+      isset($_POST['action']) && $_POST['action'] === 'save_location') {
+      $location_name = mysqli_real_escape_string($conn, $_POST['location_name'] ?? '');
+      $latitude = floatval($_POST['latitude'] ?? 0);
+      $longitude = floatval($_POST['longitude'] ?? 0);
+      
+      if (!$location_name || $latitude == 0 || $longitude == 0) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Missing location name or coordinates']);
+        exit;
+      }
+      
+      // Insert into lot_locations table
+      $insertQuery = "INSERT INTO lot_locations (location_name, latitude, longitude) VALUES ('$location_name', $latitude, $longitude)";
+      $success = mysqli_query($conn, $insertQuery);
+      
+      header('Content-Type: application/json');
+      if ($success) {
+        $location_id = mysqli_insert_id($conn);
+
+        // Handle optional blueprint upload
+        if (isset($_FILES['blueprint']) && $_FILES['blueprint']['error'] === UPLOAD_ERR_OK) {
+          $allowed = ['jpg','jpeg','png','gif'];
+          $ext = strtolower(pathinfo($_FILES['blueprint']['name'], PATHINFO_EXTENSION));
+          if (in_array($ext, $allowed)) {
+            $uploadDir = 'blueprints/';
+            if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+            $newName = uniqid() . '.' . $ext;
+            if (move_uploaded_file($_FILES['blueprint']['tmp_name'], $uploadDir . $newName)) {
+              $stmt = $conn->prepare("INSERT INTO blueprints (location_id, filename, uploaded_at) VALUES (?, ?, NOW())");
+              $stmt->bind_param('is', $location_id, $newName);
+              $stmt->execute();
+              $stmt->close();
+            }
+          }
+        }
+
+        echo json_encode([
+          'success' => true,
+          'message' => 'Location saved successfully',
+          'location_id' => $location_id
+        ]);
+      } else {
+        echo json_encode([
+          'success' => false,
+          'error' => mysqli_error($conn)
+        ]);
+      }
+      exit;
+    }
+
+    // =====================================================
+  // AJAX: Update payment status
   // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+      isset($_POST['action']) && $_POST['action'] === 'update_payment_status') {
+      header('Content-Type: application/json');
+      $pay_id = intval($_POST['payment_id'] ?? 0);
+      $new_status = trim($_POST['new_status'] ?? '');
+      if (!$pay_id || !in_array($new_status, ['Pending','Verified','Rejected'], true)) {
+          echo json_encode(['success' => false, 'error' => 'Invalid payment ID or status']); exit;
+      }
+      $stmt = $conn->prepare("UPDATE payments SET status=? WHERE id=?");
+      $stmt->bind_param('si', $new_status, $pay_id);
+      $ok = $stmt->execute();
+      $stmt->close();
+
+      // If verified, credit the lot balance
+      if ($ok && $new_status === 'Verified') {
+          $pRow = mysqli_fetch_assoc(mysqli_query($conn, "SELECT lot_id, amount_paid FROM payments WHERE id=$pay_id"));
+          if ($pRow && $pRow['lot_id']) {
+              $conn->query("UPDATE lots SET balance = balance + {$pRow['amount_paid']} WHERE id={$pRow['lot_id']}");
+          }
+      }
+      echo json_encode(['success' => $ok]); exit;
+  }
+
+  // =====================================================
+  // AJAX: Assign owner to lot
+  // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+      isset($_POST['action']) && $_POST['action'] === 'assign_lot_owner') {
+      header('Content-Type: application/json');
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $owner_id = intval($_POST['owner_id'] ?? 0);
+      if (!$lot_id) { echo json_encode(['success'=>false,'error'=>'Invalid lot']); exit; }
+      $stmt = $conn->prepare("UPDATE lots SET owner_id=? WHERE id=?");
+      $oid = $owner_id ?: null;
+      $stmt->bind_param('ii', $oid, $lot_id);
+      $ok = $stmt->execute();
+      $stmt->close();
+      echo json_encode(['success'=>$ok]); exit;
+  }
+
+  // =====================================================
+  // AJAX: Update lot payment info (type, balance)
+  // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+      isset($_POST['action']) && $_POST['action'] === 'update_lot_payment') {
+      header('Content-Type: application/json');
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $pay_type = trim($_POST['payment_type'] ?? '');
+      $pay_amt = floatval($_POST['payment_amount'] ?? 0);
+      if (!$lot_id || !in_array($pay_type, ['Down Payment','Fully Paid','Not Applicable'], true)) {
+          echo json_encode(['success'=>false,'error'=>'Invalid data']); exit;
+      }
+      $stmt = $conn->prepare("UPDATE lots SET payment_type=?, payment_amount=? WHERE id=?");
+      $stmt->bind_param('sdi', $pay_type, $pay_amt, $lot_id);
+      $ok = $stmt->execute();
+      $stmt->close();
+      echo json_encode(['success'=>$ok]); exit;
+  }
+
+    // =====================================================
   // SINGLE ACCOUNT FETCH FOR EDIT MODAL (JSON, GET)
   // =====================================================
   if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'agent', 'user'], true)) {
@@ -253,6 +541,56 @@
       }
       exit; 
   }
+
+      // POST: Delete location
+      if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'delete_location') {
+        $location_id = intval($_POST['location_id'] ?? 0);
+
+        if (!$location_id) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => 'Invalid location selected']);
+          exit;
+        }
+
+        $lotsCountQuery = "SELECT COUNT(*) AS total FROM lots WHERE location_id = $location_id";
+        $lotsCountRes = mysqli_query($conn, $lotsCountQuery);
+        $lotsCountRow = $lotsCountRes ? mysqli_fetch_assoc($lotsCountRes) : ['total' => 0];
+        $lotsCount = (int)($lotsCountRow['total'] ?? 0);
+
+        if ($lotsCount > 0) {
+          header('Content-Type: application/json');
+          echo json_encode([
+            'success' => false,
+            'error' => 'Cannot delete location with existing lots. Delete or move the lots first.'
+          ]);
+          exit;
+        }
+
+        $blueprintCountQuery = "SELECT COUNT(*) AS total FROM blueprints WHERE location_id = $location_id";
+        $blueprintCountRes = mysqli_query($conn, $blueprintCountQuery);
+        $blueprintCountRow = $blueprintCountRes ? mysqli_fetch_assoc($blueprintCountRes) : ['total' => 0];
+        $blueprintCount = (int)($blueprintCountRow['total'] ?? 0);
+
+        if ($blueprintCount > 0) {
+          header('Content-Type: application/json');
+          echo json_encode([
+            'success' => false,
+            'error' => 'Cannot delete location with existing blueprints. Remove the blueprint first.'
+          ]);
+          exit;
+        }
+
+        $deleteLocationQuery = "DELETE FROM lot_locations WHERE id = $location_id";
+        $success = mysqli_query($conn, $deleteLocationQuery);
+
+        header('Content-Type: application/json');
+        echo json_encode([
+          'success' => (bool)$success,
+          'message' => $success ? 'Location deleted successfully' : mysqli_error($conn)
+        ]);
+        exit;
+      }
 
   // =====================================================
   // ADMIN ACCOUNT CRUD  (AJAX: account_action)
@@ -906,6 +1244,42 @@
   }
 
 
+  // =============================================
+  // FETCH PAYMENTS & LOT OWNERS DATA
+  // =============================================
+  // All payments
+  $allPayments = [];
+  $pq = "SELECT p.id, p.user_id, p.lot_id, p.amount_paid, p.payment_date, p.payment_method,
+                p.reference_no, p.status, p.remarks,
+                u.first_name AS u_first, u.last_name AS u_last,
+                l.block_number, l.lot_number, ll.location_name
+         FROM payments p
+         LEFT JOIN user_accounts u ON p.user_id = u.id
+         LEFT JOIN lots l ON p.lot_id = l.id
+         LEFT JOIN lot_locations ll ON l.location_id = ll.id
+         ORDER BY p.payment_date DESC";
+  $pqr = mysqli_query($conn, $pq);
+  if ($pqr) { while ($pr = mysqli_fetch_assoc($pqr)) $allPayments[] = $pr; }
+
+  // Lot owners: lots that are Sold or Reserved
+  $lotOwners = [];
+  $loq = "SELECT l.id, l.block_number, l.lot_number, l.lot_size, l.lot_price,
+                 l.status, l.payment_type, l.payment_amount, l.balance, l.owner_id,
+                 u.first_name AS o_first, u.last_name AS o_last, u.email AS o_email,
+                 ll.location_name
+          FROM lots l
+          LEFT JOIN user_accounts u ON l.owner_id = u.id
+          LEFT JOIN lot_locations ll ON l.location_id = ll.id
+          WHERE l.status IN ('Sold','Reserved')
+          ORDER BY l.id DESC";
+  $loqr = mysqli_query($conn, $loq);
+  if ($loqr) { while ($lo = mysqli_fetch_assoc($loqr)) $lotOwners[] = $lo; }
+
+  // All users for owner assignment dropdown
+  $allUsers = [];
+  $auq = mysqli_query($conn, "SELECT id, first_name, last_name, email FROM user_accounts ORDER BY first_name");
+  if ($auq) { while ($au = mysqli_fetch_assoc($auq)) $allUsers[] = $au; }
+
   // Handle file uploads
   function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
       if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) {
@@ -1337,6 +1711,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
@@ -2360,6 +2736,18 @@
             </svg>
             <span>Document Review</span>
           </a>
+          <a data-target="section-payments">
+            <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
+              <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 14H4V10h16v8zm0-10H4V6h16v2z"/>
+            </svg>
+            <span>Payments</span>
+          </a>
+          <a data-target="section-lot-owners">
+            <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
+              <path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/>
+            </svg>
+            <span>Lot Owners</span>
+          </a>
 
           <a href="#" onclick="confirmLogout()">
             <img src="assets/ic_baseline-logout.png" alt="Logout Icon" class="nav-icon logout-icon">
@@ -2798,120 +3186,55 @@
     </div>
 
 
-      <div class="accounts-table">
-    <h3>Existing Agent Accounts</h3>
+    <div class="accounts-table">
+      <h3>Existing Agent Accounts</h3>
 
-    <?php
-      // Run a fresh query just for this table
-      // FIXED: Removed missing columns
-      $agentQuery = "
-        SELECT 
-          id,
-          first_name,
-          middle_name,
-          last_name,
-          username,
-          email,
-          phone,
-          address,
-          availability,
-          status,
-          created_at
-        FROM agent_accounts
-        ORDER BY created_at DESC
-      ";
-
-      $agentResult = mysqli_query($conn, $agentQuery);
-    ?>
-
-    <?php if (!$agentResult): ?>
-        <div class="empty-state">
-          <p>Database error: <?php echo htmlspecialchars(mysqli_error($conn)); ?></p>
+      <?php if (empty($agentAccounts)): ?>
+        <div class="empty-state" style="
+          background:#fafafa;
+          padding:40px;
+          text-align:center;
+          border-radius:8px;
+          font-size:18px;
+          color:#666;
+        ">
+          <p>No agent accounts found in the database.</p>
         </div>
-
-    <?php elseif (mysqli_num_rows($agentResult) === 0): ?>
-      <div class="empty-state" style="
-        background: #fafafa;
-        padding: 40px;
-        text-align: center;
-        border-radius: 8px;
-        font-size: 18px;
-        color: #666;
-    ">
-        <p>No agent accounts found in the database.</p>
-    </div>
-
-    <?php else: ?>
-        <table>
+      <?php else: ?>
+        <table style="width:100%; border-collapse:collapse;">
           <thead>
-            <tr>
-              <th>Name</th>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Mobile</th>
-              <th>Address</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Actions</th>
+            <tr style="background:#14532d; color:#fff;">
+              <th style="padding:12px 10px;">Name</th>
+              <th style="padding:12px 10px;">Username</th>
+              <th style="padding:12px 10px;">Email</th>
+              <th style="padding:12px 10px;">Mobile</th>
+              <th style="padding:12px 10px;">Address</th>
+              <th style="padding:12px 10px;">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <?php while ($agent = mysqli_fetch_assoc($agentResult)): ?>
-              <tr>
-                <td>
-                  <strong>
-                    <?php
-                      echo htmlspecialchars(
-                        $agent['first_name'] . ' ' .
-                        (!empty($agent['middle_name']) ? $agent['middle_name'] . ' ' : '') .
-                        $agent['last_name']
-                      );
-                    ?>
-                  </strong>
+            <?php foreach ($agentAccounts as $agent): ?>
+              <tr style="border-bottom:1px solid #eee; background:#fff;">
+                <td style="padding:10px 8px;"><strong><?php echo htmlspecialchars(trim(($agent['first_name'] ?? '') . ' ' . ($agent['middle_name'] ?? '') . ' ' . ($agent['last_name'] ?? '')) ?: 'N/A'); ?></strong></td>
+                <td style="padding:10px 8px;"><?php echo htmlspecialchars($agent['username'] ?? ''); ?></td>
+                <td style="padding:10px 8px;"><?php echo htmlspecialchars($agent['email'] ?? ''); ?></td>
+                <td style="padding:10px 8px;"><?php echo htmlspecialchars($agent['phone'] ?? ''); ?></td>
+                <td style="padding:10px 8px;"><?php echo htmlspecialchars($agent['address'] ?? ''); ?></td>
+                <td style="padding:10px 8px;">
+                  <button onclick="viewProfile(<?php echo (int)$agent['id']; ?>, 'agent')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">View</button>
+                  <button onclick="editAccount(<?php echo (int)$agent['id']; ?>, 'agent')" class="btn-small" style="padding:10px 16px; font-size:13px; margin-right:3px;">Edit</button>
+                  <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this agent account?');">
+                    <input type="hidden" name="agent_action" value="delete">
+                    <input type="hidden" name="agent_id" value="<?php echo (int)$agent['id']; ?>">
+                    <button type="submit" class="btn-small btn-danger" style="padding:10px 16px; font-size:13px;">Delete</button>
+                  </form>
                 </td>
-
-                <td><?php echo htmlspecialchars($agent['username']); ?></td>
-                <td><?php echo htmlspecialchars($agent['email']); ?></td>
-                <td><?php echo htmlspecialchars($agent['phone']); ?></td>
-
-                <td>
-                  <?php
-                    $addr = $agent['address'] ?? '';
-                    echo htmlspecialchars(mb_strlen($addr) > 50 ? mb_substr($addr, 0, 50) . '...' : $addr);
-                  ?>
-                </td>
-
-                <td>
-                  <?php if ($agent['status'] === 'active'): ?>
-                    <span class="status-active">Active</span>
-                  <?php else: ?>
-                    <span class="status-inactive">Inactive</span>
-                  <?php endif; ?>
-                </td>
-
-                <td><?php echo date('M d, Y', strtotime($agent['created_at'])); ?></td>
-
-              <td>
-    <div class="action-buttons">
-      <button class="btn-small"
-              onclick="editAccount(<?php echo (int)$agent['id']; ?>, 'agent')">
-        Edit
-      </button>
-
-      <form method="POST" onsubmit="return confirm('Are you sure you want to delete this agent account?');">
-        <input type="hidden" name="agent_action" value="delete">
-        <input type="hidden" name="agent_id" value="<?php echo (int)$agent['id']; ?>">
-        <button type="submit" class="btn-small btn-danger">Delete</button>
-      </form>
-    </div>
-  </td>
-
               </tr>
-            <?php endwhile; ?>
+            <?php endforeach; ?>
           </tbody>
         </table>
-    <?php endif; ?>
-  </div>
+      <?php endif; ?>
+    </div>
   </div>
 
 
@@ -3050,6 +3373,15 @@
     <select id="location_id" name="location_id" style="flex:1; min-width:250px;">
       <option value="" disabled selected>Please select a location first</option>
             </select>
+            <button class="add-location-btn" onclick="openAddLocationModal()" style="background-color: #3e5f3e; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              Add Location
+            </button>
+            <button class="delete-location-btn" onclick="deleteSelectedLocation()" style="background-color: #8a2d2d; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
+              Delete Location
+            </button>
           </div>
 
           <div id="lot-message" style="margin-bottom:15px;display:none;padding:10px 18px;border-radius:6px;font-size:15px;"></div>
@@ -3063,6 +3395,7 @@
                 <th>Lot Size</th>
                 <th>Lot Price</th>
                 <th>Status</th>
+                <th>Payment</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -3078,11 +3411,20 @@
       <td><input type="text" id="lot_price"></td>
 
       <td>
-        <select id="status">
+        <select id="status" onchange="togglePaymentFieldsByStatus(this.value)">
           <option value="Available">Available</option>
           <option value="Sold">Sold</option>
           <option value="Reserved">Reserved</option>
         </select>
+      </td>
+
+      <td>
+        <select id="payment_type" onchange="toggleDownPaymentField(this.value)">
+          <option value="Not Applicable" selected>Not Applicable</option>
+          <option value="Fully Paid">Fully Paid</option>
+          <option value="Down Payment">Down Payment</option>
+        </select>
+        <input type="number" id="payment_amount" step="0.01" min="0" placeholder="Down payment amount" style="display:none; margin-top:6px; width:100%;">
       </td>
 
       <td>
@@ -3127,6 +3469,261 @@
             <input type="hidden" name="lot_id" id="edit_lot_id">
             <div id="editLotFields"></div>
             <button type="submit" class="btn-primary" style="margin-top: 18px;">Save Changes</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Blueprint Pin Modal -->
+      <div id="pinModal" style="
+        display: none;
+        position: fixed;
+        z-index: 3000;
+        left: 0; top: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.7);
+        justify-content: center; align-items: center;
+        overflow: auto;
+        font-family: 'Segoe UI', sans-serif;
+      ">
+        <div style="
+          background: #fff;
+          border-radius: 8px;
+          box-shadow: 0 5px 25px rgba(0,0,0,0.3);
+          width: 95%; max-width: 1000px; position: relative;
+          max-height: 90vh;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+        ">
+          <!-- Header -->
+          <div style="
+            padding: 20px 24px;
+            background: #2d482d;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          ">
+            <h3 style="margin: 0; font-size: 18px;">
+              Mapping: <span id="pinModalLotInfo"></span>
+            </h3>
+            <span onclick="closePinModal()" style="
+              font-size: 28px;
+              cursor: pointer;
+              color: white;
+              font-weight: bold;
+            ">&times;</span>
+          </div>
+
+          <!-- Content -->
+          <div style="
+            padding: 20px 24px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+          ">
+            <!-- Status Selection Buttons -->
+            <div style="
+              display: flex;
+              gap: 12px;
+              justify-content: center;
+            ">
+              <button id="statusBtn_Available" type="button" onclick="selectLotStatus('Available')" style="
+                padding: 12px 24px;
+                border: 2px solid #28a745;
+                background: #28a745;
+                color: white;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.3s;
+              ">
+                Available
+              </button>
+              <button id="statusBtn_Reserved" type="button" onclick="selectLotStatus('Reserved')" style="
+                padding: 12px 24px;
+                border: 2px solid #ffc107;
+                background: white;
+                color: #ffc107;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.3s;
+              ">
+                Reserved
+              </button>
+              <button id="statusBtn_Sold" type="button" onclick="selectLotStatus('Sold')" style="
+                padding: 12px 24px;
+                border: 2px solid #dc3545;
+                background: white;
+                color: #dc3545;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.3s;
+              ">
+                Sold
+              </button>
+            </div>
+
+            <div style="
+              background: #333;
+              color: white;
+              padding: 10px 14px;
+              border-radius: 4px;
+              font-size: 13px;
+            ">
+              Click each corner/edge point of the lot to trace its real shape. Click near the first point (or double-click) to close the polygon.
+            </div>
+
+            <!-- Blueprint Container -->
+            <div style="
+              position: relative;
+              background: #f5f5f5;
+              border: 1px solid #ddd;
+              border-radius: 4px;
+              overflow: hidden;
+              flex: 1;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 400px;
+            ">
+              <img id="blueprintImage" src="" alt="Blueprint" style="
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
+                cursor: crosshair;
+              ">
+              <canvas id="blueprintCanvas" style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                cursor: crosshair;
+                display: none;
+              "></canvas>
+            </div>
+          </div>
+
+          <!-- Footer with Buttons -->
+          <div style="
+            padding: 20px 24px;
+            background: #f9f9f9;
+            border-top: 1px solid #eee;
+            border-radius: 0 0 8px 8px;
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+          ">
+            <button onclick="toggleDrawingMode()" id="toggleDrawBtn" style="
+              background: #28a745;
+              color: white;
+              padding: 10px 20px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+            ">Start Drawing Polygon</button>
+            <button onclick="closePinModal()" style="
+              background: #6c757d;
+              color: white;
+              padding: 10px 20px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+            ">Cancel</button>
+            <button onclick="savePinLocation()" style="
+              background: #2d482d;
+              color: white;
+              padding: 10px 20px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+            ">Save Pin Location</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add Location Modal -->
+      <div id="addLocationModal" style="
+        display: none;
+        position: fixed;
+        z-index: 2200;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.6);
+        justify-content: center;
+        align-items: center;
+        overflow: auto;
+      " class="location-modal">
+        <div style="
+          background-color: white;
+          padding: 25px;
+          border-radius: 10px;
+          box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+          max-width: 800px;
+          width: 90%;
+          max-height: 90vh;
+          overflow-y: auto;
+        ">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="margin: 0; color: #2d482d; font-size: 24px;">Add New Location</h3>
+            <button onclick="closeAddLocationModal()" style="background: none; border: none; font-size: 32px; color: #aaa; cursor: pointer; padding: 0; width: 32px; height: 32px; line-height: 1; min-width: unset;">&times;</button>
+          </div>
+
+          <div style="background-color: #e8f5e9; color: #2e7d32; padding: 12px 15px; border-radius: 5px; margin-bottom: 15px; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+              <circle cx="12" cy="10" r="3"></circle>
+            </svg>
+            Click anywhere on the map to pin the location
+          </div>
+
+          <div id="location-map" style="height: 400px; width: 100%; margin: 20px 0; border-radius: 8px; border: 1px solid #ddd;"></div>
+
+          <form id="locationForm" onsubmit="saveNewLocation(event)">
+            <div style="margin-bottom: 15px;">
+              <label for="new_location_name" style="display: block; margin-bottom: 6px; color: #333; font-weight: 500; font-size: 14px;">Location Name:</label>
+              <input type="text" id="new_location_name" name="location_name" required style="width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 6px; color: #333; font-weight: 500; font-size: 14px;">Latitude:</label>
+              <input type="text" id="new_latitude_display" readonly style="width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; background-color: #f5f5f5; color: #666;">
+              <input type="hidden" id="new_latitude" name="latitude">
+            </div>
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 6px; color: #333; font-weight: 500; font-size: 14px;">Longitude:</label>
+              <input type="text" id="new_longitude_display" readonly style="width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; background-color: #f5f5f5; color: #666;">
+              <input type="hidden" id="new_longitude" name="longitude">
+            </div>
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 6px; color: #333; font-weight: 500; font-size: 14px;">Blueprint Image (Optional):</label>
+              <div id="blueprint-upload-area" style="border: 2px dashed #b0c4a8; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;" onclick="document.getElementById('new_blueprint_file').click()">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6b8f5e" stroke-width="1.5" style="margin-bottom: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div id="blueprint-upload-text" style="color: #666; font-size: 13px;">Click to upload a blueprint image<br><span style="font-size: 12px; color: #999;">JPG, PNG, or GIF</span></div>
+                <input type="file" id="new_blueprint_file" name="blueprint" accept="image/jpeg,image/png,image/gif" style="display:none;" onchange="previewBlueprintFile(this)">
+              </div>
+              <div id="blueprint-preview-container" style="display:none; margin-top: 10px; position: relative;">
+                <img id="blueprint-preview-img" style="max-width: 100%; max-height: 200px; border-radius: 6px; border: 1px solid #ddd;" />
+                <button type="button" onclick="removeBlueprintPreview()" style="position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;">&times;</button>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+              <button type="button" onclick="closeAddLocationModal()" style="background-color: #999; color: white; padding: 10px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">Cancel</button>
+              <button type="submit" style="background-color: #3e5f3e; color: white; padding: 10px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">Save Location</button>
+            </div>
           </form>
         </div>
       </div>
@@ -3511,6 +4108,151 @@
         </div>
       </div>
 
+      <!-- ============ PAYMENTS SECTION ============ -->
+      <div id="section-payments" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Payments</h2>
+            <small>View all payment transactions and update their status</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <?php if (empty($allPayments)): ?>
+            <div style="background:#fafafa; padding:40px; text-align:center; border-radius:8px; font-size:18px; color:#666;">
+              <p>No payment records found.</p>
+            </div>
+          <?php else: ?>
+            <div style="overflow-x:auto;">
+              <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                  <tr style="background:#14532d; color:#fff;">
+                    <th style="padding:12px 10px;">Date</th>
+                    <th style="padding:12px 10px;">Payer</th>
+                    <th style="padding:12px 10px;">Lot</th>
+                    <th style="padding:12px 10px;">Location</th>
+                    <th style="padding:12px 10px;">Amount</th>
+                    <th style="padding:12px 10px;">Method</th>
+                    <th style="padding:12px 10px;">Reference</th>
+                    <th style="padding:12px 10px;">Remarks</th>
+                    <th style="padding:12px 10px;">Status</th>
+                    <th style="padding:12px 10px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($allPayments as $pay): ?>
+                    <tr style="border-bottom:1px solid #eee; background:#fff;" id="pay-row-<?php echo (int)$pay['id']; ?>">
+                      <td style="padding:10px 8px; white-space:nowrap;"><?php echo date('M d, Y', strtotime($pay['payment_date'])); ?></td>
+                      <td style="padding:10px 8px;"><strong><?php echo htmlspecialchars(trim(($pay['u_first'] ?? '') . ' ' . ($pay['u_last'] ?? '')) ?: 'Unknown'); ?></strong></td>
+                      <td style="padding:10px 8px;">Blk <?php echo htmlspecialchars($pay['block_number'] ?? '-'); ?> Lot <?php echo htmlspecialchars($pay['lot_number'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($pay['location_name'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px; font-weight:600;">&#8369;<?php echo number_format((float)$pay['amount_paid'], 2); ?></td>
+                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($pay['payment_method'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px; font-size:12px;"><?php echo htmlspecialchars($pay['reference_no'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px; font-size:12px; max-width:150px; overflow:hidden; text-overflow:ellipsis;"><?php echo htmlspecialchars($pay['remarks'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px;" id="pay-status-<?php echo (int)$pay['id']; ?>">
+                        <?php
+                          $pst = $pay['status'] ?? 'Pending';
+                          $pstColor = $pst === 'Verified' ? 'background:#dcfce7;color:#166534;' : ($pst === 'Rejected' ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef3c7;color:#92400e;');
+                        ?>
+                        <span style="padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; <?php echo $pstColor; ?>"><?php echo htmlspecialchars($pst); ?></span>
+                      </td>
+                      <td style="padding:10px 8px; white-space:nowrap;">
+                        <?php if (($pay['status'] ?? 'Pending') === 'Pending'): ?>
+                          <button onclick="updatePaymentStatus(<?php echo (int)$pay['id']; ?>, 'Verified')" class="btn-small" style="padding:6px 12px; font-size:12px; margin-right:3px; background:#16a34a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Verify</button>
+                          <button onclick="updatePaymentStatus(<?php echo (int)$pay['id']; ?>, 'Rejected')" class="btn-small btn-danger" style="padding:6px 12px; font-size:12px; border:none; border-radius:4px; cursor:pointer;">Reject</button>
+                        <?php else: ?>
+                          <span style="color:#999; font-size:12px;">Done</span>
+                        <?php endif; ?>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <!-- ============ LOT OWNERS SECTION ============ -->
+      <div id="section-lot-owners" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Lot Owners</h2>
+            <small>View all sold/reserved lots, assign owners, and manage payment details</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <?php if (empty($lotOwners)): ?>
+            <div style="background:#fafafa; padding:40px; text-align:center; border-radius:8px; font-size:18px; color:#666;">
+              <p>No sold or reserved lots found.</p>
+            </div>
+          <?php else: ?>
+            <div style="overflow-x:auto;">
+              <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                  <tr style="background:#14532d; color:#fff;">
+                    <th style="padding:12px 10px;">Location</th>
+                    <th style="padding:12px 10px;">Lot</th>
+                    <th style="padding:12px 10px;">Price</th>
+                    <th style="padding:12px 10px;">Status</th>
+                    <th style="padding:12px 10px;">Payment Type</th>
+                    <th style="padding:12px 10px;">Down Payment</th>
+                    <th style="padding:12px 10px;">Balance Paid</th>
+                    <th style="padding:12px 10px;">Remaining</th>
+                    <th style="padding:12px 10px;">Owner</th>
+                    <th style="padding:12px 10px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($lotOwners as $lo): ?>
+                    <?php
+                      $lotPrice = (float)($lo['lot_price'] ?? 0);
+                      $balPaid  = (float)($lo['balance'] ?? 0);
+                      $remaining = max(0, $lotPrice - $balPaid);
+                      $ownerName = trim(($lo['o_first'] ?? '') . ' ' . ($lo['o_last'] ?? ''));
+                      $loStatus = $lo['status'] ?? '';
+                      $statusColor = $loStatus === 'Sold' ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef3c7;color:#92400e;';
+                    ?>
+                    <tr style="border-bottom:1px solid #eee; background:#fff;" id="lot-owner-row-<?php echo (int)$lo['id']; ?>">
+                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($lo['location_name'] ?? '-'); ?></td>
+                      <td style="padding:10px 8px;"><strong>Blk <?php echo htmlspecialchars($lo['block_number']); ?> - Lot <?php echo htmlspecialchars($lo['lot_number']); ?></strong></td>
+                      <td style="padding:10px 8px; font-weight:600;">&#8369;<?php echo number_format($lotPrice, 2); ?></td>
+                      <td style="padding:10px 8px;"><span style="padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; <?php echo $statusColor; ?>"><?php echo htmlspecialchars($loStatus); ?></span></td>
+                      <td style="padding:10px 8px;">
+                        <select id="paytype-<?php echo (int)$lo['id']; ?>" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                          <option value="Down Payment" <?php echo ($lo['payment_type'] ?? '') === 'Down Payment' ? 'selected' : ''; ?>>Down Payment</option>
+                          <option value="Fully Paid" <?php echo ($lo['payment_type'] ?? '') === 'Fully Paid' ? 'selected' : ''; ?>>Fully Paid</option>
+                          <option value="Not Applicable" <?php echo ($lo['payment_type'] ?? '') === 'Not Applicable' ? 'selected' : ''; ?>>Not Applicable</option>
+                        </select>
+                      </td>
+                      <td style="padding:10px 8px;">&#8369;<?php echo number_format((float)($lo['payment_amount'] ?? 0), 2); ?></td>
+                      <td style="padding:10px 8px; color:#16a34a; font-weight:600;">&#8369;<?php echo number_format($balPaid, 2); ?></td>
+                      <td style="padding:10px 8px; color:<?php echo $remaining > 0 ? '#dc2626' : '#16a34a'; ?>; font-weight:600;">&#8369;<?php echo number_format($remaining, 2); ?></td>
+                      <td style="padding:10px 8px;">
+                        <select id="owner-<?php echo (int)$lo['id']; ?>" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; max-width:160px;">
+                          <option value="0">-- No owner --</option>
+                          <?php foreach ($allUsers as $au): ?>
+                            <option value="<?php echo (int)$au['id']; ?>" <?php echo ((int)($lo['owner_id'] ?? 0) === (int)$au['id']) ? 'selected' : ''; ?>>
+                              <?php echo htmlspecialchars($au['first_name'] . ' ' . $au['last_name']); ?>
+                            </option>
+                          <?php endforeach; ?>
+                        </select>
+                      </td>
+                      <td style="padding:10px 8px; white-space:nowrap;">
+                        <button onclick="saveLotOwner(<?php echo (int)$lo['id']; ?>)" class="btn-small" style="padding:6px 12px; font-size:12px; margin-right:3px; background:#16a34a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Save</button>
+                        <button onclick="saveLotPaymentType(<?php echo (int)$lo['id']; ?>)" class="btn-small" style="padding:6px 12px; font-size:12px; background:#0284c7; color:#fff; border:none; border-radius:4px; cursor:pointer;">Update Payment</button>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          <?php endif; ?>
+        </div>
+      </div>
+
     </div> </body>
 
 
@@ -3532,7 +4274,9 @@
       'section-analytics',
       'section-documents',
       'section-notifications',
-      'section-audit-logs'
+      'section-audit-logs',
+      'section-payments',
+      'section-lot-owners'
     ];
     
     function showSection(targetId) {
@@ -3849,6 +4593,15 @@
     window.openEditLotModal        = openEditLotModal;
     window.closeEditLotModal       = closeEditLotModal;
     window.bulkDeleteLots          = bulkDeleteLots;
+    window.openPinModal            = openPinModal;
+    window.closePinModal           = closePinModal;
+    window.toggleDrawingMode       = toggleDrawingMode;
+    window.savePinLocation         = savePinLocation;
+    window.selectLotStatus         = selectLotStatus;
+    window.openAddLocationModal    = openAddLocationModal;
+    window.closeAddLocationModal   = closeAddLocationModal;
+    window.saveNewLocation         = saveNewLocation;
+    window.deleteSelectedLocation  = deleteSelectedLocation;
   });
 
   // ===========================
@@ -3923,9 +4676,13 @@
         tbody.innerHTML = '';
         
         if (!data.length) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No lots available.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center;">No lots available.</td></tr>';
         } else {
           data.forEach(lot => {
+            const paymentType = lot.payment_type || (lot.status === 'Available' ? 'Not Applicable' : 'Fully Paid');
+            const paymentText = paymentType === 'Down Payment'
+              ? `Down Payment (PHP ${Number(lot.payment_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+              : paymentType;
             const row = tbody.insertRow();
             row.setAttribute('data-id', lot.id);
             row.innerHTML = `
@@ -3935,9 +4692,11 @@
               <td>${lot.lot_size}</td>
               <td>${lot.lot_price}</td>
               <td>${lot.status}</td>
-              <td>
-                <button onclick='openEditLotModal(${JSON.stringify(lot)})'>Edit</button>
-                <button onclick="deleteLot(${lot.id})">Delete</button>
+              <td>${paymentText}</td>
+              <td style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button onclick='openPinModal(${lot.id}, ${JSON.stringify(lot)})' style="background: #dc3545; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Set Pin</button>
+                <button onclick='openEditLotModal(${JSON.stringify(lot)})' style="background: #3e5f3e; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Edit</button>
+                <button onclick="deleteLot(${lot.id})" style="background: #666; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
               </td>
             `;
           });
@@ -3949,8 +4708,11 @@
   }
 
   function saveLot() {
-    const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status'];
+    const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status', 'payment_type'];
     const locationId = document.getElementById('location_id').value;
+    const paymentType = document.getElementById('payment_type').value;
+    const paymentAmountInput = document.getElementById('payment_amount');
+    const paymentAmount = paymentAmountInput ? paymentAmountInput.value : '';
     
     const data = {};
     let isValid = true;
@@ -3968,10 +4730,22 @@
       return;
     }
 
+    if (paymentType === 'Down Payment') {
+      if (!paymentAmount || isNaN(paymentAmount) || Number(paymentAmount) <= 0) {
+        alert('Please enter a valid down payment amount.');
+        return;
+      }
+    }
+
     const formData = new FormData();
     formData.append('action', 'save');
     Object.keys(data).forEach(key => formData.append(key, data[key]));
     formData.append('location_id', locationId);
+    if (paymentType === 'Down Payment') {
+      formData.append('payment_amount', paymentAmount);
+    } else {
+      formData.append('payment_amount', '');
+    }
 
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(response => response.json())
@@ -3981,7 +4755,7 @@
           loadLots(locationId);
           cancelAdd();
         } else {
-          alert('Error: ' + result.error);
+          alert('Error: ' + (result.error || result.message || 'Unknown error'));
         }
       })
       .catch(error => console.error('Error:', error));
@@ -4066,7 +4840,11 @@
 
   function addNewLot() {
     const newRow = document.getElementById('new-row');
-    if (newRow) newRow.style.display = 'table-row';
+    if (newRow) {
+      newRow.style.display = 'table-row';
+      const status = document.getElementById('status');
+      togglePaymentFieldsByStatus(status ? status.value : 'Available');
+    }
   }
 
   function cancelAdd() {
@@ -4076,6 +4854,73 @@
     newRow.querySelectorAll('input').forEach(input => input.value = '');
     const status = document.getElementById('status');
     if (status) status.value = 'Available';
+    const paymentType = document.getElementById('payment_type');
+    if (paymentType) paymentType.value = 'Not Applicable';
+    togglePaymentFieldsByStatus('Available');
+  }
+
+  function togglePaymentFieldsByStatus(status) {
+    const paymentTypeSelect = document.getElementById('payment_type');
+    if (!paymentTypeSelect) return;
+
+    if (status === 'Available') {
+      paymentTypeSelect.value = 'Not Applicable';
+      paymentTypeSelect.disabled = true;
+      toggleDownPaymentField('Not Applicable');
+      return;
+    }
+
+    paymentTypeSelect.disabled = false;
+    if (paymentTypeSelect.value === 'Not Applicable') {
+      paymentTypeSelect.value = 'Fully Paid';
+    }
+    toggleDownPaymentField(paymentTypeSelect.value);
+  }
+
+  function toggleDownPaymentField(paymentType) {
+    const paymentAmountInput = document.getElementById('payment_amount');
+    if (!paymentAmountInput) return;
+
+    if (paymentType === 'Down Payment') {
+      paymentAmountInput.style.display = 'block';
+      paymentAmountInput.required = true;
+    } else {
+      paymentAmountInput.style.display = 'none';
+      paymentAmountInput.required = false;
+      paymentAmountInput.value = '';
+    }
+  }
+
+  function toggleEditDownPaymentField(paymentType) {
+    const paymentAmountInput = document.getElementById('edit_payment_amount');
+    if (!paymentAmountInput) return;
+
+    if (paymentType === 'Down Payment') {
+      paymentAmountInput.style.display = 'block';
+      paymentAmountInput.required = true;
+    } else {
+      paymentAmountInput.style.display = 'none';
+      paymentAmountInput.required = false;
+      paymentAmountInput.value = '';
+    }
+  }
+
+  function toggleEditPaymentFieldsByStatus(status) {
+    const paymentTypeSelect = document.getElementById('edit_payment_type');
+    if (!paymentTypeSelect) return;
+
+    if (status === 'Available') {
+      paymentTypeSelect.value = 'Not Applicable';
+      paymentTypeSelect.disabled = true;
+      toggleEditDownPaymentField('Not Applicable');
+      return;
+    }
+
+    paymentTypeSelect.disabled = false;
+    if (paymentTypeSelect.value === 'Not Applicable') {
+      paymentTypeSelect.value = 'Fully Paid';
+    }
+    toggleEditDownPaymentField(paymentTypeSelect.value);
   }
 
   function cancelEdit() {
@@ -4480,6 +5325,71 @@
   function closeViewClientModal() {
     const modal = document.getElementById('viewClientModal');
     if (modal) modal.style.display = 'none';
+  }
+
+  // ===========================
+  // PAYMENTS & LOT OWNERS
+  // ===========================
+  function updatePaymentStatus(payId, newStatus) {
+    if (!confirm('Set this payment to "' + newStatus + '"?')) return;
+    const formData = new FormData();
+    formData.append('action', 'update_payment_status');
+    formData.append('payment_id', payId);
+    formData.append('new_status', newStatus);
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          const colors = { Verified: 'background:#dcfce7;color:#166534;', Rejected: 'background:#fee2e2;color:#991b1b;' };
+          const cell = document.getElementById('pay-status-' + payId);
+          if (cell) cell.innerHTML = '<span style="padding:4px 10px;border-radius:12px;font-size:12px;font-weight:600;' + (colors[newStatus]||'') + '">' + newStatus + '</span>';
+          // Replace action buttons with "Done"
+          const row = document.getElementById('pay-row-' + payId);
+          if (row) { const lastTd = row.querySelector('td:last-child'); if (lastTd) lastTd.innerHTML = '<span style="color:#999;font-size:12px;">Done</span>'; }
+        } else {
+          alert('Failed: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(() => alert('Request failed'));
+  }
+
+  function saveLotOwner(lotId) {
+    const sel = document.getElementById('owner-' + lotId);
+    if (!sel) return;
+    const formData = new FormData();
+    formData.append('action', 'assign_lot_owner');
+    formData.append('lot_id', lotId);
+    formData.append('owner_id', sel.value);
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('Owner updated successfully!');
+        } else {
+          alert('Failed: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(() => alert('Request failed'));
+  }
+
+  function saveLotPaymentType(lotId) {
+    const sel = document.getElementById('paytype-' + lotId);
+    if (!sel) return;
+    const formData = new FormData();
+    formData.append('action', 'update_lot_payment');
+    formData.append('lot_id', lotId);
+    formData.append('payment_type', sel.value);
+    formData.append('payment_amount', 0);
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('Payment type updated!');
+        } else {
+          alert('Failed: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(() => alert('Request failed'));
   }
 
   // ===========================
@@ -4907,17 +5817,30 @@
       </div>
       <div class="form-group">
         <label>Status</label>
-        <select name="status" required>
+        <select name="status" id="edit_status" onchange="toggleEditPaymentFieldsByStatus(this.value)" required>
           <option value="Available" ${lot.status === 'Available' ? 'selected' : ''}>Available</option>
           <option value="Sold" ${lot.status === 'Sold' ? 'selected' : ''}>Sold</option>
           <option value="Reserved" ${lot.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
         </select>
       </div>
       <div class="form-group">
+        <label>Payment</label>
+        <select name="payment_type" id="edit_payment_type" onchange="toggleEditDownPaymentField(this.value)" required>
+          <option value="Not Applicable" ${(lot.payment_type || 'Not Applicable') === 'Not Applicable' ? 'selected' : ''}>Not Applicable</option>
+          <option value="Fully Paid" ${(lot.payment_type || 'Fully Paid') === 'Fully Paid' ? 'selected' : ''}>Fully Paid</option>
+          <option value="Down Payment" ${(lot.payment_type || 'Fully Paid') === 'Down Payment' ? 'selected' : ''}>Down Payment</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Down Payment Amount</label>
+        <input type="number" step="0.01" min="0" name="payment_amount" id="edit_payment_amount" value="${lot.payment_amount || ''}" placeholder="Enter down payment amount">
+      </div>
+      <div class="form-group">
         <label>Location ID</label>
         <input type="text" name="location_id" value="${lot.location_id || ''}" required>
       </div>
     `;
+    toggleEditPaymentFieldsByStatus(lot.status || 'Available');
     modal.style.display = 'flex';
   }
 
@@ -4954,6 +5877,556 @@
         }
       })
       .catch(() => alert('Failed to delete lots.'));
+  }
+
+  // ===========================
+  // PIN LOCATION MANAGEMENT
+  // ===========================
+  let pinModalData = {
+    lot_id: null,
+    lot: null,
+    canvas: null,
+    ctx: null,
+    isDrawingMode: false,
+    polygonPoints: [],
+    otherPins: [],
+    hoverPoint: null,
+    isPolygonClosed: false,
+    canvasOffsetX: 0,
+    canvasOffsetY: 0,
+    selectedStatus: 'Available'
+  };
+
+  function selectLotStatus(status) {
+    pinModalData.selectedStatus = status;
+    
+    // Update button styles
+    const buttons = ['Available', 'Reserved', 'Sold'];
+    buttons.forEach(btn => {
+      const buttonEl = document.getElementById(`statusBtn_${btn}`);
+      if (!buttonEl) return;
+      
+      if (btn === status) {
+        // Active state
+        buttonEl.style.background = {
+          'Available': '#28a745',
+          'Reserved': '#ffc107',
+          'Sold': '#dc3545'
+        }[btn];
+        buttonEl.style.color = btn === 'Reserved' ? '#333' : 'white';
+      } else {
+        // Inactive state
+        buttonEl.style.background = 'white';
+        buttonEl.style.color = {
+          'Available': '#28a745',
+          'Reserved': '#ffc107',
+          'Sold': '#dc3545'
+        }[btn];
+      }
+    });
+
+    if (pinModalData.canvas && pinModalData.polygonPoints.length > 0) {
+      redrawPolygon();
+    }
+  }
+
+  function openPinModal(lotId, lot) {
+    const modal = document.getElementById('pinModal');
+    if (!modal) return;
+
+    pinModalData.lot_id = lotId;
+    pinModalData.lot = lot;
+    pinModalData.polygonPoints = [];
+    pinModalData.otherPins = [];
+    pinModalData.hoverPoint = null;
+    pinModalData.isPolygonClosed = false;
+    pinModalData.isDrawingMode = false;
+    pinModalData.selectedStatus = lot.status || 'Available';
+
+    // Update header
+    const lotInfo = document.getElementById('pinModalLotInfo');
+    if (lotInfo) {
+      lotInfo.textContent = `Block ${lot.block_number} - Lot ${lot.lot_number}`;
+    }
+
+    // Set the status button to match the lot's current status
+    selectLotStatus(pinModalData.selectedStatus);
+
+    // Fetch blueprint
+    fetch(`${window.location.pathname}?fetch=blueprint&lot_id=${lotId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) {
+          alert('Failed to load blueprint');
+          return;
+        }
+
+        const imgElement = document.getElementById('blueprintImage');
+        const canvas = document.getElementById('blueprintCanvas');
+
+        if (!imgElement || !canvas) return;
+
+        // Load image
+        if (data.blueprint) {
+          imgElement.src = data.blueprint;
+          imgElement.onload = function() {
+            setupCanvas();
+
+            const allPins = Array.isArray(data.all_pins) ? data.all_pins : [];
+            const currentPin = allPins.find(p => Number(p.lot_id) === Number(lotId));
+
+            pinModalData.otherPins = allPins
+              .filter(p => Number(p.lot_id) !== Number(lotId))
+              .map(p => ({
+                lot_id: Number(p.lot_id),
+                points: Array.isArray(p.coordinates)
+                  ? p.coordinates.map(pt => ({ x: pt.x, y: pt.y }))
+                  : [],
+                status: p.pin_status || 'Available'
+              }))
+              .filter(p => p.points.length > 0);
+
+            if (currentPin && Array.isArray(currentPin.coordinates) && currentPin.coordinates.length > 0) {
+              pinModalData.polygonPoints = currentPin.coordinates.map(p => ({ x: p.x, y: p.y }));
+              pinModalData.isPolygonClosed = true;
+              pinModalData.selectedStatus = currentPin.pin_status || pinModalData.selectedStatus;
+              selectLotStatus(pinModalData.selectedStatus);
+            } else if (data.pin && data.pin.length > 0) {
+              pinModalData.polygonPoints = data.pin.map(p => ({ x: p.x, y: p.y }));
+              pinModalData.isPolygonClosed = true;
+              if (data.pin_status) {
+                pinModalData.selectedStatus = data.pin_status;
+                selectLotStatus(data.pin_status);
+              }
+            }
+
+            if (pinModalData.otherPins.length > 0 || pinModalData.polygonPoints.length > 0) {
+              canvas.style.display = 'block';
+              redrawPolygon();
+            }
+          };
+        } else {
+          alert('No blueprint found for this location');
+        }
+      })
+      .catch(err => {
+        console.error('Error loading blueprint:', err);
+        alert('Error loading blueprint');
+      });
+
+    modal.style.display = 'flex';
+  }
+
+  function setupCanvas() {
+    const img = document.getElementById('blueprintImage');
+    const canvas = document.getElementById('blueprintCanvas');
+    const container = img.parentElement;
+
+    if (!img || !canvas || !container) return;
+
+    canvas.width = img.offsetWidth;
+    canvas.height = img.offsetHeight;
+
+    pinModalData.canvas = canvas;
+    pinModalData.ctx = canvas.getContext('2d');
+    pinModalData.canvasOffsetX = container.offsetLeft;
+    pinModalData.canvasOffsetY = container.offsetTop;
+
+    // Add event listeners (reset first to avoid duplicate bindings)
+    canvas.removeEventListener('mousedown', onCanvasMouseDown);
+    canvas.removeEventListener('mousemove', onCanvasMouseMove);
+    canvas.removeEventListener('mouseup', onCanvasMouseUp);
+    canvas.removeEventListener('dblclick', onCanvasDoubleClick);
+    canvas.addEventListener('mousedown', onCanvasMouseDown);
+    canvas.addEventListener('mousemove', onCanvasMouseMove);
+    canvas.addEventListener('mouseup', onCanvasMouseUp);
+    canvas.addEventListener('dblclick', onCanvasDoubleClick);
+  }
+
+  function toggleDrawingMode() {
+    const btn = document.getElementById('toggleDrawBtn');
+    const canvas = document.getElementById('blueprintCanvas');
+
+    if (!btn || !canvas) return;
+
+    pinModalData.isDrawingMode = !pinModalData.isDrawingMode;
+
+    if (pinModalData.isDrawingMode) {
+      btn.textContent = 'Stop Drawing';
+      btn.style.background = '#dc3545';
+      canvas.style.display = 'block';
+      pinModalData.polygonPoints = [];
+      pinModalData.hoverPoint = null;
+      pinModalData.isPolygonClosed = false;
+      redrawPolygon();
+    } else {
+      btn.textContent = 'Start Drawing Polygon';
+      btn.style.background = '#28a745';
+      pinModalData.hoverPoint = null;
+      redrawPolygon();
+    }
+  }
+
+  function onCanvasMouseDown(e) {
+    if (!pinModalData.isDrawingMode || !pinModalData.canvas) return;
+
+    const rect = pinModalData.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (pinModalData.isPolygonClosed) {
+      pinModalData.polygonPoints = [];
+      pinModalData.isPolygonClosed = false;
+    }
+
+    if (pinModalData.polygonPoints.length >= 3) {
+      const first = pinModalData.polygonPoints[0];
+      const dist = Math.hypot(first.x - x, first.y - y);
+      if (dist <= 10) {
+        pinModalData.isPolygonClosed = true;
+        redrawPolygon();
+        return;
+      }
+    }
+
+    pinModalData.polygonPoints.push({ x, y });
+    redrawPolygon();
+  }
+
+  function getStatusColor(status) {
+    const colors = {
+      'Available': { stroke: '#28a745', fill: 'rgba(40, 167, 69, 0.2)' },
+      'Reserved': { stroke: '#ffc107', fill: 'rgba(255, 193, 7, 0.2)' },
+      'Sold': { stroke: '#dc3545', fill: 'rgba(220, 53, 69, 0.2)' }
+    };
+    return colors[status] || colors['Available'];
+  }
+
+  function onCanvasMouseMove(e) {
+    if (!pinModalData.isDrawingMode || !pinModalData.ctx || !pinModalData.canvas) return;
+
+    const rect = pinModalData.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    pinModalData.hoverPoint = { x, y };
+    redrawPolygon();
+  }
+
+  function onCanvasMouseUp() {}
+
+  function onCanvasDoubleClick(e) {
+    if (!pinModalData.isDrawingMode || pinModalData.polygonPoints.length < 3) return;
+    e.preventDefault();
+    pinModalData.isPolygonClosed = true;
+    redrawPolygon();
+  }
+
+  function redrawPolygon() {
+    if (!pinModalData.canvas || !pinModalData.ctx) return;
+
+    pinModalData.ctx.clearRect(0, 0, pinModalData.canvas.width, pinModalData.canvas.height);
+
+    // Draw all other saved pins on this blueprint
+    pinModalData.otherPins.forEach(pin => {
+      if (!Array.isArray(pin.points) || pin.points.length === 0) return;
+      const colors = getStatusColor(pin.status);
+
+      pinModalData.ctx.fillStyle = colors.fill;
+      pinModalData.ctx.strokeStyle = colors.stroke;
+      pinModalData.ctx.lineWidth = 2;
+
+      pinModalData.ctx.beginPath();
+      pinModalData.ctx.moveTo(pin.points[0].x, pin.points[0].y);
+      for (let i = 1; i < pin.points.length; i++) {
+        pinModalData.ctx.lineTo(pin.points[i].x, pin.points[i].y);
+      }
+      pinModalData.ctx.closePath();
+      pinModalData.ctx.fill();
+      pinModalData.ctx.stroke();
+    });
+
+    if (pinModalData.polygonPoints.length > 0) {
+      const colors = getStatusColor(pinModalData.selectedStatus);
+      pinModalData.ctx.fillStyle = colors.fill;
+      pinModalData.ctx.strokeStyle = colors.stroke;
+      pinModalData.ctx.lineWidth = 2;
+
+      pinModalData.ctx.beginPath();
+      pinModalData.ctx.moveTo(pinModalData.polygonPoints[0].x, pinModalData.polygonPoints[0].y);
+
+      for (let i = 1; i < pinModalData.polygonPoints.length; i++) {
+        pinModalData.ctx.lineTo(pinModalData.polygonPoints[i].x, pinModalData.polygonPoints[i].y);
+      }
+
+      if (pinModalData.isPolygonClosed) {
+        pinModalData.ctx.closePath();
+        pinModalData.ctx.fill();
+      }
+      pinModalData.ctx.stroke();
+
+      // Vertex markers (for precise corner placement)
+      pinModalData.polygonPoints.forEach(point => {
+        pinModalData.ctx.beginPath();
+        pinModalData.ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        pinModalData.ctx.fillStyle = '#ffffff';
+        pinModalData.ctx.fill();
+        pinModalData.ctx.strokeStyle = colors.stroke;
+        pinModalData.ctx.lineWidth = 2;
+        pinModalData.ctx.stroke();
+      });
+
+      // Preview segment from last point to cursor while drawing
+      if (pinModalData.isDrawingMode && !pinModalData.isPolygonClosed && pinModalData.hoverPoint) {
+        const lastPoint = pinModalData.polygonPoints[pinModalData.polygonPoints.length - 1];
+        pinModalData.ctx.beginPath();
+        pinModalData.ctx.moveTo(lastPoint.x, lastPoint.y);
+        pinModalData.ctx.lineTo(pinModalData.hoverPoint.x, pinModalData.hoverPoint.y);
+        pinModalData.ctx.strokeStyle = colors.stroke;
+        pinModalData.ctx.lineWidth = 1.5;
+        pinModalData.ctx.setLineDash([4, 4]);
+        pinModalData.ctx.stroke();
+        pinModalData.ctx.setLineDash([]);
+      }
+    }
+  }
+
+  function savePinLocation() {
+    if (!pinModalData.lot_id) {
+      alert('No lot selected');
+      return;
+    }
+
+    if (pinModalData.polygonPoints.length < 3) {
+      alert('Please place at least 3 points to form a lot shape.');
+      return;
+    }
+
+    if (!pinModalData.isPolygonClosed) {
+      pinModalData.isPolygonClosed = true;
+      redrawPolygon();
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'save_pin');
+    formData.append('lot_id', pinModalData.lot_id);
+    formData.append('polygon_coordinates', JSON.stringify(pinModalData.polygonPoints));
+    formData.append('pin_status', pinModalData.selectedStatus);
+
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          alert('Pin location saved successfully!');
+          closePinModal();
+          // Reload the lots to update the view
+          const locSel = document.getElementById('location_id');
+          loadLots(locSel ? locSel.value : '');
+        } else {
+          alert('Failed to save pin location: ' + (res.message || 'Unknown error'));
+        }
+      })
+      .catch(err => {
+        console.error('Error saving pin:', err);
+        alert('Error saving pin location');
+      });
+  }
+
+  function closePinModal() {
+    const modal = document.getElementById('pinModal');
+    if (modal) {
+      modal.style.display = 'none';
+      // Reset drawing mode
+      const btn = document.getElementById('toggleDrawBtn');
+      if (btn) {
+        btn.textContent = 'Start Drawing Polygon';
+        btn.style.background = '#28a745';
+      }
+      const canvas = document.getElementById('blueprintCanvas');
+      if (canvas) canvas.style.display = 'none';
+      pinModalData.isDrawingMode = false;
+      pinModalData.polygonPoints = [];
+      pinModalData.otherPins = [];
+      pinModalData.hoverPoint = null;
+      pinModalData.isPolygonClosed = false;
+    }
+  }
+
+  // ===========================
+  // ADD LOCATION FUNCTIONS
+  // ===========================
+  let locationMap = null;
+  let locationMarker = null;
+
+  function openAddLocationModal() {
+    const modal = document.getElementById('addLocationModal');
+    modal.style.display = 'flex';
+    
+    // Initialize map after modal is visible
+    setTimeout(() => {
+      if (!locationMap) {
+        locationMap = L.map('location-map').setView([6.9214, 122.0790], 13);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(locationMap);
+
+        locationMap.on('click', function(e) {
+          const { lat, lng } = e.latlng;
+          
+          // Update form fields
+          document.getElementById('new_latitude').value = lat;
+          document.getElementById('new_longitude').value = lng;
+          document.getElementById('new_latitude_display').value = lat.toFixed(6);
+          document.getElementById('new_longitude_display').value = lng.toFixed(6);
+
+          // Remove previous marker if exists
+          if (locationMarker) {
+            locationMap.removeLayer(locationMarker);
+          }
+
+          // Add new marker
+          locationMarker = L.marker([lat, lng], {
+            icon: L.icon({
+              iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+              shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+              iconSize: [25, 41],
+              iconAnchor: [12, 41],
+              popupAnchor: [1, -34],
+              shadowSize: [41, 41]
+            })
+          }).addTo(locationMap);
+
+          // Reverse geocoding
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`)
+            .then(response => response.json())
+            .then(data => {
+              const name = data.display_name || 'Unknown location';
+              document.getElementById('new_location_name').value = name;
+            })
+            .catch(() => {
+              document.getElementById('new_location_name').value = 'Unknown';
+            });
+        });
+      } else {
+        locationMap.invalidateSize();
+      }
+    }, 100);
+  }
+
+  function closeAddLocationModal() {
+    const modal = document.getElementById('addLocationModal');
+    modal.style.display = 'none';
+    
+    // Clear form
+    document.getElementById('locationForm').reset();
+    document.getElementById('new_latitude_display').value = '';
+    document.getElementById('new_longitude_display').value = '';
+    removeBlueprintPreview();
+    
+    // Remove marker
+    if (locationMarker && locationMap) {
+      locationMap.removeLayer(locationMarker);
+      locationMarker = null;
+    }
+  }
+
+  function previewBlueprintFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      document.getElementById('blueprint-preview-img').src = e.target.result;
+      document.getElementById('blueprint-preview-container').style.display = 'block';
+      document.getElementById('blueprint-upload-area').style.borderColor = '#3e5f3e';
+      document.getElementById('blueprint-upload-text').innerHTML = '<strong style="color:#3e5f3e;">' + file.name + '</strong>';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function removeBlueprintPreview() {
+    document.getElementById('new_blueprint_file').value = '';
+    document.getElementById('blueprint-preview-container').style.display = 'none';
+    document.getElementById('blueprint-upload-area').style.borderColor = '#b0c4a8';
+    document.getElementById('blueprint-upload-text').innerHTML = 'Click to upload a blueprint image<br><span style="font-size:12px;color:#999;">JPG, PNG, or GIF</span>';
+  }
+
+  function saveNewLocation(event) {
+    event.preventDefault();
+    
+    const locationName = document.getElementById('new_location_name').value;
+    const latitude = document.getElementById('new_latitude').value;
+    const longitude = document.getElementById('new_longitude').value;
+
+    if (!latitude || !longitude) {
+      alert('Please click on the map to select a location.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'save_location');
+    formData.append('location_name', locationName);
+    formData.append('latitude', latitude);
+    formData.append('longitude', longitude);
+
+    const blueprintFile = document.getElementById('new_blueprint_file').files[0];
+    if (blueprintFile) {
+      formData.append('blueprint', blueprintFile);
+    }
+
+    fetch(window.location.pathname, {
+      method: 'POST',
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        alert('Location added successfully!');
+        closeAddLocationModal();
+        loadLocations(); // Reload the locations dropdown
+      } else {
+        alert('Failed to save location: ' + (data.error || data.message || 'Unknown error'));
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      alert('An error occurred while saving the location.');
+    });
+  }
+
+  function deleteSelectedLocation() {
+    const locationSelect = document.getElementById('location_id');
+    if (!locationSelect || !locationSelect.value) {
+      alert('Please select a location to delete.');
+      return;
+    }
+
+    const selectedText = locationSelect.options[locationSelect.selectedIndex]?.text || 'this location';
+    const confirmDelete = confirm(`Delete location "${selectedText}"? This cannot be undone.`);
+    if (!confirmDelete) return;
+
+    const formData = new FormData();
+    formData.append('action', 'delete_location');
+    formData.append('location_id', locationSelect.value);
+
+    fetch(window.location.pathname, {
+      method: 'POST',
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        alert('Location deleted successfully!');
+        loadLocations();
+        loadLots('');
+      } else {
+        alert('Failed to delete location: ' + (data.error || data.message || 'Unknown error'));
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      alert('An error occurred while deleting the location.');
+    });
   }
 
   function exportAnalytics() {

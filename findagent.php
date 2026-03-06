@@ -81,7 +81,7 @@ $clng      = isset($_GET['clng']) && $_GET['clng']!=='' ? (float)$_GET['clng'] :
 /* ============================================================
    Schema capability checks (lat/lng, is_available)
 ============================================================ */
-$hasGeo = $hasAvail = false;
+$hasGeo = $hasAvail = $hasAvailability = false;
 
 // Check for lat/lng
 $chkGeo = $conn->query("
@@ -105,6 +105,18 @@ $chkAvail = $conn->query("
 if ($chkAvail) {
   $row = $chkAvail->fetch_assoc();
   $hasAvail = ((int)$row['c'] >= 1);
+}
+
+// Check for availability
+$chkAvailability = $conn->query("
+  SELECT COUNT(*) AS c
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='agent_accounts'
+    AND COLUMN_NAME = 'availability'
+");
+if ($chkAvailability) {
+  $row = $chkAvailability->fetch_assoc();
+  $hasAvailability = ((int)$row['c'] >= 1);
 }
 
 /* ============================================================
@@ -148,7 +160,9 @@ $sql = "
     aa.experience,
     aa.description
 ";
-if ($hasAvail) {
+if ($hasAvailability) {
+  $sql .= ", aa.availability AS is_available";
+} elseif ($hasAvail) {
   $sql .= ", aa.is_available";
 } else {
   $sql .= ", NULL AS is_available";
@@ -195,7 +209,9 @@ if ($city !== '') {
 
 /* Available only */
 if ($available) {
-  if ($hasAvail) {
+  if ($hasAvailability) {
+    $sql .= " AND aa.availability = 1";
+  } elseif ($hasAvail) {
     $sql .= " AND aa.is_available = 1";
   } else {
     $sql .= " AND aa.description LIKE '%available%'";
@@ -524,7 +540,7 @@ select, .chk {
     <span class="company-name">El Nuevo Puerta Real Estate</span>
   </div>
   <ul class="nav-links">
-    <li><a href="index.html">Home</a></li>
+    <li><a href="index.php">Home</a></li>
     <li><a href="userlot.php">View Lots</a></li>
     <li class="active"><a href="findagent.php">Find Agent</a></li>
     <li><a href="about.html">About</a></li>

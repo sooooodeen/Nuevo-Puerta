@@ -103,7 +103,210 @@ if (isset($_GET['action'])) {
         $stmt->close();
         exit;
     }
+
+    // Send message to agent
+    if ($action === 'send_agent_message') {
+        try {
+            $raw = file_get_contents('php://input');
+            $data = json_decode($raw, true);
+
+            $agent_id = (int)($data['agent_id'] ?? 0);
+            $message  = trim((string)($data['message'] ?? ''));
+
+            if ($agent_id <= 0 || $message === '') {
+                echo json_encode(['success' => false, 'message' => 'Agent and message are required.']);
+                exit;
+            }
+
+            // Ensure messages table exists (compatible with agentnotification.php)
+            $conn->query("CREATE TABLE IF NOT EXISTS messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                agent_id INT NOT NULL,
+                name VARCHAR(100) NULL,
+                phone VARCHAR(20) NULL,
+                email VARCHAR(150) NULL,
+                message TEXT NULL,
+                is_read TINYINT(1) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_messages_agent (agent_id, is_read, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Add missing columns if they don't exist
+            if (!hasColumn($conn, 'messages', 'is_read')) {
+                $conn->query("ALTER TABLE messages ADD COLUMN is_read TINYINT(1) DEFAULT 0");
+            }
+            if (!hasColumn($conn, 'messages', 'created_at')) {
+                $conn->query("ALTER TABLE messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+            }
+
+            // Get sender details
+            $senderName  = 'Client';
+            $senderPhone = '';
+            $senderEmail = '';
+
+            if (hasTable($conn, 'user_accounts')) {
+                $cols = ['first_name', 'last_name', 'email'];
+                if (hasColumn($conn, 'user_accounts', 'mobile_number')) {
+                    $cols[] = 'mobile_number';
+                } elseif (hasColumn($conn, 'user_accounts', 'mobile')) {
+                    $cols[] = 'mobile';
+                }
+
+                $colList = implode(', ', $cols);
+                $stmtUser = $conn->prepare("SELECT $colList FROM user_accounts WHERE id = ? LIMIT 1");
+                if ($stmtUser) {
+                    $stmtUser->bind_param('i', $uid);
+                    $stmtUser->execute();
+                    $row = $stmtUser->get_result()->fetch_assoc();
+                    $stmtUser->close();
+
+                    if ($row) {
+                        $senderName = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+                        if ($senderName === '') $senderName = 'Client';
+                        $senderEmail = (string)($row['email'] ?? '');
+                        $senderPhone = (string)($row['mobile_number'] ?? ($row['mobile'] ?? ''));
+                    }
+                }
+            }
+
+            // Build INSERT based on actual columns
+            $insertCols = ['agent_id', 'name', 'phone', 'email', 'message'];
+            $insertVals = ['?', '?', '?', '?', '?'];
+            $bindTypes  = 'issss';
+            $bindParams = [&$agent_id, &$senderName, &$senderPhone, &$senderEmail, &$message];
+
+            if (hasColumn($conn, 'messages', 'is_read')) {
+                $insertCols[] = 'is_read';
+                $insertVals[] = '0';
+            }
+            if (hasColumn($conn, 'messages', 'created_at')) {
+                $insertCols[] = 'created_at';
+                $insertVals[] = 'NOW()';
+            }
+
+            $sql = "INSERT INTO messages (" . implode(', ', $insertCols) . ") VALUES (" . implode(', ', $insertVals) . ")";
+            $stmtIns = $conn->prepare($sql);
+            if (!$stmtIns) {
+                echo json_encode(['success' => false, 'message' => 'Database error: ' . $conn->error]);
+                exit;
+            }
+            $stmtIns->bind_param($bindTypes, $agent_id, $senderName, $senderPhone, $senderEmail, $message);
+            $ok = $stmtIns->execute();
+            $stmtIns->close();
+
+            if ($ok) {
+                echo json_encode(['success' => true, 'message' => 'Message sent to agent.']);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Failed to send message.']);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
     exit;
+}
+
+/* ---------------- PROFILE UPDATE ---------------- */
+$profile_update_success = '';
+$profile_update_error = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['profile_action']) && $_POST['profile_action'] === 'update_profile') {
+    $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+        || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false);
+    $uid = (int)($_SESSION['user_id'] ?? 0);
+    if (!$uid) {
+        $profile_update_error = 'Not authenticated.';
+    } elseif (!hasTable($conn, 'user_accounts')) {
+        $profile_update_error = 'User table not available.';
+    } else {
+        $first_name = trim((string)($_POST['first_name'] ?? ''));
+        $middle_name = trim((string)($_POST['middle_name'] ?? ''));
+        $last_name = trim((string)($_POST['last_name'] ?? ''));
+        $username_in = trim((string)($_POST['username'] ?? ''));
+        $email = trim((string)($_POST['email'] ?? ''));
+        $mobile = trim((string)($_POST['mobile'] ?? ''));
+        $address = trim((string)($_POST['address'] ?? ''));
+
+        if ($first_name === '' || $last_name === '' || $email === '') {
+            $profile_update_error = 'First name, last name, and email are required.';
+        } else {
+            $fields = [];
+            $types = '';
+            $values = [];
+
+            if (hasColumn($conn, 'user_accounts', 'first_name')) {
+                $fields[] = 'first_name=?';
+                $types .= 's';
+                $values[] = $first_name;
+            }
+            if (hasColumn($conn, 'user_accounts', 'middle_name')) {
+                $fields[] = 'middle_name=?';
+                $types .= 's';
+                $values[] = $middle_name;
+            }
+            if (hasColumn($conn, 'user_accounts', 'last_name')) {
+                $fields[] = 'last_name=?';
+                $types .= 's';
+                $values[] = $last_name;
+            }
+            if (hasColumn($conn, 'user_accounts', 'username')) {
+                $fields[] = 'username=?';
+                $types .= 's';
+                $values[] = $username_in;
+            }
+            if (hasColumn($conn, 'user_accounts', 'email')) {
+                $fields[] = 'email=?';
+                $types .= 's';
+                $values[] = $email;
+            }
+
+            if (hasColumn($conn, 'user_accounts', 'mobile_number')) {
+                $fields[] = 'mobile_number=?';
+                $types .= 's';
+                $values[] = $mobile;
+            } elseif (hasColumn($conn, 'user_accounts', 'mobile')) {
+                $fields[] = 'mobile=?';
+                $types .= 's';
+                $values[] = $mobile;
+            }
+
+            if (hasColumn($conn, 'user_accounts', 'address')) {
+                $fields[] = 'address=?';
+                $types .= 's';
+                $values[] = $address;
+            }
+
+            if (empty($fields)) {
+                $profile_update_error = 'No updatable fields found.';
+            } else {
+                $sql = 'UPDATE user_accounts SET ' . implode(', ', $fields) . ' WHERE id=?';
+                $stmt = prepOrDie($conn, $sql);
+                $types .= 'i';
+                $values[] = $uid;
+                $stmt->bind_param($types, ...$values);
+                $ok = $stmt->execute();
+                $stmt->close();
+
+                if ($ok) {
+                    $profile_update_success = 'Profile updated successfully.';
+                } else {
+                    $profile_update_error = 'Failed to update profile.';
+                }
+            }
+        }
+    }
+
+    if ($isAjax) {
+        header('Content-Type: application/json; charset=utf-8');
+        if ($profile_update_error !== '') {
+            echo json_encode(['success' => false, 'message' => $profile_update_error]);
+        } else {
+            echo json_encode(['success' => true, 'message' => $profile_update_success ?: 'Profile updated successfully.']);
+        }
+        exit;
+    }
 }
 
 /* ---------------- 1. FETCH USER DATA (FIXED LOGIN CRASH) ---------------- */
@@ -232,15 +435,186 @@ if (!empty($listings) && hasTable($conn,'payments') && hasColumn($conn,'payments
     }
 }
 
-/* ---------------- 5. FETCH ASSIGNED AGENT ---------------- */
+/* ---------------- 5. DASHBOARD ADD-ONS: AGENT MESSAGING + DOC PROGRESS + PAYMENT DEADLINE ---------------- */
+$userAgents = [];
+
+if (hasTable($conn, 'agent_accounts')) {
+    // Agents linked to user's lots
+    if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'owner_id') && hasColumn($conn, 'lots', 'agent_id')) {
+        $sql = "SELECT DISTINCT a.id, a.first_name, a.last_name, a.email
+                FROM lots l
+                INNER JOIN agent_accounts a ON a.id = l.agent_id
+                WHERE l.owner_id = ?";
+        $stmt = prepOrDie($conn, $sql);
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $userAgents[(int)$row['id']] = $row;
+            }
+        }
+        $stmt->close();
+    }
+
+    // Agents linked to user's viewings
+    if (hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'agent_id') && hasColumn($conn, 'viewings', 'client_email')) {
+        $sql = "SELECT DISTINCT a.id, a.first_name, a.last_name, a.email
+                FROM viewings v
+                INNER JOIN agent_accounts a ON a.id = v.agent_id
+                WHERE v.client_email = ?";
+        $stmt = prepOrDie($conn, $sql);
+        $stmt->bind_param('s', $user_email);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $userAgents[(int)$row['id']] = $row;
+            }
+        }
+        $stmt->close();
+    }
+}
+
+$documentStats = [
+    'total' => 0,
+    'pending' => 0,
+    'approved' => 0,
+    'rejected' => 0,
+    'progress_percent' => 0
+];
+
+if (hasTable($conn, 'user_documents') && hasColumn($conn, 'user_documents', 'user_id')) {
+    if (hasColumn($conn, 'user_documents', 'status')) {
+        $stmt = prepOrDie($conn, "SELECT status, COUNT(*) AS total FROM user_documents WHERE user_id = ? GROUP BY status");
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $status = strtolower(trim((string)($row['status'] ?? 'pending')));
+                $count = (int)($row['total'] ?? 0);
+                $documentStats['total'] += $count;
+
+                if (in_array($status, ['approved', 'accepted', 'verified'], true)) {
+                    $documentStats['approved'] += $count;
+                } elseif (in_array($status, ['rejected', 'declined', 'denied'], true)) {
+                    $documentStats['rejected'] += $count;
+                } else {
+                    $documentStats['pending'] += $count;
+                }
+            }
+        }
+        $stmt->close();
+    } else {
+        $stmt = prepOrDie($conn, "SELECT COUNT(*) AS total FROM user_documents WHERE user_id = ?");
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $documentStats['total'] = (int)($row['total'] ?? 0);
+        $documentStats['pending'] = $documentStats['total'];
+        $stmt->close();
+    }
+
+    if ($documentStats['total'] > 0) {
+        $documentStats['progress_percent'] = (int)round(($documentStats['approved'] / $documentStats['total']) * 100);
+    }
+}
+
+$totalAmountPaid = 0.0;
+if (hasTable($conn, 'payments') && hasColumn($conn, 'payments', 'user_id') && hasColumn($conn, 'payments', 'amount_paid')) {
+    if (hasColumn($conn, 'payments', 'status')) {
+        $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid
+                                 FROM payments
+                                 WHERE user_id = ? AND LOWER(status) IN ('paid', 'approved', 'completed')");
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $totalAmountPaid = (float)($row['total_paid'] ?? 0);
+        $stmt->close();
+
+        // Fallback in case status values are not normalized yet
+        if ($totalAmountPaid <= 0) {
+            $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM payments WHERE user_id = ?");
+            $stmt->bind_param('i', $user_id);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $totalAmountPaid = (float)($row['total_paid'] ?? 0);
+            $stmt->close();
+        }
+    } else {
+        $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM payments WHERE user_id = ?");
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $totalAmountPaid = (float)($row['total_paid'] ?? 0);
+        $stmt->close();
+    }
+}
+
+$paymentReminder = [
+    'text' => 'No payment deadline set.',
+    'date' => null,
+    'days_left' => null,
+    'overdue' => false
+];
+
+if (hasTable($conn, 'payments') && hasColumn($conn, 'payments', 'user_id')) {
+    $deadlineColumn = null;
+    foreach (['due_date', 'deadline', 'next_due_date'] as $col) {
+        if (hasColumn($conn, 'payments', $col)) {
+            $deadlineColumn = $col;
+            break;
+        }
+    }
+
+    if ($deadlineColumn !== null) {
+        $statusFilter = '';
+        if (hasColumn($conn, 'payments', 'status')) {
+            $statusFilter = " AND LOWER(status) NOT IN ('paid', 'approved', 'completed')";
+        }
+
+        $sql = "SELECT $deadlineColumn AS due_at
+                FROM payments
+                WHERE user_id = ? AND $deadlineColumn IS NOT NULL $statusFilter
+                ORDER BY $deadlineColumn ASC
+                LIMIT 1";
+        $stmt = prepOrDie($conn, $sql);
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!empty($row['due_at'])) {
+            $dueDate = new DateTime($row['due_at']);
+            $today = new DateTime('today');
+            $daysLeft = (int)$today->diff($dueDate)->format('%r%a');
+
+            $paymentReminder['date'] = $dueDate->format('M d, Y');
+            $paymentReminder['days_left'] = $daysLeft;
+            $paymentReminder['overdue'] = $daysLeft < 0;
+
+            if ($daysLeft < 0) {
+                $paymentReminder['text'] = 'Overdue by ' . abs($daysLeft) . ' day(s)';
+            } elseif ($daysLeft === 0) {
+                $paymentReminder['text'] = 'Due today';
+            } else {
+                $paymentReminder['text'] = 'Due in ' . $daysLeft . ' day(s)';
+            }
+        }
+    }
+}
+
+/* ---------------- 6. FETCH ASSIGNED AGENT ---------------- */
 $agent = null;
-// Try to get agent from the most recent viewing
-if (!empty($upcomingViewings) && !empty($upcomingViewings[0]['first_name'])) {
+if (!empty($userAgents)) {
+    $agentRow = reset($userAgents);
     $agent = [
-        'first_name' => $upcomingViewings[0]['first_name'],
-        'last_name' => $upcomingViewings[0]['last_name'],
-        'email' => $upcomingViewings[0]['agent_email'] ?? 'N/A',
-        'photo_path' => 'assets/Default_photo.jpg' // Default
+        'id' => (int)($agentRow['id'] ?? 0),
+        'first_name' => $agentRow['first_name'] ?? '',
+        'last_name' => $agentRow['last_name'] ?? '',
+        'email' => $agentRow['email'] ?? 'N/A',
+        'photo_path' => 'assets/Default_photo.jpg'
     ];
 }
 
@@ -264,25 +638,31 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
 .dashboard-wrapper { display:flex; min-height:100vh; }
 
 /* --- Sidebar --- */
-.sidebar { width:280px; background:var(--green); color:var(--white); padding:30px 0; position:fixed; top:0; bottom:0; overflow-y:auto; transition:0.3s; z-index:1000; }
+.sidebar { width:280px; background:var(--green); color:var(--white); padding:30px 0; position:fixed; top:0; bottom:0; overflow-y:auto; transition:0.3s; z-index:1000; display:flex; flex-direction:column; align-items:center; }
 
 /* Hide native scrollbar in the sidebar (remove scroll line) */
 .sidebar { scrollbar-width: none; -ms-overflow-style: none; }
 .sidebar::-webkit-scrollbar { width: 0; height: 0; }
-.sidebar-logo { text-align:center; margin-bottom:30px; padding:0 20px; }
-.sidebar-logo img { width:70px; height:70px; border-radius:50%; background:rgba(255,255,255,0.1); padding:5px; margin-bottom:10px; }
-.sidebar-logo h2 { margin:0; font-size:20px; font-weight:700; letter-spacing:1px; color: var(--white); }
-.sidebar-logo span { font-size:12px; opacity:0.8; letter-spacing:2px; text-transform:uppercase; }
+.sidebar-logo { display:flex; align-items:center; gap:12px; margin-bottom:24px; padding:0 20px; width:100%; justify-content:center; }
+.sidebar-logo img { width:56px; height:56px; border-radius:50%; background:rgba(255,255,255,0.1); padding:5px; object-fit:contain; }
+.sidebar-brand { display:flex; flex-direction:column; line-height:1.1; }
+.sidebar-logo h2 { margin:0; font-size:18px; font-weight:700; letter-spacing:0.5px; color: var(--white); }
+.sidebar-logo span { font-size:12px; opacity:0.85; letter-spacing:1.5px; text-transform:uppercase; }
 
-.sidebar-user { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.1); margin:0 20px 30px; padding:12px; border-radius:12px; }
+.sidebar-user { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.1); margin:0 auto 24px; padding:12px; border-radius:12px; width:220px; }
 .sidebar-user img { width:40px; height:40px; border-radius:50%; object-fit:cover; background:#fff; }
 .sidebar-user div { line-height:1.2; }
 .sidebar-user h3 { margin:0; font-size:14px; font-weight:600; }
-.sidebar-user span { font-size:11px; opacity:0.8; }
+.sidebar-user span { font-size:11px; opacity:0.85; }
+
+nav {
+    width: 100%;
+}
 
 .nav-link {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 12px;
     padding: 12px 22px;
     color: rgba(255,255,255,0.9);
@@ -290,8 +670,9 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
     transition: background 0.18s, color 0.18s, transform 0.12s;
     border-left: 4px solid transparent;
     font-size: 15px;
-    margin: 6px 14px;               /* spacing between items so hover boxes don't touch */
-    border-radius: 8px;             /* rounded corners for the hover box */
+    margin: 6px 14px;
+    border-radius: 8px;
+    width: calc(100% - 28px);
 }
 
 .nav-link:hover,
@@ -301,71 +682,128 @@ body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:
     transform: translateY(-1px);
 }
 /* --- Main Content --- */
-.main-content { margin-left:280px; flex:1; padding:30px 40px; }
+.main-content { margin-left:280px; flex:1; padding:35px 45px; }
 .section { display:none; animation: fadeIn 0.4s ease; }
 .section.active { display:block; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
-h2 { font-size:28px; font-weight:700; color:var(--green); margin-bottom:5px; }
-.subtitle { color:var(--muted); margin-bottom:25px; display:block; }
+h2 { font-size:32px; font-weight:700; color:var(--green); margin-bottom:8px; letter-spacing:-0.5px; }
+.subtitle { color:var(--muted); margin-bottom:30px; display:block; font-size:15px; }
 
 /* --- Cards --- */
 .card-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:20px; margin-bottom:30px; }
-.stat-card { background:var(--white); padding:20px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.05); display:flex; align-items:center; gap:16px; border:1px solid #eee; }
-.stat-icon { width:56px; height:56px; background:var(--light-green); border-radius:10px; display:flex; align-items:center; justify-content:center; color:var(--green); font-size:24px; flex-shrink:0; }
-.stat-info h3 { margin:0; font-size:28px; font-weight:700; color:var(--text); line-height:1; }
-.stat-info span { font-size:14px; color:var(--muted); }
+.stat-card { background:var(--white); padding:22px; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.06); display:flex; align-items:center; gap:16px; border:1px solid #f0f0f0; transition:all 0.3s ease; }
+.stat-card:hover { transform:translateY(-2px); box-shadow:0 4px 16px rgba(0,0,0,0.1); }
+.stat-icon { width:56px; height:56px; background:var(--light-green); border-radius:11px; display:flex; align-items:center; justify-content:center; color:var(--green); font-size:24px; flex-shrink:0; }
+.stat-info h3 { margin:0; font-size:28px; font-weight:700; color:var(--text); line-height:1; letter-spacing:-0.5px; }
+.stat-info span { font-size:13px; color:var(--muted); margin-top:4px; display:block; }
 
 /* --- Tables & Lists --- */
-.content-box { background:var(--white); border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.05); padding:25px; border:1px solid #eee; margin-bottom:30px; }
-.box-header { font-size:18px; font-weight:700; margin-bottom:15px; color:var(--green); border-bottom:1px solid #f0f0f0; padding-bottom:15px; }
+.content-box { background:var(--white); border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); padding:28px; border:1px solid #f0f0f0; margin-bottom:30px; }
+.box-header { font-size:18px; font-weight:700; margin-bottom:22px; color:var(--green); border-bottom:2px solid #f0f0f0; padding-bottom:16px; letter-spacing:0.3px; }
 
 table { width:100%; border-collapse:collapse; min-width:600px; }
-th, td { padding:14px 15px; text-align:left; border-bottom:1px solid #f0f0f0; font-size:14px; }
-th { font-weight:600; color:var(--muted); background:#f9f9f9; text-transform:uppercase; font-size:12px; letter-spacing:0.5px; }
+th, td { padding:16px 15px; text-align:left; border-bottom:1px solid #f0f0f0; font-size:14px; }
+th { font-weight:700; color:var(--text); background:#f9fbfd; text-transform:uppercase; font-size:12px; letter-spacing:0.5px; }
 tr:last-child td { border-bottom:none; }
+tbody tr:hover { background:#f9fbfd; }
 
 .notification-list { list-style:none; padding:0; margin:0; }
-.notif-item { padding:15px; border-bottom:1px solid #f0f0f0; display:flex; align-items:start; gap:15px; }
+.notif-item { padding:18px 0; border-bottom:1px solid #f0f0f0; display:flex; align-items:flex-start; gap:16px; }
 .notif-item:last-child { border-bottom:none; }
-.notif-icon { width:36px; height:36px; background:#eef2ff; color:#4f46e5; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:14px; }
-.notif-content strong { display:block; font-size:14px; margin-bottom:2px; }
-.notif-content span { font-size:12px; color:var(--muted); }
+.notif-icon { width:42px; height:42px; background:#f0f4f8; color:var(--green); border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:18px; }
+.notif-content strong { display:block; font-size:15px; margin-bottom:4px; color:var(--text); }
+.notif-content span { font-size:13px; color:var(--muted); line-height:1.4; }
 
 /* --- Forms --- */
 .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-.form-group { margin-bottom:15px; }
-.form-group label { display:block; margin-bottom:6px; font-weight:600; font-size:13px; color:var(--text); }
-.form-control { width:100%; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px; box-sizing:border-box; transition:0.2s; }
-.form-control:focus { border-color:var(--green); outline:none; }
-.form-control[readonly] { background:#f9f9f9; color:#666; }
+.form-group { margin-bottom:18px; }
+.form-group label { display:block; margin-bottom:8px; font-weight:600; font-size:13px; color:var(--text); text-transform:capitalize; letter-spacing:0.3px; }
+.form-control { width:100%; padding:12px 14px; border:1.5px solid #e0e0e0; border-radius:9px; font-size:14px; box-sizing:border-box; transition:all 0.25s ease; background:#fafbfc; font-family:'Poppins', sans-serif; }
+.form-control:hover { border-color:#d0d0d0; background:#fff; }
+.form-control:focus { border-color:var(--green); outline:none; background:#fff; box-shadow:0 0 0 3px rgba(20, 83, 45, 0.1); }
+.form-control[readonly] { background:#f5f5f5; color:#999; cursor:not-allowed; }
 
-.btn { padding:10px 24px; border:none; border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; transition:0.2s; display:inline-block; }
-.btn-primary { background:var(--green); color:var(--white); }
-.btn-primary:hover { background:#0f4223; }
-.btn-secondary { background:#e9ecef; color:#333; }
+.flash-message {
+    opacity: 1;
+    transition: opacity 0.6s ease;
+}
 
-.badge { padding:4px 10px; border-radius:50px; font-size:11px; font-weight:700; text-transform:uppercase; }
+.flash-message.fade-out {
+    opacity: 0;
+}
+
+.btn { padding:11px 28px; border:none; border-radius:9px; font-weight:600; cursor:pointer; font-size:14px; transition:all 0.3s ease; display:inline-block; letter-spacing:0.3px; }
+.btn-primary { background:var(--green); color:var(--white); box-shadow:0 2px 8px rgba(20, 83, 45, 0.2); }
+.btn-primary:hover { background:#0f4223; transform:translateY(-2px); box-shadow:0 4px 12px rgba(20, 83, 45, 0.3); }
+.btn-primary:active { transform:translateY(0); }
+.btn-secondary { background:#f0f0f0; color:#333; border:1.5px solid #e0e0e0; }
+.btn-secondary:hover { background:#e8e8e8; border-color:#d0d0d0; }
+
+.badge { padding:6px 12px; border-radius:20px; font-size:12px; font-weight:700; text-transform:capitalize; letter-spacing:0.3px; display:inline-block; }
 .badge.scheduled { background:#e0f2fe; color:#0284c7; }
 .badge.pending { background:#fef3c7; color:#d97706; }
 .badge.paid { background:#dcfce7; color:#166534; }
 
 /* --- Agent Card --- */
-.agent-card { display:flex; align-items:center; gap:20px; background:#f9f9f9; padding:20px; border-radius:12px; border:1px solid #eee; }
-.agent-img { width:80px; height:80px; border-radius:50%; object-fit:cover; }
-.agent-details h3 { margin:0 0 5px; font-size:18px; }
-.agent-details p { margin:0; font-size:14px; color:var(--muted); }
+.agent-card { display:flex; align-items:center; gap:22px; background:linear-gradient(135deg, #f9fbfd 0%, #fff 100%); padding:24px; border-radius:12px; border:1px solid #f0f0f0; }
+.agent-img { width:80px; height:80px; border-radius:50%; object-fit:cover; border:3px solid var(--white); box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+.agent-details h3 { margin:0 0 6px; font-size:18px; font-weight:700; color:var(--text); }
+.agent-details p { margin:6px 0; font-size:14px; color:var(--muted); }
 
 /* Mobile */
 @media (max-width: 900px) {
     .sidebar { width:0; padding:0; overflow:hidden; }
-    .main-content { margin-left:0; padding:20px; }
+    .main-content { margin-left:0; padding:20px 24px; }
     .mobile-menu-btn { display:block; }
+    .form-grid { grid-template-columns:1fr !important; }
+    .card-grid { grid-template-columns:1fr; }
+    h2 { font-size:24px; }
+    .subtitle { margin-bottom:20px; }
 }
 
 /* Logout icon flip and white text for logout link */
 .logout-icon { display:inline-block; transform: scaleX(-1); -webkit-transform: scaleX(-1); }
 .logout-link { color: #ffffff !important; }
+
+/* --- Message & Document Sections --- */
+.message-section { margin-bottom:30px; }
+.message-section .form-grid { grid-template-columns:1fr 2fr; }
+
+#msg_agent_text { resize:vertical; min-height:90px; }
+
+.progress-container { margin:20px 0; }
+.progress-bar { background:#f1f5f9; border-radius:12px; height:12px; overflow:hidden; }
+.progress-fill { height:100%; background:linear-gradient(90deg, var(--green) 0%, #0f4223 100%); border-radius:12px; transition:width 0.4s ease; }
+.progress-text { margin-top:12px; font-size:14px; font-weight:600; color:var(--green); }
+
+/* --- Empty States --- */
+.empty-state { text-align:center; padding:40px 20px; color:var(--muted); }
+.empty-state p { font-size:15px; line-height:1.6; }
+
+/* --- Modal Styles --- */
+.modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:2000; display:none; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal-content { background:var(--white); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.2); width:90%; max-width:500px; overflow:hidden; animation:modalSlideIn 0.3s ease; }
+@keyframes modalSlideIn { from { transform:translateY(-30px); opacity:0; } to { transform:translateY(0); opacity:1; } }
+.modal-header { padding:24px; border-bottom:1px solid #f0f0f0; display:flex; align-items:center; justify-content:space-between; }
+.modal-header h3 { margin:0; font-size:20px; font-weight:700; color:var(--green); }
+.modal-close-btn { background:none; border:none; font-size:24px; color:var(--muted); cursor:pointer; width:32px; height:32px; display:flex; align-items:center; justify-content:center; border-radius:6px; transition:0.2s; }
+.modal-close-btn:hover { background:#f5f5f5; color:var(--text); }
+.modal-body { padding:24px; }
+.modal-body .form-group { margin-bottom:18px; }
+.modal-footer { padding:20px 24px; border-top:1px solid #f0f0f0; display:flex; gap:12px; justify-content:flex-end; }
+.modal-footer .btn { margin:0; }
+
+/* --- Payment Page Styles --- */
+.payment-info-card { background:linear-gradient(135deg, #f0fdf4 0%, #f1f5f9 100%); border:1.5px solid #bbf7d0; border-radius:12px; padding:20px; margin-bottom:30px; }
+.payment-info-card h4 { margin:0 0 8px 0; color:var(--green); font-weight:700; }
+.payment-hint { background:#f9fbfd; padding:18px; border-radius:10px; margin-bottom:20px; border-left:4px solid var(--green); }
+.payment-hint p { margin:0; color:var(--muted); font-size:13px; }
+.payment-warning { background:#fef3c7; border:1px solid #fcd34d; border-radius:9px; padding:14px; margin-bottom:20px; }
+.payment-warning p { margin:0; color:#92400e; font-size:13px; }
+.payment-status-guide { background:#f9fbfd; padding:16px; border-radius:9px; margin-bottom:18px; border-left:3px solid #0284c7; }
+.payment-status-guide p { margin:0; color:var(--muted); font-size:13px; }
 </style>
 </head>
 <body>
@@ -374,8 +812,10 @@ tr:last-child td { border-bottom:none; }
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-logo">
             <img src="assets/f.png" alt="Logo" onerror="this.src='assets/Default_photo.jpg'">
-            <h2>NUEVO PUERTA</h2>
-            <span>Real Estate</span>
+            <div class="sidebar-brand">
+                <h2>NUEVO PUERTA</h2>
+                <span>Real Estate</span>
+            </div>
         </div>
         
         <div class="sidebar-user">
@@ -390,7 +830,6 @@ tr:last-child td { border-bottom:none; }
             <a href="#dashboard" class="nav-link active" onclick="switchTab('dashboard', this)"><i class="fa fa-th-large"></i> Dashboard</a>
             <a href="#profile" class="nav-link" onclick="switchTab('profile', this)"><i class="fa fa-user"></i> My Profile</a>
             <a href="#properties" class="nav-link" onclick="switchTab('properties', this)"><i class="fa fa-building"></i> Properties</a>
-            <a href="#payments" class="nav-link" onclick="switchTab('payments', this)"><i class="fa fa-credit-card"></i> Payments</a>
             <a href="#viewings" class="nav-link" onclick="switchTab('viewings', this)"><i class="fa fa-calendar-check"></i> Viewings</a>
             <a href="#documents" class="nav-link" onclick="switchTab('documents', this)"><i class="fa fa-folder-open"></i> Documents</a>
             <a href="#notifications" class="nav-link" onclick="switchTab('notifications', this)"><i class="fa fa-bell"></i> Notifications</a>
@@ -427,6 +866,36 @@ tr:last-child td { border-bottom:none; }
                         <span>Balance Due</span>
                     </div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#dcfce7; color:#166534;"><i class="fa fa-wallet"></i></div>
+                    <div class="stat-info">
+                        <h3>₱<?php echo number_format($totalAmountPaid, 2); ?></h3>
+                        <span>Total Amount Paid</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background:#fff7ed; color:#c2410c;"><i class="fa fa-hourglass-half"></i></div>
+                    <div class="stat-info">
+                        <h3 style="font-size:20px;"><?php echo h($paymentReminder['text']); ?></h3>
+                        <span>Payment Deadline Reminder<?php echo !empty($paymentReminder['date']) ? ' - ' . h($paymentReminder['date']) : ''; ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-box">
+                <div class="box-header">Document Progress</div>
+                <div class="card-grid" style="margin-bottom: 18px;">
+                    <div class="stat-card"><div class="stat-info"><h3><?php echo (int)$documentStats['total']; ?></h3><span>Total Documents</span></div></div>
+                    <div class="stat-card"><div class="stat-info"><h3><?php echo (int)$documentStats['approved']; ?></h3><span>Approved</span></div></div>
+                    <div class="stat-card"><div class="stat-info"><h3><?php echo (int)$documentStats['pending']; ?></h3><span>Pending</span></div></div>
+                    <div class="stat-card"><div class="stat-info"><h3><?php echo (int)$documentStats['rejected']; ?></h3><span>Rejected</span></div></div>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width:<?php echo (int)$documentStats['progress_percent']; ?>%;"></div>
+                    </div>
+                    <p class="progress-text">Approval Progress: <strong><?php echo (int)$documentStats['progress_percent']; ?>%</strong></p>
+                </div>
             </div>
 
             <div class="content-box">
@@ -454,32 +923,46 @@ tr:last-child td { border-bottom:none; }
             <span class="subtitle">Manage your personal information</span>
 
             <div class="content-box">
-                <div class="form-grid">
+                <?php if (!empty($profile_update_success)): ?>
+                    <div id="profile-update-success" class="flash-message" style="background:#dcfce7; color:#166534; border:1px solid #bbf7d0; padding:10px 12px; border-radius:8px; margin-bottom:16px;">
+                        <?php echo h($profile_update_success); ?>
+                    </div>
+                <?php elseif (!empty($profile_update_error)): ?>
+                    <div style="background:#fee2e2; color:#991b1b; border:1px solid #fecaca; padding:10px 12px; border-radius:8px; margin-bottom:16px;">
+                        <?php echo h($profile_update_error); ?>
+                    </div>
+                <?php endif; ?>
+
+                <form id="profile-form" method="post" class="form-grid">
+                    <input type="hidden" name="profile_action" value="update_profile">
                     <div class="form-group">
                         <label>First Name</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['first_name']); ?>" readonly>
+                        <input type="text" name="first_name" class="form-control" value="<?php echo h($user['first_name']); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Last Name</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['last_name']); ?>" readonly>
+                        <input type="text" name="last_name" class="form-control" value="<?php echo h($user['last_name']); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Username</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['username']); ?>" readonly>
+                        <input type="text" name="username" class="form-control" value="<?php echo h($user['username']); ?>">
                     </div>
                     <div class="form-group">
                         <label>Email Address</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['email']); ?>" readonly>
+                        <input type="email" name="email" class="form-control" value="<?php echo h($user['email']); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Mobile Number</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['mobile']); ?>" readonly>
+                        <input type="text" name="mobile" class="form-control" value="<?php echo h($user['mobile']); ?>">
                     </div>
                     <div class="form-group" style="grid-column: span 2;">
                         <label>Address</label>
-                        <input type="text" class="form-control" value="<?php echo h($user['address']); ?>" readonly>
+                        <input type="text" name="address" class="form-control" value="<?php echo h($user['address']); ?>">
                     </div>
-                </div>
+                    <div class="form-group" style="grid-column: span 2; display:flex; justify-content:flex-end; gap:10px;">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -494,68 +977,21 @@ tr:last-child td { border-bottom:none; }
                     </div>
                 <?php else: ?>
                     <?php foreach($listings as $lot): ?>
-                    <div class="stat-card" style="display:block; border-left:5px solid var(--green);">
-                        <h4 style="margin:0 0 10px; color:var(--green); font-size:18px;">
+                    <div class="stat-card" style="display:block; border-left:4px solid var(--green); padding:24px; position:relative; overflow:hidden;">
+                        <div style="position:absolute; top:0; right:0; width:60px; height:60px; background:rgba(20, 83, 45, 0.05); border-radius:0 12px 0 999px;"></div>
+                        <h4 style="margin:0 0 16px; color:var(--green); font-size:18px; font-weight:700;">
                             Block <?php echo h($lot['block_number']); ?>, Lot <?php echo h($lot['lot_number']); ?>
                         </h4>
-                        <div style="font-size:14px; margin-bottom:5px;">
-                            <strong>Size:</strong> <?php echo h($lot['lot_size']); ?> sqm
+                        <div style="font-size:14px; margin-bottom:8px;">
+                            <strong style="color:var(--text);">Size:</strong> <span style="color:var(--muted);"><?php echo h($lot['lot_size']); ?> sqm</span>
                         </div>
-                        <div style="font-size:14px; margin-bottom:15px;">
-                            <strong>Price:</strong> ₱<?php echo number_format($lot['lot_price'], 2); ?>
+                        <div style="font-size:14px; margin-bottom:18px;">
+                            <strong style="color:var(--text);">Price:</strong> <span style="color:var(--green); font-weight:700;">₱<?php echo number_format($lot['lot_price'], 2); ?></span>
                         </div>
-                        <button class="btn btn-secondary" style="width:100%; font-size:12px;">View Details</button>
+                        <button class="btn btn-secondary" style="width:100%; font-size:13px;">View Details</button>
                     </div>
                     <?php endforeach; ?>
                 <?php endif; ?>
-            </div>
-        </div>
-
-        <div id="payments" class="section">
-            <h2>Payments</h2>
-            <span class="subtitle">Manage your balance and transactions</span>
-
-            <div class="content-box">
-                <div class="box-header">Make a Payment</div>
-                <form id="paymentForm">
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Select Property</label>
-                            <select id="pay_lot" class="form-control">
-                                <?php foreach($listings as $lot): ?>
-                                    <option value="<?php echo $lot['id']; ?>">Blk <?php echo $lot['block_number']; ?> - Lot <?php echo $lot['lot_number']; ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Amount (₱)</label>
-                            <input type="number" id="pay_amount" class="form-control" placeholder="0.00">
-                        </div>
-                        <div class="form-group">
-                            <label>Payment Method</label>
-                            <select id="pay_method" class="form-control">
-                                <option>Bank Deposit</option>
-                                <option>GCash</option>
-                                <option>Over the Counter</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Reference No.</label>
-                            <input type="text" id="pay_ref" class="form-control" placeholder="Optional">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Notes / Description</label>
-                        <input type="text" id="pay_desc" class="form-control" placeholder="e.g. Monthly Amortization">
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="submitPayment()">Submit Payment</button>
-                    <span id="payMsg" style="margin-left:10px; font-weight:600;"></span>
-                </form>
-            </div>
-
-            <div class="content-box">
-                <div class="box-header">Payment History</div>
-                <div id="paymentHistoryTable">Loading...</div>
             </div>
         </div>
 
@@ -592,7 +1028,22 @@ tr:last-child td { border-bottom:none; }
             <h2>Documents</h2>
             <span class="subtitle">Contracts and uploaded files</span>
             <div class="content-box">
-                <p style="text-align:center; color:var(--muted);">Document management coming soon.</p>
+                <div class="box-header">Document Progress</div>
+                <table>
+                    <thead>
+                        <tr><th>Total</th><th>Approved</th><th>Pending</th><th>Rejected</th><th>Progress</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><?php echo (int)$documentStats['total']; ?></td>
+                            <td><?php echo (int)$documentStats['approved']; ?></td>
+                            <td><?php echo (int)$documentStats['pending']; ?></td>
+                            <td><?php echo (int)$documentStats['rejected']; ?></td>
+                            <td><?php echo (int)$documentStats['progress_percent']; ?>%</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top:10px; color:var(--muted); font-size:13px;">Tip: Upload documents via your existing document upload flow. This section reflects current review statuses.</p>
             </div>
         </div>
 
@@ -629,7 +1080,7 @@ tr:last-child td { border-bottom:none; }
                         <h3><?php echo h($agent['first_name'] . ' ' . $agent['last_name']); ?></h3>
                         <p><i class="fa fa-envelope"></i> <?php echo h($agent['email']); ?></p>
                         <div style="margin-top:10px;">
-                            <button class="btn btn-primary btn-sm">Message</button>
+                            <button class="btn btn-primary btn-sm" onclick="openMessageModal(<?php echo (int)$agent['id']; ?>)">Message Agent</button>
                         </div>
                     </div>
                 </div>
@@ -640,10 +1091,38 @@ tr:last-child td { border-bottom:none; }
         </div>
 
     </main>
+
+    <!-- Message Modal -->
+    <div id="messageModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Send Message to Agent</h3>
+                <button class="modal-close-btn" onclick="closeMessageModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Agent</label>
+                    <input type="text" id="modal_agent_name" class="form-control" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Your Message</label>
+                    <textarea id="modal_message_text" class="form-control" placeholder="Type your message..."></textarea>
+                </div>
+                <div id="modal_msg_status" style="font-weight:600; margin-bottom:12px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeMessageModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="sendModalMessage()">Send Message</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
 function switchTab(id, link) {
+    // Prevent default anchor link behavior (which causes scrolling)
+    event.preventDefault();
+    
     // Hide all sections
     document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
     // Deactivate nav links
@@ -655,67 +1134,139 @@ function switchTab(id, link) {
     link.classList.add('active');
 }
 
-function submitPayment() {
-    const btn = document.querySelector('#paymentForm button');
-    const msg = document.getElementById('payMsg');
-    const amt = document.getElementById('pay_amount').value;
-    const lot = document.getElementById('pay_lot').value;
-    const method = document.getElementById('pay_method').value;
-    const desc = document.getElementById('pay_desc').value;
+function sendAgentMessage() {
+    const agentIdEl = document.getElementById('msg_agent_id');
+    const msgEl = document.getElementById('msg_agent_text');
+    const statusEl = document.getElementById('agentMsgStatus');
 
-    if(amt <= 0) { alert("Please enter a valid amount."); return; }
+    if (!agentIdEl || !msgEl || !statusEl) return;
 
-    btn.disabled = true;
-    btn.innerText = "Processing...";
+    const agent_id = parseInt(agentIdEl.value || '0', 10);
+    const message = msgEl.value.trim();
 
-    fetch('?action=pay', {
+    if (!agent_id || !message) {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Please select an agent and type your message.</span>';
+        return;
+    }
+
+    statusEl.innerHTML = '<span style="color:#0284c7;">Sending...</span>';
+
+    fetch('?action=send_agent_message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt, lot_id: lot, method: method, description: desc })
+        body: JSON.stringify({ agent_id, message })
     })
-    .then(res => res.json())
-    .then(data => {
-        btn.disabled = false;
-        btn.innerText = "Submit Payment";
-        if(data.success) {
-            msg.innerHTML = '<span style="color:green">' + data.message + '</span>';
-            document.getElementById('pay_amount').value = '';
-            loadHistory();
-        } else {
-            msg.innerHTML = '<span style="color:red">' + data.message + '</span>';
-        }
-    })
-    .catch(err => {
-        btn.disabled = false;
-        msg.innerText = "Error processing request.";
-    });
-}
-
-function loadHistory() {
-    const container = document.getElementById('paymentHistoryTable');
-    fetch('?action=history')
     .then(r => r.json())
     .then(data => {
-        if(!data.payments || data.payments.length === 0) {
-            container.innerHTML = "<p style='text-align:center; color:#888;'>No payment records found.</p>";
-            return;
+        if (data.success) {
+            statusEl.innerHTML = '<span style="color:#166534;">' + (data.message || 'Message sent.') + '</span>';
+            msgEl.value = '';
+        } else {
+            statusEl.innerHTML = '<span style="color:#dc2626;">' + (data.message || 'Failed to send message.') + '</span>';
         }
-        let html = '<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>';
-        data.payments.forEach(p => {
-            html += `<tr>
-                <td>${p.created_at}</td>
-                <td>${p.description}</td>
-                <td>₱${parseFloat(p.amount_paid).toFixed(2)}</td>
-                <td><span class="badge ${p.status === 'Paid' ? 'paid' : 'pending'}">${p.status}</span></td>
-            </tr>`;
-        });
-        html += '</tbody></table>';
-        container.innerHTML = html;
+    })
+    .catch(() => {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Request failed. Please try again.</span>';
     });
 }
 
+// Modal functions
+let currentAgentId = null;
+
+function openMessageModal(agentId) {
+    currentAgentId = agentId;
+    const modal = document.getElementById('messageModal');
+    const agentNameEl = document.getElementById('modal_agent_name');
+    
+    // Get agent name from button's context
+    const agentCard = event.target.closest('.agent-card');
+    if (agentCard) {
+        const agentName = agentCard.querySelector('.agent-details h3');
+        if (agentName) {
+            agentNameEl.value = agentName.innerText;
+        }
+    }
+    
+    // Clear previous message and status
+    document.getElementById('modal_message_text').value = '';
+    document.getElementById('modal_msg_status').innerHTML = '';
+    
+    modal.classList.add('active');
+}
+
+function closeMessageModal() {
+    const modal = document.getElementById('messageModal');
+    modal.classList.remove('active');
+    currentAgentId = null;
+}
+
+function sendModalMessage() {
+    const msgEl = document.getElementById('modal_message_text');
+    const statusEl = document.getElementById('modal_msg_status');
+
+    if (!msgEl || !statusEl) return;
+
+    const message = msgEl.value.trim();
+
+    if (!currentAgentId || !message) {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Please type a message.</span>';
+        return;
+    }
+
+    statusEl.innerHTML = '<span style="color:#0284c7;">Sending...</span>';
+
+    fetch('?action=send_agent_message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: currentAgentId, message })
+    })
+    .then(r => {
+        if (!r.ok) throw new Error('Server responded with status ' + r.status);
+        return r.text();
+    })
+    .then(text => {
+        try { return JSON.parse(text); } catch(e) { throw new Error('Invalid server response'); }
+    })
+    .then(data => {
+        if (data.success) {
+            statusEl.innerHTML = '<span style="color:#166534;">' + (data.message || 'Message sent successfully!') + '</span>';
+            msgEl.value = '';
+            setTimeout(() => closeMessageModal(), 1500);
+        } else {
+            statusEl.innerHTML = '<span style="color:#dc2626;">' + (data.message || 'Failed to send message.') + '</span>';
+        }
+    })
+    .catch((err) => {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Request failed: ' + err.message + '</span>';
+    });
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeMessageModal();
+    }
+});
+
+// Close modal on overlay click
+document.addEventListener('click', function(e) {
+    const modal = document.getElementById('messageModal');
+    if (e.target === modal) {
+        closeMessageModal();
+    }
+});
+
 // Initial Load
-loadHistory();
+
+// Auto-hide profile update success message
+document.addEventListener('DOMContentLoaded', function() {
+    const msg = document.getElementById('profile-update-success');
+    if (msg) {
+        setTimeout(function() {
+            msg.style.display = 'none';
+        }, 3000);
+    }
+});
 
 // Admin-style dynamic logout confirm modal
 function confirmLogout(e) {
@@ -773,7 +1324,7 @@ function confirmLogout(e) {
             <div class="modal-icon" aria-hidden="true"><i class="fa fa-exclamation-circle"></i></div>
             <div class="modal-body">
                 <h3 id="logoutTitle">Confirm Logout</h3>
-                <p>Are you sure you want to logout? You will need to login again to access your dashboard.</p>
+                <p>Are you sure you want to logout?</p>
             </div>
         </div>
         <div class="modal-divider" aria-hidden="true"></div>
