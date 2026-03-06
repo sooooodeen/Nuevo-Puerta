@@ -649,7 +649,7 @@ body.dark-mode .social-media p {
             <span class="company-name">El Nuevo Puerta Real Estate</span>
         </div>
         <ul class="nav-links">
-            <li class="active"><a href="index.html">Home</a></li> <li><a href="userlot.php">View Lots</a></li>
+            <li class="active"><a href="index.php">Home</a></li> <li><a href="userlot.php">View Lots</a></li>
             <li><a href="findagent.php">Find Agent</a></li>
             <li><a href="about.html">About</a></li>
             <li><a href="faqs.html">FAQs</a></li>

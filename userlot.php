@@ -13,10 +13,7 @@ if ($conn->connect_error) {
 $locations = [];
 $sql = "SELECT id, location_name, latitude, longitude FROM lot_locations";
 $result = $conn->query($sql);
-if ($result === false) {
-    die("SQL error: " . $conn->error);
-}
-if ($result->num_rows > 0) {
+if ($result && $result->num_rows > 0) {
     while ($row = $result->fetch_assoc()) {
         $locations[] = $row;
     }
@@ -24,7 +21,7 @@ if ($result->num_rows > 0) {
 
 // Fetch all lots grouped by location_id
 $all_lots = [];
-$sql = "SELECT id, block_number, lot_number, lot_size, lot_price, location_id, status AS lot_status FROM lots";
+$sql = "SELECT id, block_number, lot_number, lot_size, lot_price, location_id, status AS lot_status, coordinates FROM lots";
 $result = $conn->query($sql);
 if ($result && $result->num_rows > 0) {
     while ($row = $result->fetch_assoc()) {
@@ -79,106 +76,28 @@ $conn->close();
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Admin Lots Map</title>
+  <title>El Nuevo Puerta - View Lots</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
 /* ---------------------------------- */
-/* 1. General Styles and Font Imports */
+/* 1. General Styles */
 /* ---------------------------------- */
-body {
-    font-family: 'Poppins', sans-serif;
-    font-size: 16px; 
-    line-height: 1.6;
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    background-color: #f8f8f8;
-    color: #333;
-}
+body { font-family: 'Poppins', sans-serif; font-size: 16px; line-height: 1.6; margin: 0; padding: 0; background-color: #f8f8f8; color: #333; }
 
 /* ---------------------------------- */
 /* 2. Navigation */
 /* ---------------------------------- */
-.main-nav {
-    background: #2d4e1e;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 40px; 
-    height: 80px; 
-    box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
-    z-index: 1000;
-}
-.nav-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.nav-logo {
-    width: 52px;
-    height: 52px;
-    border-radius: 8px;
-    object-fit: contain;
-    background: transparent;
-    padding: 4px;
-    margin-right: 0;
-}
-.company-name {
-    font-size: 1.5rem; 
-    font-weight: 700;
-    letter-spacing: 0.5px;
-}
-.nav-links {
-    display: flex;
-    gap: 30px; 
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
-.nav-links a {
-    color: #fff;
-    text-decoration: none;
-    font-size: 1rem;
-    font-weight: 500;
-    padding: 8px 0;
-    transition: color 0.18s;
-    position: relative;
-}
-.nav-links a:hover {
-    color: #f4d03f;
-}
-.nav-links a::after {
-    content: '';
-    position: absolute;
-    width: 0;
-    height: 2px;
-    bottom: -5px;
-    left: 0;
-    background-color: #f4d03f;
-    transition: width 0.3s ease-out;
-}
-.nav-links a:hover::after {
-    width: 100%;
-}
-.login-btn {
-    background: #ffffff;
-    color: #2d4e1e;
-    font-weight: 600;
-    border-radius: 20px; 
-    padding: 10px 25px;
-    text-decoration: none;
-    font-size: 1rem;
-    transition: all 0.2s ease;
-    border: none;
-    box-shadow: 0 4px 12px rgba(44,62,80,0.1);
-}
-.login-btn:hover {
-    background: #f4d03f;
-    color: #2d4e1e;
-    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
-}
+.main-nav { background: #2d4e1e; color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 40px; height: 80px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); z-index: 1000; }
+.nav-left { display: flex; align-items: center; gap: 10px; }
+.nav-logo { width: 52px; height: 52px; border-radius: 8px; object-fit: contain; padding: 4px; }
+.company-name { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.5px; }
+.nav-links { display: flex; gap: 30px; list-style: none; margin: 0; padding: 0; }
+.nav-links a { color: #fff; text-decoration: none; font-size: 1rem; font-weight: 500; padding: 8px 0; position: relative; }
+.nav-links a:hover { color: #f4d03f; }
+.nav-links li.active a { color: #f4d03f; font-weight: 600; }
+.login-btn { background: #ffffff; color: #2d4e1e; font-weight: 600; border-radius: 20px; padding: 10px 25px; text-decoration: none; box-shadow: 0 4px 12px rgba(44,62,80,0.1); }
+.login-btn:hover { background: #f4d03f; color: #2d4e1e; }
 
 /* Add margin to main content so it's not hidden behind navbar */
 .adminlots-main {
@@ -417,262 +336,27 @@ body {
   background: #2d4e1e;
 }
 
-/* Request Viewing Modal Styles */
-.viewing-modal {
-  display: none;
-  position: fixed;
-  z-index: 3000;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(5px);
-}
+/* ---------------------------------- */
+/* 6. Viewing Modal & Forms */
+/* ---------------------------------- */
+.viewing-modal { display: none; position: fixed; z-index: 3000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px); }
+.viewing-modal-content { background: white; margin: 2% auto; padding: 0; border-radius: 15px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
+.viewing-modal-header { background: #2d4e1e; padding: 20px; color: white; display: flex; justify-content: space-between; align-items: center; }
+.viewing-modal-body { padding: 20px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+.form-group { display: flex; flex-direction: column; }
+.full-width { grid-column: 1 / -1; }
+.form-input { padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+.btn-submit { background: #2d4e1e; color: white; padding: 10px 20px; border-radius: 5px; border: none; cursor: pointer; }
+.btn-cancel { background: #6c757d; color: white; padding: 10px 20px; border-radius: 5px; border: none; cursor: pointer; }
 
-.viewing-modal-content {
-  background: white;
-  margin: 10px auto 0 auto;
-  padding: 0;
-  border-radius: 15px;
-  width: 90%;
-  max-width: 600px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  position: relative;
-  animation: modalSlideIn 0.3s ease;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-@keyframes modalSlideIn {
-  from { transform: translateY(-50px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-.viewing-modal-header {
-  background: linear-gradient(135deg, #2d4e1e, #3a6c28);
-  padding: 20px 30px;
-  border-radius: 15px 15px 0 0;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.viewing-modal-title {
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.viewing-close {
-  background: none;
-  border: none;
-  color: white;
-  font-size: 28px;
-  cursor: pointer;
-  padding: 0;
-  width: 35px;
-  height: 35px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: background 0.2s;
-}
-
-.viewing-close:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.viewing-modal-body {
-  padding: 30px;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-}
-
-.form-group.full-width {
-  grid-column: 1 / -1;
-}
-
-.form-label {
-  font-weight: 600;
-  color: #2d4e1e;
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-
-.form-input {
-  padding: 12px 15px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  background: #fafafa;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: #2d4e1e;
-  box-shadow: 0 0 0 3px rgba(45, 78, 30, 0.1);
-  background: white;
-}
-
-.form-textarea {
-  min-height: 100px;
-  resize: vertical;
-  font-family: inherit;
-}
-
-.form-actions {
-  display: flex;
-  gap: 15px;
-  justify-content: flex-end;
-  margin-top: 30px;
-  padding-top: 20px;
-  border-top: 1px solid #e0e0e0;
-}
-
-.btn-cancel {
-  background: #6c757d;
-  color: white;
-  border: none;
-  padding: 12px 25px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-cancel:hover {
-  background: #5a6268;
-  transform: translateY(-1px);
-}
-
-.btn-submit {
-  background: linear-gradient(135deg, #2d4e1e, #3a6c28);
-  color: white;
-  border: none;
-  padding: 12px 25px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-submit:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 15px rgba(45, 78, 30, 0.3);
-}
-
-.required {
-  color: #e74c3c;
-}
-
-/* Lot modal mini styles */
-.lot-modal-header {
-  background: #2d4e1e;
-  padding: 18px 30px;
-  border-radius: 10px 10px 0 0;
-  display: flex;
-  align-items: center;
-}
-.lot-modal-flex {
-  display: flex;
-  gap: 30px;
-}
-.lot-modal-left {
-  flex: 1;
-  min-width: 220px;
-}
-.lot-modal-img {
-  width: 100%;
-  max-width: 220px;
-  border-radius: 8px;
-  display: block;
-  margin-bottom: 10px;
-}
-.lot-modal-desc {
-  margin-bottom: 10px;
-  font-size: 0.98em;
-}
-.lot-modal-size, .lot-modal-price {
-  margin-bottom: 5px;
-}
-.lot-modal-right {
-  flex: 1;
-  min-width: 220px;
-}
-.plans-tabs { margin-bottom: 10px; }
-.plan-tab {
-  background: #e6e6e6;
-  border: none;
-  padding: 7px 18px;
-  margin-right: 5px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-weight: bold;
-}
-.plan-tab.active { background: #2d4e1e; color: #fff; }
-.pay-btn {
-  background: #d6e09b;
-  border: none;
-  padding: 5px 15px;
-  margin-right: 5px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-weight: bold;
-}
-.blueprint-btn, .inquire-btn {
-  background: #2d4e1e;
-  color: #fff;
-  border: none;
-  padding: 8px 18px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-weight: bold;
-  margin-top: 10px;
-}
-
-@media (max-width: 900px) {
-  .lot-modal-flex { flex-direction: column; }
-  .lot-modal-left, .lot-modal-right { min-width: 0; }
-}
-@media (max-width: 1100px) {
-  .adminlots-main { flex-direction: column; }
-  .info-panel { min-width: unset; margin-top: 20px; }
-}
-
-/* Location status */
-.location-status {
-  margin-top: 10px;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  display: none;
-}
-.location-success {
-  background-color: #d4edda;
-  color: #155724;
-  border: 1px solid #c3e6cb;
-}
-.location-error {
-  background-color: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
-}
+/* Agent Card Styles */
+.agent-card { display: flex; align-items: center; gap: 18px; background: #f9fafb; border: 1.5px solid #e6e6e6; border-radius: 12px; padding: 14px 18px; margin-bottom: 6px; }
+.agent-card-photo img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
+.agent-card-name { font-weight: 700; color: #23613b; }
+.location-status { margin-top: 10px; padding: 8px 12px; border-radius: 4px; font-size: 13px; display: none; }
+.location-success { background-color: #d4edda; color: #155724; }
+.location-error { background-color: #f8d7da; color: #721c24; }
 
 /* Active nav */
 .nav-links li.active a {
@@ -924,6 +608,7 @@ body {
   </style>
 </head>
 <body>
+
 <header>
  <nav class="main-nav">
   <div class="nav-left">
@@ -931,6 +616,7 @@ body {
     <span class="company-name">El Nuevo Puerta Real Estate</span>
   </div>
  <ul class="nav-links">
+    <li><a href="index.php">Home</a></li>
     <li><a href="index.php">Home</a></li>
     <li class="active"><a href="userlot.php">View Lots</a></li>
     <li><a href="findagent.php">Find Agent</a></li>
@@ -953,9 +639,19 @@ body {
   </div>
 </div>
 
-<!-- Request Viewing Modal -->
+<div id="blueprintModalBox" class="modal">
+  <span class="close-bp" onclick="closeBlueprint()">&times;</span>
+  <div class="blueprint-white-bg">
+    <div id="blueprint-wrapper">
+        <img class="modal-content" id="blueprintImg" draggable="false">
+        <svg id="blueprint-svg-layer" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+  <div id="tooltip" class="lot-tooltip"></div>
+</div>
+
 <div id="viewingModal" class="viewing-modal">
-  <div class="viewing-modal-content" style="margin:10px auto 0 auto;">
+  <div class="viewing-modal-content">
     <div class="viewing-modal-header">
       <h2 class="viewing-modal-title">Request a Viewing</h2>
       <button class="viewing-close" onclick="closeViewingModal()">&times;</button>
@@ -963,7 +659,6 @@ body {
 
     <div class="viewing-modal-body">
       <form id="viewingForm" method="POST" action="">
-        <!-- Required for PHP -->
         <input type="hidden" name="viewing_action" value="request">
         <input type="hidden" name="location_id" id="location_id" value="">
         <input type="hidden" name="lot_id" id="lot_id" value="">
@@ -999,19 +694,17 @@ body {
           </div>
         </div>
 
-       
-
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Geolocation</label>
             <div style="display:none;">
-              <input type="number" step="any" class="form-input" id="user_lat" name="client_lat" placeholder="Latitude" readonly>
-              <input type="number" step="any" class="form-input" id="user_lng" name="client_lng" placeholder="Longitude" readonly>
+              <input type="number" step="any" class="form-input" id="user_lat" name="client_lat" readonly>
+              <input type="number" step="any" class="form-input" id="user_lng" name="client_lng" readonly>
             </div>
 
             <div style="margin-top:10px;display:flex;gap:10px;">
-              <button type="button" onclick="getCurrentLocationUser()" class="btn-location btn-submit" style="padding:6px 12px;">Get Current Location</button>
-              <button type="button" onclick="clearLocationUser()" class="btn-location btn-cancel" style="padding:6px 12px;">Clear Location</button>
+              <button type="button" onclick="getCurrentLocationUser()" class="btn-submit" style="padding:6px 12px;">Get Current Location</button>
+              <button type="button" onclick="clearLocationUser()" class="btn-cancel" style="padding:6px 12px;">Clear Location</button>
             </div>
 
             <div id="user-location-status" class="location-status"></div>
@@ -1068,7 +761,6 @@ body {
           </div>
         </div>
 
-
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Preferred Date & Time</label>
@@ -1081,7 +773,7 @@ body {
         <div class="form-row">
           <div class="form-group full-width">
             <label class="form-label">Notes (optional)</label>
-            <textarea class="form-input form-textarea" id="notes" name="notes" placeholder="Tell us anything we should know..."></textarea>
+            <textarea class="form-input" id="notes" name="notes" rows="3"></textarea>
           </div>
         </div>
 
@@ -1094,64 +786,33 @@ body {
   </div>
 </div>
 
-<!-- ORIGINAL inquire modal (kept but IDs changed to avoid conflicts) -->
-<div id="inquireModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);z-index:999;align-items:flex-start;justify-content:center;">
-  <div style="background:#fff;padding:32px 24px;border-radius:12px;max-width:400px;margin:10px auto 0 auto;position:relative;">
-    <button onclick="closeInquireModal()" style="position:absolute;top:12px;right:12px;">&times;</button>
-    <h2>Request a Viewing</h2>
-    <form id="inquireForm" method="POST" action="submit_lead.php">
-      <input type="text" name="first_name" placeholder="First Name" required>
-      <input type="text" name="last_name" placeholder="Last Name" required>
-      <input type="email" name="email" placeholder="Email" required>
-      <input type="text" name="phone" placeholder="Mobile Number" required>
-      
-      <label for="user_location_old" style="font-weight:600;">Enter Your Location</label>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="text" id="user_location_old" name="location" class="form-input" style="width:140px;" required>
-        <button type="button" id="getAgentBtnOld" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
-      </div>
-
-      <input type="date" name="preferred_date" required>
-      <textarea name="note" placeholder="Notes or questions"></textarea>
-
-      <label>
-        <input type="checkbox" name="consent" required>
-        I agree to the privacy policy and to be contacted.
-      </label>
-
-      <button type="submit">Submit Request</button>
-    </form>
-  </div>
-</div>
-
-<!-- Modal for user messages -->
-<div id="userMessageModal" style="display:none;position:fixed;z-index:9999;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.32);align-items:center;justify-content:center;">
-  <div style="background:#fff;padding:32px 28px 24px 28px;border-radius:12px;max-width:350px;width:90vw;box-shadow:0 8px 32px rgba(44,62,80,0.18);position:relative;text-align:center;">
-    <div id="userMessageModalText" style="font-size:1.08em;color:#222;margin-bottom:18px;"></div>
-    <button onclick="closeUserMessageModal()" style="background:#23613b;color:#fff;padding:8px 22px;border:none;border-radius:6px;font-weight:600;font-size:1em;cursor:pointer;">OK</button>
-    <button id="userMessageModalCloseBtn" style="display:none;position:absolute;top:10px;right:14px;background:none;border:none;font-size:1.5em;color:#888;cursor:pointer;">&times;</button>
+<div id="userMessageModal">
+  <div>
+    <div id="userMessageModalText" style="margin-bottom:20px; font-size:1.1em;"></div>
+    <button onclick="closeUserMessageModal()" class="btn-submit">OK</button>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@panzoom/panzoom/dist/panzoom.min.js"></script>
 <script>
-/* -------------------- MAP & INFO PANEL -------------------- */
+/* -------------------- MAP & DATA -------------------- */
 const map = L.map('map').setView([6.9214, 122.0790], 12);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
 
-// PHP dumps
 const locations  = <?php echo json_encode($locations); ?>;
 const allLots    = <?php echo json_encode($all_lots); ?>;
 const blueprints = <?php echo json_encode($blueprints); ?>;
+let panzoomInstance = null; // Hold our zoom instance
 
 locations.forEach(loc => {
+  if(!loc.latitude || !loc.longitude) return;
   const marker = L.marker([loc.latitude, loc.longitude]).addTo(map);
   marker.on('click', function() {
     map.setView([loc.latitude, loc.longitude], 16);
     marker.bindPopup(`<b>${loc.location_name}</b>`).openPopup();
-
+    
+    // Update Info Panel
     const lots = allLots[loc.id] || [];
     const blueprint_url = blueprints[loc.id] || null;
 
@@ -1164,52 +825,37 @@ locations.forEach(loc => {
   });
 });
 
-function updateInfoPanel(data) {
+function renderInfoPanel(id, name, lots, hasBlueprint) {
   let rows = '';
-  if (data.lots.length) {
-    data.lots.forEach(lot => {
-      let cls = '';
-      if (lot.lot_status === 'Sale' || lot.lot_status === 'Available') cls = 'sale';
-      else if (lot.lot_status === 'Sold') cls = 'sold';
-      else if (lot.lot_status === 'Reserved') cls = 'reserved';
-
-      rows += `
-        <tr>
+  if (lots.length) {
+    lots.forEach(lot => {
+      let cls = (lot.lot_status === 'Sale' || lot.lot_status === 'Available') ? 'Available' : lot.lot_status;
+      let btnHtml = lot.lot_status === 'Sold' 
+         ? `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Inquire</button>`
+         : `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`;
+         
+      rows += `<tr>
           <td>${lot.block_number}</td>
           <td>${lot.lot_number}</td>
           <td>${lot.lot_size} sqm</td>
           <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
           <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
-          <td>
-            ${lot.lot_status === 'Sold'
-              ? `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Inquire</button>`
-              : `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`}
-          </td>
+          <td>${btnHtml}</td>
         </tr>`;
     });
   } else {
-    rows = `<tr><td colspan="6" style="color:#b71c1c;font-weight:bold;">No lots available</td></tr>`;
+    rows = `<tr><td colspan="6" style="color:#b71c1c;">No lots available</td></tr>`;
   }
 
   const panel = document.getElementById('infoPanel');
-  panel.removeAttribute('style'); // clear centering styles used for placeholder
-
+  panel.removeAttribute('style'); // Clear placeholder centering
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h3>${data.location_name}</h3>
-      ${data.blueprint_url ? `<button class="blueprint-btn" id="viewBlueprintBtn">View Blueprint</button>` : ''}
+      <h3>${name}</h3>
+      ${hasBlueprint ? `<button class="blueprint-btn" onclick="openBlueprint(${id})">View Blueprint</button>` : ''}
     </div>
     <table class="lots-table">
-      <thead>
-        <tr>
-          <th>Block Number</th>
-          <th>Lot Number</th>
-          <th>Lot Size</th>
-          <th>Lot Price</th>
-          <th>Lot Status</th>
-          <th></th>
-        </tr>
-      </thead>
+      <thead><tr><th>Block</th><th>Lot</th><th>Size</th><th>Price</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
 
@@ -1383,76 +1029,108 @@ function getStatusColor(status) {
   return colors[status] || colors['Available'];
 }
 
-/* -------------------- VIEWING MODAL -------------------- */
+/* -------------------- LOAD AND DRAW PIN LOCATIONS -------------------- */
+function loadAndDrawPins(locationId) {
+  const img = document.getElementById('blueprintImg');
+  const canvas = document.getElementById('blueprintCanvas');
+  
+  if (!img || !canvas || !locationId) return;
+  
+  const drawPins = () => {
+    const naturalWidth = img.naturalWidth || img.width || 1;
+    const naturalHeight = img.naturalHeight || img.height || 1;
+    
+    const rect = img.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width));
+    canvas.height = Math.max(1, Math.round(rect.height));
+
+    const ctx = canvas.getContext('2d');
+
+    fetch(`${window.location.pathname}?fetch_pins=1&location_id=${locationId}`)
+      .then(response => response.json())
+      .then(data => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!data.success || !Array.isArray(data.pins) || data.pins.length === 0) return;
+
+        data.pins.forEach(pin => {
+          if (!Array.isArray(pin.coordinates) || pin.coordinates.length < 3) return;
+
+          // Detect coordinate system: if max coordinate > 1000, it's using natural dimensions
+          const allX = pin.coordinates.map(pt => Number(pt.x) || 0);
+          const maxX = Math.max(...allX);
+          
+          let scaleX, scaleY;
+          if (maxX > 1000) {
+            // Coordinates are in natural dimension space (from migrated pins)
+            scaleX = canvas.width / naturalWidth;
+            scaleY = canvas.height / naturalHeight;
+          } else {
+            // Coordinates are in offsetWidth space (from admin's display size)
+            // We need to scale to match the current display
+            scaleX = 1;
+            scaleY = 1;
+          }
+
+          const colors = getStatusColor(pin.pin_status);
+          ctx.fillStyle = colors.fill;
+          ctx.strokeStyle = colors.stroke;
+          ctx.lineWidth = 2;
+
+          ctx.beginPath();
+          ctx.moveTo((Number(pin.coordinates[0].x) || 0) * scaleX, (Number(pin.coordinates[0].y) || 0) * scaleY);
+          for (let i = 1; i < pin.coordinates.length; i++) {
+            ctx.lineTo((Number(pin.coordinates[i].x) || 0) * scaleX, (Number(pin.coordinates[i].y) || 0) * scaleY);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          const centerX = pin.coordinates.reduce((sum, p) => sum + (Number(p.x) || 0) * scaleX, 0) / pin.coordinates.length;
+          const centerY = pin.coordinates.reduce((sum, p) => sum + (Number(p.y) || 0) * scaleY, 0) / pin.coordinates.length;
+          ctx.fillStyle = '#000';
+          ctx.font = 'bold 12px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`B${pin.block_number} L${pin.lot_number}`, centerX, centerY);
+        });
+      })
+      .catch(error => console.error('Error loading pins:', error));
+  };
+
+  if (!img.complete || img.naturalWidth === 0) {
+    img.onload = () => setTimeout(drawPins, 100);
+  } else {
+    setTimeout(drawPins, 100);
+  }
+}
+
+function getStatusColor(status) {
+  const colors = {
+    'Available': { stroke: '#28a745', fill: 'rgba(40, 167, 69, 0.3)' },
+    'Reserved': { stroke: '#ffc107', fill: 'rgba(255, 193, 7, 0.3)' },
+    'Sold': { stroke: '#dc3545', fill: 'rgba(220, 53, 69, 0.3)' }
+  };
+  return colors[status] || colors['Available'];
+}
+
+/* -------------------- VIEWING & AGENT LOGIC (PRESERVED) -------------------- */
 let currentLot = null;
 
 function openViewingModal(lot) {
   currentLot = lot || null;
-
   if (currentLot && currentLot.lot_status === 'Reserved') {
-    if (!confirm('Warning: This lot is reserved and may not be available. Do you want to proceed with your inquiry?')) {
-      return;
-    }
+    if (!confirm('This lot is reserved. Proceed anyway?')) return;
   }
-
   document.getElementById('viewingModal').style.display = 'block';
   document.getElementById('viewingForm').reset();
-
   document.getElementById('location_id').value = currentLot ? currentLot.location_id : '';
   document.getElementById('lot_id').value = currentLot ? currentLot.id : '';
-
-  const ag = document.getElementById('suggestedAgent');
-  if (ag) {
-    ag.innerHTML = '';
-    ag.style.display = 'none';
-    delete ag.dataset.agentId;
-  }
-  if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
-  if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
-
-  // Force re-initialize modal map
-  setTimeout(() => {
-    const mapDiv = document.getElementById('user-select-map');
-    if (!mapDiv) return;
-    // Remove previous map instance if exists
-    if (mapDiv._leaflet_id) {
-      mapDiv._leaflet_id = null;
-      mapDiv.innerHTML = '';
-    }
-    const map = L.map('user-select-map').setView([13.41, 122.56], 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-    let marker = null;
-    map.on('click', function(e) {
-      const lat = e.latlng.lat;
-      const lng = e.latlng.lng;
-      document.getElementById('user_lat').value = lat;
-      document.getElementById('user_lng').value = lng;
-      if (marker) {
-        marker.setLatLng(e.latlng);
-      } else {
-        marker = L.marker(e.latlng, {draggable:true}).addTo(map);
-        marker.on('dragend', function(ev) {
-          const pos = ev.target.getLatLng();
-          document.getElementById('user_lat').value = pos.lat;
-          document.getElementById('user_lng').value = pos.lng;
-        });
-      }
-    });
-    // If lat/lng already set, show marker
-    const lat = document.getElementById('user_lat').value;
-    const lng = document.getElementById('user_lng').value;
-    if (lat && lng) {
-      marker = L.marker([lat, lng], {draggable:true}).addTo(map);
-      map.setView([lat, lng], 14);
-      marker.on('dragend', function(ev) {
-        const pos = ev.target.getLatLng();
-        document.getElementById('user_lat').value = pos.lat;
-        document.getElementById('user_lng').value = pos.lng;
-      });
-    }
-  }, 300);
+  
+  // Close Blueprint if open
+  closeBlueprint();
+  
+  // Initialize Mini Map
+  setTimeout(initUserMap, 300);
 }
 
 function closeViewingModal() {
@@ -1460,7 +1138,31 @@ function closeViewingModal() {
   currentLot = null;
 }
 
-/* Geolocation helpers used by the buttons in your HTML */
+function initUserMap() {
+    const mapDiv = document.getElementById('user-select-map');
+    if (!mapDiv) return;
+    if (mapDiv._leaflet_id) { mapDiv._leaflet_id = null; mapDiv.innerHTML = ''; }
+    
+    const uMap = L.map('user-select-map').setView([6.9214, 122.0790], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(uMap);
+    
+    let marker = null;
+    uMap.on('click', (e) => {
+        updateUserLoc(e.latlng.lat, e.latlng.lng, uMap, marker);
+        if(!marker) {
+             marker = L.marker(e.latlng, {draggable:true}).addTo(uMap);
+             marker.on('dragend', (ev) => updateUserLoc(ev.target.getLatLng().lat, ev.target.getLatLng().lng));
+        } else {
+             marker.setLatLng(e.latlng);
+        }
+    });
+}
+function updateUserLoc(lat, lng, mapRef, markerRef) {
+    document.getElementById('user_lat').value = lat;
+    document.getElementById('user_lng').value = lng;
+}
+
+/* Geolocation */
 function getCurrentLocationUser() {
   const statusDiv = document.getElementById('user-location-status');
   statusDiv.style.display = 'block';
@@ -1621,7 +1323,6 @@ function getCurrentLocationUser() {
     geoOptions
   );
 }
-
 function clearLocationUser() {
   document.getElementById('user_lat').value = '';
   document.getElementById('user_lng').value = '';
@@ -1978,8 +1679,12 @@ document.getElementById('pickSuggestedAgentBtn').onclick = function() {
 };
 
 document.getElementById('chooseOtherAgentBtn').onclick = function() {
-  fetchAllAgentsForSelect();
-  document.getElementById('otherAgentSelect').style.display = 'block';
+    document.getElementById('otherAgentSelect').style.display = 'block';
+    fetch('get_all_agents.php').then(r=>r.json()).then(list => {
+        const sel = document.getElementById('manualAgentSelect');
+        sel.innerHTML = '<option value="">Select...</option>';
+        list.forEach(a => sel.innerHTML += `<option value="${a.id}">${a.name}</option>`);
+    });
 };
 
 
@@ -2000,7 +1705,13 @@ function showUserMessageModal(message, onClose) {
   };
 }
 function closeUserMessageModal() {
-  document.getElementById('userMessageModal').style.display = 'none';
+    document.getElementById('userMessageModal').style.display = 'none';
+}
+
+// Close Modals on Outside Click
+window.onclick = function(e) {
+    if (e.target == bpModal) closeBlueprint();
+    if (e.target == document.getElementById('viewingModal')) closeViewingModal();
 }
 </script>
 <style>
