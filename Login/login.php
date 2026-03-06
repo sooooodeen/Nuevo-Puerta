@@ -124,7 +124,7 @@ $conn->close();
     </div>
 
     <div class="form-container">
-        <a href="../index.html" class="back-arrow" title="Back to Home">
+        <a href="../index.php" class="back-arrow" title="Back to Home">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
                 <path d="M14 6L9 11L14 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>

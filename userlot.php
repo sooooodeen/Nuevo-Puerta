@@ -20,7 +20,6 @@ if ($result && $result->num_rows > 0) {
 }
 
 // Fetch all lots grouped by location_id
-// ADDED: 'coordinates' to the select list
 $all_lots = [];
 $sql = "SELECT id, block_number, lot_number, lot_size, lot_price, location_id, status AS lot_status, coordinates FROM lots";
 $result = $conn->query($sql);
@@ -88,19 +87,19 @@ body { font-family: 'Poppins', sans-serif; font-size: 16px; line-height: 1.6; ma
 .close-bp { position: absolute; top: 20px; right: 40px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 2100; }
 
 /* Wrapper for Image + SVG Overlay */
-#blueprint-wrapper { position: relative; display: inline-block; line-height: 0; transform-origin: center center; transition: transform 0.1s ease-out; cursor: grab; }
+#blueprint-wrapper { position: relative; display: inline-block; line-height: 0; transform-origin: center center; cursor: grab; }
 #blueprint-wrapper:active { cursor: grabbing; }
 .modal-content { display: block; max-width: 90vw; max-height: 90vh; pointer-events: none; /* Let clicks pass to SVG */ }
-#blueprint-svg-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+#blueprint-svg-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
 
 /* Interactive Lot Shapes */
-.lot-shape { cursor: pointer; stroke: #fff; stroke-width: 1px; transition: opacity 0.2s; }
+.lot-shape { cursor: pointer; stroke: #fff; stroke-width: 1px; transition: opacity 0.2s; pointer-events: auto; }
 .lot-shape:hover { opacity: 0.8; stroke: #333; stroke-width: 2px; }
 
-/* Status Colors */
-.status-Available { fill: rgba(46, 204, 113, 0.5); } /* Green */
-.status-Sold { fill: rgba(231, 76, 60, 0.5); }      /* Red */
-.status-Reserved { fill: rgba(241, 196, 15, 0.5); } /* Yellow */
+/* Dynamic Status Colors */
+.status-available { fill: rgba(46, 204, 113, 0.5); stroke: green; } /* Green */
+.status-sold { fill: rgba(231, 76, 60, 0.5); stroke: red; }       /* Red */
+.status-reserved { fill: rgba(241, 196, 15, 0.5); stroke: gold; } /* Yellow */
 
 /* Tooltip */
 .lot-tooltip { position: absolute; background: rgba(0,0,0,0.8); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 13px; pointer-events: none; display: none; z-index: 3000; white-space: pre-line; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
@@ -157,7 +156,7 @@ body { font-family: 'Poppins', sans-serif; font-size: 16px; line-height: 1.6; ma
     <span class="company-name">El Nuevo Puerta Real Estate</span>
   </div>
  <ul class="nav-links">
-    <li><a href="index.html">Home</a></li>
+    <li><a href="index.php">Home</a></li>
     <li class="active"><a href="userlot.php">View Lots</a></li>
     <li><a href="findagent.php">Find Agent</a></li>
     <li><a href="about.html">About</a></li>
@@ -305,6 +304,7 @@ body { font-family: 'Poppins', sans-serif; font-size: 16px; line-height: 1.6; ma
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@panzoom/panzoom/dist/panzoom.min.js"></script>
 <script>
 /* -------------------- MAP & DATA -------------------- */
 const map = L.map('map').setView([6.9214, 122.0790], 12);
@@ -313,6 +313,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:
 const locations  = <?php echo json_encode($locations); ?>;
 const allLots    = <?php echo json_encode($all_lots); ?>;
 const blueprints = <?php echo json_encode($blueprints); ?>;
+let panzoomInstance = null; // Hold our zoom instance
 
 locations.forEach(loc => {
   if(!loc.latitude || !loc.longitude) return;
@@ -378,40 +379,72 @@ function openBlueprint(locationId) {
     bpImg.src = blueprints[locationId];
     svgLayer.innerHTML = ''; // Clear old drawings
     
-    // Reset Zoom
-    bpWrapper.style.transform = `scale(1) translate(0px, 0px)`;
-    enableBlueprintZoom();
+    // Set up our SVG container to read percentages easily
+    svgLayer.setAttribute('viewBox', '0 0 100 100');
+    
+    // Clean up old panzoom completely before starting a new one
+    if (panzoomInstance) {
+        panzoomInstance.destroy();
+    }
+    bpWrapper.style.transform = 'scale(1) translate(0px, 0px)'; 
 
-    // Draw Lots
+    // Initialize Panzoom
+    panzoomInstance = Panzoom(bpWrapper, {
+        maxScale: 10,
+        minScale: 0.5,
+        step: 0.2,
+        cursor: 'grab'
+    });
+
+    // Draw Lots (Polygons & Rectangles)
     const lots = allLots[locationId] || [];
     lots.forEach(lot => {
         if (lot.coordinates) {
             try {
                 const c = JSON.parse(lot.coordinates);
-                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                // Standardize the status string (Available, Sold, Reserved)
+                let status = (lot.lot_status || 'Available').toLowerCase();
+                let shape;
                 
-                // Set Attributes
-                rect.setAttribute("x", c.x + "%");
-                rect.setAttribute("y", c.y + "%");
-                rect.setAttribute("width", c.w + "%");
-                rect.setAttribute("height", c.h + "%");
+                // If it's a Polygon (from new admin map tool)
+                if (c.type === 'polygon' && Array.isArray(c.points)) {
+                    shape = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    const pointsStr = c.points.map(pt => `${pt.x},${pt.y}`).join(' ');
+                    shape.setAttribute("points", pointsStr);
+                } 
+                // Fallback for old Rectangles
+                else {
+                    shape = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    shape.setAttribute("x", c.x);
+                    shape.setAttribute("y", c.y);
+                    shape.setAttribute("width", c.w);
+                    shape.setAttribute("height", c.h);
+                }
                 
-                // Color Class
-                let status = (lot.lot_status === 'Sale' || lot.lot_status === 'Available') ? 'Available' : lot.lot_status;
-                rect.setAttribute("class", "lot-shape status-" + status);
+                // Add the CSS class that colors it green/yellow/red dynamically
+                shape.setAttribute("class", "lot-shape status-" + status);
                 
-                // Events
-                rect.addEventListener("mouseenter", (e) => showTooltip(e, lot));
-                rect.addEventListener("mousemove", moveTooltip);
-                rect.addEventListener("mouseleave", hideTooltip);
-                rect.addEventListener("click", (e) => {
+                // Mouse interactions
+                shape.addEventListener("mouseenter", (e) => showTooltip(e, lot));
+                shape.addEventListener("mousemove", moveTooltip);
+                shape.addEventListener("mouseleave", hideTooltip);
+                shape.addEventListener("click", (e) => {
                     e.stopPropagation(); // Prevent zoom click
-                    if(status !== 'Sold') openViewingModal(lot);
+                    if(status !== 'sold') openViewingModal(lot);
                 });
                 
-                svgLayer.appendChild(rect);
+                svgLayer.appendChild(shape);
             } catch(e) { console.error("Coords Error", e); }
         }
+    });
+}
+
+// Bind mouse wheel for zooming (bound once to the parent container)
+const bpContainer = document.querySelector('.blueprint-white-bg');
+if (bpContainer) {
+    bpContainer.addEventListener('wheel', function(e) {
+        e.preventDefault(); // Prevent page scrolling
+        if(panzoomInstance) panzoomInstance.zoomWithWheel(e);
     });
 }
 
@@ -422,53 +455,23 @@ function showTooltip(e, lot) {
                          Price: ₱${(+lot.lot_price).toLocaleString()}<br>
                          Size: ${lot.lot_size} sqm`;
 }
+
 function moveTooltip(e) {
     tooltip.style.left = (e.clientX + 15) + "px";
     tooltip.style.top = (e.clientY + 15) + "px";
 }
-function hideTooltip() { tooltip.style.display = "none"; }
-function closeBlueprint() { bpModal.style.display = "none"; }
 
-/* -------------------- ZOOM LOGIC (APPLIED TO WRAPPER) -------------------- */
-function enableBlueprintZoom() {
-  let zoom = 1, min = 1, max = 5;
-  let isDrag = false, startX = 0, startY = 0, panX = 0, panY = 0;
-  
-  const upd = () => { bpWrapper.style.transform = `scale(${zoom}) translate(${panX}px, ${panY}px)`; };
+function hideTooltip() { 
+    tooltip.style.display = "none"; 
+}
 
-  // Wheel Zoom
-  bpWrapper.onwheel = (e) => {
-    e.preventDefault();
-    const prev = zoom;
-    zoom = e.deltaY < 0 ? Math.min(zoom + 0.2, max) : Math.max(zoom - 0.2, min);
-    // Adjust pan to center zoom
-    panX = panX * (zoom / prev);
-    panY = panY * (zoom / prev);
-    upd();
-  };
-
-  // Drag Pan
-  bpWrapper.onmousedown = (e) => {
-    if (zoom === 1) return;
-    isDrag = true; 
-    startX = e.clientX - (panX * zoom);
-    startY = e.clientY - (panY * zoom);
-    bpWrapper.style.cursor = 'grabbing';
-    e.preventDefault();
-  };
-
-  window.addEventListener('mousemove', (e) => {
-    if (!isDrag) return;
-    e.preventDefault();
-    panX = (e.clientX - startX) / zoom;
-    panY = (e.clientY - startY) / zoom;
-    upd();
-  });
-
-  window.addEventListener('mouseup', () => {
-    isDrag = false;
-    bpWrapper.style.cursor = zoom > 1 ? 'grab' : 'default';
-  });
+function closeBlueprint() { 
+    bpModal.style.display = "none"; 
+    if(panzoomInstance) {
+        panzoomInstance.reset();
+        panzoomInstance.destroy();
+        panzoomInstance = null;
+    }
 }
 
 /* -------------------- VIEWING & AGENT LOGIC (PRESERVED) -------------------- */
@@ -588,7 +591,6 @@ function loadAgentSlots(id) {
     fetch('get_agent_slots.php?agent_id='+id).then(r=>r.json()).then(slots => {
         sel.innerHTML = '<option value="">-- Select Date --</option>';
         slots.forEach(s => {
-             // Simplified for brevity, assumes your existing logic matches
              const opt = document.createElement('option');
              opt.value = s.available_date + ' ' + s.time_slot;
              opt.text = s.available_date + ' (' + s.time_slot + ')';
