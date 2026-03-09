@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Lots Loading</title>
+</head>
+<body>
+    <h1>Test Lots Loading</h1>
+    <button onclick="testFetch()">Test Fetch Lots</button>
+    <button onclick="testFetchWithLocation()">Test Fetch with Location</button>
+    <pre id="output"></pre>
+
+    <script>
+    function testFetch() {
+        const output = document.getElementById('output');
+        output.textContent = 'Fetching all lots...';
+        
+        fetch('admindashboard.php?fetch=lots&location_id=')
+            .then(r => r.json())
+            .then(data => {
+                output.textContent = 'Success! Found ' + data.length + ' lots:\n' + JSON.stringify(data, null, 2);
+            })
+            .catch(err => {
+                output.textContent = 'Error: ' + err;
+            });
+    }
+
+    function testFetchWithLocation() {
+        const output = document.getElementById('output');
+        output.textContent = 'Fetching lots for location 13...';
+        
+        fetch('admindashboard.php?fetch=lots&location_id=13')
+            .then(r => r.json())
+            .then(data => {
+                output.textContent = 'Success! Found ' + data.length + ' lots:\n' + JSON.stringify(data, null, 2);
+            })
+            .catch(err => {
+                output.textContent = 'Error: ' + err;
+            });
+    }
+    </script>
+</body>
+</html>

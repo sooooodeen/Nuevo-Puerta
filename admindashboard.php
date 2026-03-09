@@ -1,18 +1,68 @@
- <?php
+<?php
   session_start();
+  
   // Database connection settings
   $servername = "localhost";
   $username = "root";
   $password = "";
   $dbname = "nuevopuerta";
 
-$conn = mysqli_connect($servername, $username, $password, $dbname);
+  $conn = mysqli_connect($servername, $username, $password, $dbname);
 
-if (!$conn) {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'Database connection failed']);
-    exit;
-}
+  if (!$conn) {
+      http_response_code(500);
+      echo json_encode(['success' => false, 'error' => 'Database connection failed']);
+      exit;
+  }
+
+    function tableExists($conn, $table) {
+      $tableEsc = mysqli_real_escape_string($conn, $table);
+      $sql = "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableEsc'";
+      $res = mysqli_query($conn, $sql);
+      if (!$res) return false;
+      $row = mysqli_fetch_assoc($res);
+      return ((int)($row['c'] ?? 0)) > 0;
+    }
+
+    function columnExists($conn, $table, $column) {
+      $tableEsc = mysqli_real_escape_string($conn, $table);
+      $colEsc = mysqli_real_escape_string($conn, $column);
+      $sql = "SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableEsc' AND COLUMN_NAME = '$colEsc'";
+      $res = mysqli_query($conn, $sql);
+      if (!$res) return false;
+      $row = mysqli_fetch_assoc($res);
+      return ((int)($row['c'] ?? 0)) > 0;
+    }
+
+    function getPendingDocumentsCount($conn) {
+      if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
+        $q = "SELECT COUNT(*) AS total FROM documents WHERE status = 'pending'";
+        $res = mysqli_query($conn, $q);
+        if ($res) {
+          $row = mysqli_fetch_assoc($res);
+          return (int)($row['total'] ?? 0);
+        }
+      }
+
+      if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
+        $q = "SELECT COUNT(*) AS total FROM user_documents WHERE status IN ('pending_review', 'under_review')";
+        $res = mysqli_query($conn, $q);
+        if ($res) {
+          $row = mysqli_fetch_assoc($res);
+          return (int)($row['total'] ?? 0);
+        }
+      }
+
+      return 0;
+    }
+
+    $salesAmountCol = columnExists($conn, 'sales', 'amount')
+      ? 'amount'
+      : (columnExists($conn, 'sales', 'sale_price') ? 'sale_price' : null);
+    $salesDateCol = columnExists($conn, 'sales', 'sale_date')
+      ? 'sale_date'
+      : (columnExists($conn, 'sales', 'created_at') ? 'created_at' : null);
+    $salesLocationCol = columnExists($conn, 'sales', 'location_id') ? 'location_id' : null;
 
   // =============================================
   // CREATE PIN LOCATIONS TABLE IF NOT EXISTS
@@ -34,125 +84,230 @@ if (!$conn) {
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_type VARCHAR(30) DEFAULT 'Fully Paid'");
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_amount DECIMAL(12,2) DEFAULT NULL");
 
-// =============================================
-// FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
-// =============================================
-if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
-    isset($_GET['fetch']) && $_GET['fetch'] === 'user' &&
-    isset($_GET['id'])) {
+  // =============================================
+  // FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'user' &&
+      isset($_GET['id'])) {
 
-    $user_id = intval($_GET['id']);
-    $userQuery = "SELECT * FROM user_accounts WHERE id = $user_id LIMIT 1";
-    $userResult = mysqli_query($conn, $userQuery);
-    $user = $userResult ? mysqli_fetch_assoc($userResult) : null;
+      $user_id = intval($_GET['id']);
+      $userQuery = "SELECT * FROM user_accounts WHERE id = $user_id LIMIT 1";
+      $userResult = mysqli_query($conn, $userQuery);
+      $user = $userResult ? mysqli_fetch_assoc($userResult) : null;
 
-    header('Content-Type: application/json');
-    echo json_encode($user);
-    exit;
-}
+      header('Content-Type: application/json');
+      echo json_encode($user);
+      exit;
+  }
 
-// =============================================
-// ADMIN INFO FROM SESSION
-// =============================================
-$admin_id   = $_SESSION['admin_id'] ?? null;
-$admin_name = "Admin";
-$admin_role = "Super Admin";
+  // =============================================
+  // ADMIN INFO FROM SESSION
+  // =============================================
+  $admin_id   = $_SESSION['admin_id'] ?? null;
+  $admin_name = "Admin";
+  $admin_role = "Super Admin";
 
-if ($admin_id) {
-    $result = mysqli_query($conn, "SELECT first_name, last_name, role FROM admin_accounts WHERE id = $admin_id LIMIT 1");
-    if ($row = mysqli_fetch_assoc($result)) {
-        $admin_name = $row['first_name'] . ' ' . $row['last_name'];
-        $admin_role = $row['role'];
-    }
-}
+  if ($admin_id) {
+      $result = mysqli_query($conn, "SELECT first_name, last_name FROM admin_accounts WHERE id = $admin_id LIMIT 1");
+      if ($row = mysqli_fetch_assoc($result)) {
+          $admin_name = $row['first_name'] . ' ' . $row['last_name'];
+      }
+  }
 
-// =============================================
-// DASHBOARD STATS (CLIENTS / LOTS / AGENTS)
-// =============================================
-$dashboard_stats = [
-    'clients' => 0,
-    'lots'    => 0,
-    'agents'  => 0
-];
+  // =============================================
+  // DASHBOARD STATS (CLIENTS / LOTS / AGENTS)
+  // =============================================
+  $dashboard_stats = [
+      'clients' => 0,
+      'lots'    => 0,
+      'agents'  => 0
+  ];
 
-// total clients
-$clientQuery  = "SELECT COUNT(*) as total FROM user_accounts";
-$clientResult = mysqli_query($conn, $clientQuery);
-if ($clientResult) {
-    $clientRow = mysqli_fetch_assoc($clientResult);
-    $dashboard_stats['clients'] = (int)$clientRow['total'];
-}
+  // total clients
+  $clientQuery  = "SELECT COUNT(*) as total FROM user_accounts";
+  $clientResult = mysqli_query($conn, $clientQuery);
+  if ($clientResult) {
+      $clientRow = mysqli_fetch_assoc($clientResult);
+      $dashboard_stats['clients'] = (int)$clientRow['total'];
+  }
 
-// total lots
-$lotsQuery  = "SELECT COUNT(*) as total FROM lots";
-$lotsResult = mysqli_query($conn, $lotsQuery);
-if ($lotsResult) {
-    $lotsRow = mysqli_fetch_assoc($lotsResult);
-    $dashboard_stats['lots'] = (int)$lotsRow['total'];
-}
+  // total lots
+  $lotsQuery  = "SELECT COUNT(*) as total FROM lots";
+  $lotsResult = mysqli_query($conn, $lotsQuery);
+  if ($lotsResult) {
+      $lotsRow = mysqli_fetch_assoc($lotsResult);
+      $dashboard_stats['lots'] = (int)$lotsRow['total'];
+  }
 
-// total active agents
-$agentsQuery  = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
-$agentsResult = mysqli_query($conn, $agentsQuery);
-if ($agentsResult) {
-    $agentsRow = mysqli_fetch_assoc($agentsResult);
-    $dashboard_stats['agents'] = (int)$agentsRow['total'];
-}
+  // total active agents
+  $agentsQuery  = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
+  $agentsResult = mysqli_query($conn, $agentsQuery);
+  if ($agentsResult) {
+      $agentsRow = mysqli_fetch_assoc($agentsResult);
+      $dashboard_stats['agents'] = (int)$agentsRow['total'];
+  }
 
-// =============================================
-// TOP AGENTS (AJAX: ?fetch=top_agents)
-// =============================================
-if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
-    isset($_GET['fetch']) && $_GET['fetch'] === 'top_agents') {
+  // =============================================
+  // TOP AGENTS (AJAX: ?fetch=top_agents)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'top_agents') {
 
-    $date_from   = $_GET['date_from']  ?? null;
-    $date_to     = $_GET['date_to']    ?? null;
-    $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
+      $date_from   = $_GET['date_from']   ?? null;
+      $date_to     = $_GET['date_to']     ?? null;
+      $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
 
-    $where = [];
-    if ($date_from)   $where[] = "s.sale_date >= '" . mysqli_real_escape_string($conn, $date_from) . "'";
-    if ($date_to)     $where[] = "s.sale_date <= '" . mysqli_real_escape_string($conn, $date_to) . "'";
-    if ($location_id) $where[] = "s.location_id = $location_id";
+      $where = [];
+      if ($salesDateCol && $date_from)   $where[] = "s.$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+      if ($salesDateCol && $date_to)     $where[] = "s.$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+      if ($salesLocationCol && $location_id) $where[] = "s.$salesLocationCol = $location_id";
 
-    $whereSQL = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+      $whereSQL = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-    $sql = "
-      SELECT 
-        a.id,
-        a.first_name,
-        a.last_name,
-        a.email,
-        COUNT(s.id) AS sales_count,
-        SUM(s.amount) AS total_amount,
-        IFNULL(ROUND(SUM(s.amount)/COUNT(s.id)), 0) AS avg_deal_size
-      FROM agent_accounts a
-      LEFT JOIN sales s ON a.id = s.agent_id
-      $whereSQL
-      GROUP BY a.id
-      ORDER BY total_amount DESC, sales_count DESC
-      LIMIT 10
-    ";
+      $amountExpr = $salesAmountCol ? "IFNULL(SUM(s.$salesAmountCol), 0)" : "0";
+      $avgExpr = $salesAmountCol
+          ? "IFNULL(ROUND(SUM(s.$salesAmountCol)/NULLIF(COUNT(s.id),0), 2), 0)"
+          : "0";
 
-    $result = mysqli_query($conn, $sql);
-    $agents = [];
+      $sql = "
+        SELECT 
+          a.id,
+          a.first_name,
+          a.last_name,
+          a.email,
+          COUNT(s.id) AS sales_count,
+          $amountExpr AS total_amount,
+          $avgExpr AS avg_deal_size
+        FROM agent_accounts a
+        LEFT JOIN sales s ON a.id = s.agent_id
+        $whereSQL
+        GROUP BY a.id
+        ORDER BY total_amount DESC, sales_count DESC
+        LIMIT 10
+      ";
 
-    if ($result) {
-        while ($row = mysqli_fetch_assoc($result)) {
-            $agents[] = [
-                'id'            => (int)$row['id'],
-                'name'          => $row['first_name'] . ' ' . $row['last_name'],
-                'email'         => $row['email'],
-                'sales_count'   => (int)$row['sales_count'],
-                'total_amount'  => (float)$row['total_amount'],
-                'avg_deal_size'=> (float)$row['avg_deal_size'],
-            ];
-        }
-    }
+      $result = mysqli_query($conn, $sql);
+      $agents = [];
 
-    header('Content-Type: application/json');
-    echo json_encode($agents);
-    exit;
-}
+      if ($result) {
+          while ($row = mysqli_fetch_assoc($result)) {
+              $agents[] = [
+                  'id'            => (int)$row['id'],
+                  'name'          => $row['first_name'] . ' ' . $row['last_name'],
+                  'email'         => $row['email'],
+                  'sales_count'   => (int)$row['sales_count'],
+                  'total_amount'  => (float)$row['total_amount'],
+                  'avg_deal_size'=> (float)$row['avg_deal_size'],
+              ];
+          }
+      }
+
+      header('Content-Type: application/json');
+      echo json_encode($agents);
+      exit;
+  }
+
+  // =============================================
+  // ALL PAYMENTS (AJAX: ?fetch=all_payments)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'all_payments') {
+      
+      $sql = "
+        SELECT 
+          l.id AS lot_id,
+          l.owner_id,
+          l.block_number,
+          l.lot_number,
+          l.lot_price,
+          l.payment_type,
+          l.payment_amount,
+          l.status,
+          ll.location_name,
+          CONCAT(u.first_name, ' ', u.last_name) AS owner_name,
+          u.email,
+          u.mobile_number
+        FROM lots l
+        LEFT JOIN lot_locations ll ON l.location_id = ll.id
+        LEFT JOIN user_accounts u ON l.owner_id = u.id
+        ORDER BY ll.location_name ASC, l.block_number ASC, l.lot_number ASC
+      ";
+      
+      $result = mysqli_query($conn, $sql);
+      $payments = [];
+      
+      if ($result) {
+          while ($row = mysqli_fetch_assoc($result)) {
+              $payments[] = [
+                  'lot_id'           => (int)$row['lot_id'],
+                  'owner_id'         => $row['owner_id'] !== null ? (int)$row['owner_id'] : null,
+                  'block_number'     => $row['block_number'],
+                  'lot_number'       => $row['lot_number'],
+                  'lot_price'        => $row['lot_price'],
+                  'payment_type'     => $row['payment_type'],
+                  'payment_amount'   => $row['payment_amount'],
+                  'status'           => $row['status'],
+                  'location_name'    => $row['location_name'],
+                  'owner_name'       => $row['owner_name'],
+                  'email'            => $row['email'],
+                  'mobile_number'    => $row['mobile_number']
+              ];
+          }
+      }
+      
+      header('Content-Type: application/json');
+      echo json_encode(['success' => true, 'payments' => $payments]);
+      exit;
+  }
+
+  // =============================================
+  // ALL LOT OWNERS (AJAX: ?fetch=all_lot_owners)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'all_lot_owners') {
+      
+      $sql = "
+        SELECT 
+          l.id AS lot_id,
+          l.block_number,
+          l.lot_number,
+          l.status,
+          ll.location_name,
+          u.id AS user_id,
+          CONCAT(u.first_name, ' ', u.last_name) AS owner_name,
+          u.email,
+          u.mobile_number
+        FROM lots l
+        LEFT JOIN lot_locations ll ON l.location_id = ll.id
+        LEFT JOIN user_accounts u ON l.owner_id = u.id
+        WHERE l.owner_id IS NOT NULL
+        ORDER BY ll.location_name ASC, l.block_number ASC, l.lot_number ASC
+      ";
+      
+      $result = mysqli_query($conn, $sql);
+      $owners = [];
+      
+      if ($result) {
+          while ($row = mysqli_fetch_assoc($result)) {
+              $owners[] = [
+                  'lot_id'          => (int)$row['lot_id'],
+                  'user_id'         => (int)$row['user_id'],
+                  'block_number'    => $row['block_number'],
+                  'lot_number'      => $row['lot_number'],
+                  'status'          => $row['status'],
+                  'location_name'   => $row['location_name'],
+                  'owner_name'      => $row['owner_name'],
+                  'email'           => $row['email'],
+                  'mobile_number'   => $row['mobile_number']
+              ];
+          }
+      }
+      
+      header('Content-Type: application/json');
+      echo json_encode(['success' => true, 'owners' => $owners]);
+      exit;
+  }
 
   // =============================================
   // LOTS CRUD (AJAX: POST action=save/delete/bulk_delete)
@@ -227,36 +382,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
       exit;
   }
 
-    // 5. SAVE MAP COORDINATES & STATUS COLOR
-    if ($action === 'save_map') {
-        $lot_id = intval($_POST['lot_id']);
-        $coords = $_POST['coords']; // JSON string
-        $status = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : null;
+  // Delete single lot
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+      isset($_POST['action']) && $_POST['action'] === 'delete') {
 
-        if ($status) {
-            $stmt = $conn->prepare("UPDATE lots SET coordinates = ?, status = ? WHERE id = ?");
-            $stmt->bind_param("ssi", $coords, $status, $lot_id);
-        } else {
-            $stmt = $conn->prepare("UPDATE lots SET coordinates = ? WHERE id = ?");
-            $stmt->bind_param("si", $coords, $lot_id);
-        }
+      $lot_id      = intval($_POST['lot_id']);
+      $deleteQuery = "DELETE FROM lots WHERE id = $lot_id";
+      $success     = mysqli_query($conn, $deleteQuery);
 
-        if ($stmt->execute()) {
-          echo json_encode(['success' => true]);
-        } else {
-          echo json_encode(['success' => false, 'error' => $conn->error]);
-        }
-        $stmt->close();
-        exit;
-    }
+      header('Content-Type: application/json');
+      echo json_encode([
+          'success' => (bool)$success,
+          'message' => $success ? 'Lot deleted successfully' : mysqli_error($conn)
+      ]);
+      exit;
+  }
 
-    // 6. DELETE SINGLE
-    if ($action === 'delete') {
-        $lot_id = intval($_POST['lot_id']);
-        $ok = mysqli_query($conn, "DELETE FROM lots WHERE id = $lot_id");
-        echo json_encode(['success' => $ok]);
-        exit;
-    }
+  // Bulk delete lots
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+      isset($_POST['action']) && $_POST['action'] === 'bulk_delete') {
+
+      $ids = json_decode($_POST['lot_ids'], true);
+      if (!is_array($ids) || empty($ids)) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => 'No lots selected']);
+          exit;
+      }
 
       $idList      = implode(',', array_map('intval', $ids));
       $deleteQuery = "DELETE FROM lots WHERE id IN ($idList)";
@@ -336,6 +487,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
   // POST: Save pin location
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
       isset($_POST['action']) && $_POST['action'] === 'save_pin') {
+      
       $lot_id = intval($_POST['lot_id'] ?? 0);
       $coordinates = mysqli_real_escape_string($conn, $_POST['polygon_coordinates'] ?? '');
       $pin_status = mysqli_real_escape_string($conn, $_POST['pin_status'] ?? 'Available');
@@ -446,66 +598,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
     }
 
     // =====================================================
-  // AJAX: Update payment status
-  // =====================================================
-  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
-      isset($_POST['action']) && $_POST['action'] === 'update_payment_status') {
-      header('Content-Type: application/json');
-      $pay_id = intval($_POST['payment_id'] ?? 0);
-      $new_status = trim($_POST['new_status'] ?? '');
-      if (!$pay_id || !in_array($new_status, ['Pending','Verified','Rejected'], true)) {
-          echo json_encode(['success' => false, 'error' => 'Invalid payment ID or status']); exit;
-      }
-      $stmt = $conn->prepare("UPDATE payments SET status=? WHERE id=?");
-      $stmt->bind_param('si', $new_status, $pay_id);
-      $ok = $stmt->execute();
-      $stmt->close();
+    // UPDATE LOT STATUS (AJAX: POST action=update_lot_status)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
+        isset($_POST['action']) && $_POST['action'] === 'update_lot_status') {
+        header('Content-Type: application/json');
+        
+        $lot_id = intval($_POST['lot_id'] ?? 0);
+        $status = mysqli_real_escape_string($conn, $_POST['status'] ?? '');
+        
+        if (!$lot_id || !in_array($status, ['Available', 'Reserved', 'Sold', 'Paid'], true)) {
+            echo json_encode(['success' => false, 'error' => 'Invalid lot ID or status']);
+            exit;
+        }
+        
+        $updateQuery = "UPDATE lots SET status = '$status' WHERE id = $lot_id";
+        $success = mysqli_query($conn, $updateQuery);
+        
+        if ($success) {
+            echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Database update failed: ' . mysqli_error($conn)]);
+        }
+        exit;
+    }
 
-      // If verified, credit the lot balance
-      if ($ok && $new_status === 'Verified') {
-          $pRow = mysqli_fetch_assoc(mysqli_query($conn, "SELECT lot_id, amount_paid FROM payments WHERE id=$pay_id"));
-          if ($pRow && $pRow['lot_id']) {
-              $conn->query("UPDATE lots SET balance = balance + {$pRow['amount_paid']} WHERE id={$pRow['lot_id']}");
-          }
-      }
-      echo json_encode(['success' => $ok]); exit;
-  }
-
-  // =====================================================
-  // AJAX: Assign owner to lot
-  // =====================================================
-  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
-      isset($_POST['action']) && $_POST['action'] === 'assign_lot_owner') {
-      header('Content-Type: application/json');
-      $lot_id = intval($_POST['lot_id'] ?? 0);
-      $owner_id = intval($_POST['owner_id'] ?? 0);
-      if (!$lot_id) { echo json_encode(['success'=>false,'error'=>'Invalid lot']); exit; }
-      $stmt = $conn->prepare("UPDATE lots SET owner_id=? WHERE id=?");
-      $oid = $owner_id ?: null;
-      $stmt->bind_param('ii', $oid, $lot_id);
-      $ok = $stmt->execute();
-      $stmt->close();
-      echo json_encode(['success'=>$ok]); exit;
-  }
-
-  // =====================================================
-  // AJAX: Update lot payment info (type, balance)
-  // =====================================================
-  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
-      isset($_POST['action']) && $_POST['action'] === 'update_lot_payment') {
-      header('Content-Type: application/json');
-      $lot_id = intval($_POST['lot_id'] ?? 0);
-      $pay_type = trim($_POST['payment_type'] ?? '');
-      $pay_amt = floatval($_POST['payment_amount'] ?? 0);
-      if (!$lot_id || !in_array($pay_type, ['Down Payment','Fully Paid','Not Applicable'], true)) {
-          echo json_encode(['success'=>false,'error'=>'Invalid data']); exit;
-      }
-      $stmt = $conn->prepare("UPDATE lots SET payment_type=?, payment_amount=? WHERE id=?");
-      $stmt->bind_param('sdi', $pay_type, $pay_amt, $lot_id);
-      $ok = $stmt->execute();
-      $stmt->close();
-      echo json_encode(['success'=>$ok]); exit;
-  }
+    // =====================================================
+    // REMOVE LOT OWNER (AJAX: POST action=remove_lot_owner)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
+        isset($_POST['action']) && $_POST['action'] === 'remove_lot_owner') {
+        header('Content-Type: application/json');
+        
+        $lot_id = intval($_POST['lot_id'] ?? 0);
+        
+        if (!$lot_id) {
+            echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+            exit;
+        }
+        
+        $updateQuery = "UPDATE lots SET owner_id = NULL, status = 'Available' WHERE id = $lot_id";
+        $success = mysqli_query($conn, $updateQuery);
+        
+        echo json_encode(['success' => (bool)$success]);
+        exit;
+    }
 
     // =====================================================
   // SINGLE ACCOUNT FETCH FOR EDIT MODAL (JSON, GET)
@@ -513,28 +650,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
   if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'agent', 'user'], true)) {
       header('Content-Type: application/json');
 
-    $id   = (int) $_GET['id'];
-    $type = $_GET['fetch'];
+      $id   = (int) $_GET['id'];
+      $type = $_GET['fetch'];
 
-    if ($type === 'admin') {
-      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM admin_accounts WHERE id = ?";
-    } elseif ($type === 'agent') {
-      $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM agent_accounts WHERE id = ?";
-    } else { // user
-      $sql = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at, photo_path FROM user_accounts WHERE id = ?";
-    }
+      if ($type === 'admin') {
+        // FIXED: Removed extra columns not in DB
+        $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM admin_accounts WHERE id = ?";
+      } elseif ($type === 'agent') {
+        // FIXED: Removed extra columns not in DB
+        $sql = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, created_at, photo_path FROM agent_accounts WHERE id = ?";
+      } else { // user
+        $sql = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at, photo_path FROM user_accounts WHERE id = ?";
+      }
 
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-      echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
-      exit;
-    }
+      $stmt = $conn->prepare($sql);
+      if (!$stmt) {
+        echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
+        exit;
+      }
 
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $result  = $stmt->get_result();
-    $account = $result->fetch_assoc();
-    $stmt->close();
+      $stmt->bind_param("i", $id);
+      $stmt->execute();
+      $result  = $stmt->get_result();
+      $account = $result->fetch_assoc();
+      $stmt->close();
 
       if (!$account) {
         echo json_encode(['error' => 'Account not found', 'id' => $id]);
@@ -594,77 +733,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
         exit;
       }
 
-// =====================================================
-// ADMIN ACCOUNT CRUD  (AJAX: account_action)
-// =====================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
-    header('Content-Type: application/json');
+  // =====================================================
+  // ADMIN ACCOUNT CRUD  (AJAX: account_action)
+  // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
+      header('Content-Type: application/json');
 
-    // ---------- ADD ADMIN ----------
-    if ($_POST['account_action'] === 'add') {
-        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
-        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
-        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
-        $email             = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
-        $username          = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
-        $phone             = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
-        $address           = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
-        $availability      = isset($_POST['availability']) ? 1 : 0;
+      // ---------- ADD ADMIN ----------
+      if ($_POST['account_action'] === 'add') {
+          $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
+          $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
+          $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
+          $email             = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
+          $username          = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
+          $phone             = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
+          $address           = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
+          $availability      = isset($_POST['availability']) ? 1 : 0;
 
-        $raw_password = $_POST['password'] ?? '';
-        if ($raw_password === '') {
-            echo json_encode(['success' => false, 'error' => 'Password is required.']);
-            exit;
-        }
-        $password = password_hash($raw_password, PASSWORD_DEFAULT);
+          // password (required)
+          $raw_password = $_POST['password'] ?? '';
+          if ($raw_password === '') {
+              echo json_encode(['success' => false, 'error' => 'Password is required.']);
+              exit;
+          }
+          $password = password_hash($raw_password, PASSWORD_DEFAULT);
 
-        $photo_path = null;
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-        }
+          // optional photo
+          $photo_path = null;
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+          }
 
-        $sql = "INSERT INTO admin_accounts 
-                (first_name, middle_name, last_name, email, username, password,
-                phone, address, photo_path, availability)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
+          // FIXED: Removed columns that don't exist in admin_accounts table
+          $sql = "INSERT INTO admin_accounts 
+                  (first_name, middle_name, last_name, email, username, password,
+                  phone, address, photo_path, availability)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+          $stmt = $conn->prepare($sql);
 
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
-            exit;
-        }
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
+              exit;
+          }
 
-        $stmt->bind_param(
-            "sssssssssi",
-            $first_name, $middle_name, $last_name, $email, $username, $password,
-            $phone, $address, $photo_path, $availability
-        );
+          // 9 strings + 1 int = "sssssssssi"
+          $stmt->bind_param(
+              "sssssssssi",
+              $first_name, $middle_name, $last_name, $email, $username, $password,
+              $phone, $address, $photo_path, $availability
+          );
 
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? 'Admin account created successfully!' : 'Error creating admin account: ' . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
+          $ok = $stmt->execute();
 
-    // ---------- UPDATE ADMIN ----------
-    if ($_POST['account_action'] === 'update') {
-        $account_id       = intval($_POST['account_id'] ?? 0);
-        $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
-        $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
-        $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
-        $email            = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
-        $username         = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
-        $phone            = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
-        $address          = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
-        $availability     = isset($_POST['availability']) ? 1 : 0;
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? 'Admin account created successfully!'
+                              : 'Error creating admin account: ' . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
 
-        $photo_path = null;
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-        }
+      // ---------- UPDATE ADMIN ----------
+      if ($_POST['account_action'] === 'update') {
+          $account_id       = intval($_POST['account_id'] ?? 0);
+          $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
+          $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
+          $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
+          $email            = mysqli_real_escape_string($conn, $_POST['email']              ?? '');
+          $username         = mysqli_real_escape_string($conn, $_POST['username']           ?? '');
+          $phone            = mysqli_real_escape_string($conn, $_POST['phone']              ?? '');
+          $address          = mysqli_real_escape_string($conn, $_POST['address']            ?? '');
+          $availability     = isset($_POST['availability']) ? 1 : 0;
+
+          $photo_path = null;
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+          }
 
           // FIXED: Removed non-existent columns from UPDATE logic
           if (!empty($_POST['password'])) {
@@ -707,400 +852,538 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
               );
           }
 
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? 'Account updated successfully!' : 'Error updating account: ' . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
+          $ok = $stmt->execute();
 
-    // ---------- DELETE ADMIN ----------
-    if ($_POST['account_action'] === 'delete') {
-        $account_id = intval($_POST['account_id'] ?? 0);
-        $sql  = "DELETE FROM admin_accounts WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
-            exit;
-        }
-        $stmt->bind_param("i", $account_id);
-        $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? 'Account updated successfully!'
+                              : 'Error updating account: ' . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
 
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? 'Account deleted successfully!' : 'Error deleting account: ' . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
-}
+      // ---------- DELETE ADMIN ----------
+      if ($_POST['account_action'] === 'delete') {
+          $account_id = intval($_POST['account_id'] ?? 0);
 
-// =====================================================
-// AGENT ACCOUNT CRUD (agent_action)
-// =====================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
+          $sql  = "DELETE FROM admin_accounts WHERE id = ?";
+          $stmt = $conn->prepare($sql);
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => 'Prepare failed: ' . $conn->error]);
+              exit;
+          }
+          $stmt->bind_param("i", $account_id);
+          $ok = $stmt->execute();
 
-    $action = $_POST['agent_action'];
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? 'Account deleted successfully!'
+                              : 'Error deleting account: ' . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
+  }
 
-    if ($action === 'add' || $action === 'update') {
-        header('Content-Type: application/json');
-    }
 
-    // ----------------- ADD AGENT (AJAX) -----------------
-    if ($action === 'add') {
-        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $username          = mysqli_real_escape_string($conn, $_POST['username']);
-        $email             = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
-        $address           = mysqli_real_escape_string($conn, $_POST['address']);
-        $availability      = isset($_POST['availability']) ? 1 : 0;
-        $password          = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-        $photo_path = null;
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-        }
+  // =====================================================
+  // AGENT ACCOUNT CRUD (agent_action)
+  //    – add/update: JSON (AJAX)
+  //    – delete: normal form, no JSON
+  // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
 
-        $sql = "INSERT INTO agent_accounts 
+      $action = $_POST['agent_action'];
+
+      // Only ADD & UPDATE should respond with JSON (AJAX)
+      if ($action === 'add' || $action === 'update') {
+          header('Content-Type: application/json');
+      }
+
+      // ----------------- ADD AGENT (AJAX) -----------------
+      if ($action === 'add') {
+          $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
+          $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']);
+          $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']);
+          $username          = mysqli_real_escape_string($conn, $_POST['username']);
+          $email             = mysqli_real_escape_string($conn, $_POST['email']);
+          $phone             = mysqli_real_escape_string($conn, $_POST['phone']);
+          $address           = mysqli_real_escape_string($conn, $_POST['address']);
+          
+          // Removed short_description and years_experience to prevent crash
+          $availability      = isset($_POST['availability']) ? 1 : 0;
+          
+          $password          = password_hash($_POST['password'], PASSWORD_DEFAULT);
+
+          $photo_path = null;
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+          }
+
+          // NOTE: years_experience and short_description removed
+          $sql = "INSERT INTO agent_accounts 
             (first_name, middle_name, last_name, username, email, phone, address, 
             photo_path, availability, password, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
 
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-        }
+          $stmt = $conn->prepare($sql);
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+              exit;
+          }
 
-        $stmt->bind_param("ssssssssis", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $photo_path, $availability, $password);
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? "Agent account created successfully!" : "Error creating agent account: " . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
+          // 8 strings + 1 int + 1 string
+          $stmt->bind_param(
+            "ssssssssis",
+            $first_name, $middle_name, $last_name, $username, $email, $phone,
+            $address, $photo_path, $availability, $password
+          );
 
-    // ----------------- UPDATE AGENT (AJAX) -----------------
-    if ($action === 'update') {
-        $agent_id          = intval($_POST['account_id']);
-        $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-        $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $username          = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
-        $email             = mysqli_real_escape_string($conn, $_POST['email']);
-        $phone             = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
-        $address           = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-        $availability      = isset($_POST['availability']) ? 1 : 0;
+          $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? "Agent account created successfully!"
+                              : "Error creating agent account: " . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
 
-        $photo_path = null;
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-        }
+      // ----------------- UPDATE AGENT (AJAX) -----------------
+      if ($action === 'update') {
+          $agent_id         = intval($_POST['account_id']);
+          $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']);
+          $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+          $last_name        = mysqli_real_escape_string($conn, $_POST['last_name']);
+          $username         = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
+          $email            = mysqli_real_escape_string($conn, $_POST['email']);
+          $phone            = mysqli_real_escape_string($conn, $_POST['phone'] ?? '');
+          $address          = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+          
+          // Removed short_description and years_experience to prevent crash
+          $availability     = isset($_POST['availability']) ? 1 : 0;
 
-        if (!empty($_POST['password'])) {
-            $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-            $sql = "UPDATE agent_accounts 
-                SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                  address=?, availability=?, password=?, photo_path=? 
-                WHERE id=?";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-                exit;
-            }
-            $stmt->bind_param("ssssssssisi", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $availability, $password, $photo_path, $agent_id);
-        } else {
-            $sql = "UPDATE agent_accounts 
-                SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
-                  address=?, availability=?, photo_path=? 
-                WHERE id=?";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-                exit;
-            }
-            $stmt->bind_param("sssssssisi", $first_name, $middle_name, $last_name, $username, $email, $phone, $address, $availability, $photo_path, $agent_id);
-        }
+          $photo_path = null;
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+          }
 
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? "Agent account updated successfully!" : "Error updating agent account: " . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
+          if (!empty($_POST['password'])) {
+              $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-    // ----------------- DELETE AGENT (NORMAL FORM) -----------------
-    if ($action === 'delete') {
-        $agent_id = intval($_POST['agent_id']);
-        $sql      = "DELETE FROM agent_accounts WHERE id = ?";
-        $stmt     = $conn->prepare($sql);
+              $sql = "UPDATE agent_accounts 
+                  SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                    address=?, availability=?, password=?, photo_path=? 
+                  WHERE id=?";
+              $stmt = $conn->prepare($sql);
+              if (!$stmt) {
+                  echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+                  exit;
+              }
 
-        if (!$stmt) {
-          $error_message = "Prepare failed: " . $conn->error;
-        } else {
-          $stmt->bind_param("i", $agent_id);
-          if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Agent account deleted successfully!";
-            header('Location: admindashboard.php#admin-accounts');
-            exit;
+              $stmt->bind_param(
+                "ssssssssisi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $availability, $password, $photo_path, $agent_id
+              );
           } else {
-            $error_message = "Error deleting agent account: " . $conn->error;
+              $sql = "UPDATE agent_accounts 
+                  SET first_name=?, middle_name=?, last_name=?, username=?, email=?, phone=?, 
+                    address=?, availability=?, photo_path=? 
+                  WHERE id=?";
+              $stmt = $conn->prepare($sql);
+              if (!$stmt) {
+                  echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+                  exit;
+              }
+
+              $stmt->bind_param(
+                "sssssssisi",
+                $first_name, $middle_name, $last_name, $username, $email, $phone,
+                $address, $availability, $photo_path, $agent_id
+              );
+          }
+
+          $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? "Agent account updated successfully!"
+                              : "Error updating agent account: " . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
+
+      // ----------------- DELETE AGENT (NORMAL FORM) -----------------
+      if ($action === 'delete') {
+          $agent_id = intval($_POST['agent_id']);
+          $sql      = "DELETE FROM agent_accounts WHERE id = ?";
+          $stmt     = $conn->prepare($sql);
+
+          if (!$stmt) {
+            $error_message = "Prepare failed: " . $conn->error;
+          } else {
+            $stmt->bind_param("i", $agent_id);
+            if ($stmt->execute()) {
+              $_SESSION['success_message'] = "Agent account deleted successfully!";
+              header('Location: admindashboard.php#admin-accounts');
+              exit;
+            } else {
+              $error_message = "Error deleting agent account: " . $conn->error;
+            }
+            $stmt->close();
+          }
+          // PRG: redirect after POST to avoid resubmission
+      }
+  }
+
+
+  // =====================================================
+  // USER ACCOUNT CRUD (AJAX: user_action)
+  // =====================================================
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
+      header('Content-Type: application/json');
+
+      // ---------- ADD USER ----------
+      if ($_POST['user_action'] === 'add') {
+          $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
+          $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name']);
+          $username      = mysqli_real_escape_string($conn, $_POST['username']);
+          $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
+          $email         = mysqli_real_escape_string($conn, $_POST['email']);
+          $mobile_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
+          $address       = mysqli_real_escape_string($conn, $_POST['address']);
+          $password      = password_hash($_POST['password'], PASSWORD_DEFAULT);
+
+          $photo_path = null;
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+          }
+
+          $sql  = "INSERT INTO user_accounts 
+                  (first_name, middle_name, username, last_name, email, phone_number, address, password, photo_path)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+          $stmt = $conn->prepare($sql);
+
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+              exit;
+          }
+
+          $stmt->bind_param(
+              "sssssssss",
+              $first_name, $middle_name, $username, $last_name, $email,
+              $phone_number, $address, $password, $photo_path
+          );
+
+          $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? "User account created successfully!" :
+                                "Error creating user account: " . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
+
+      // ---------- UPDATE USER ----------
+      if ($_POST['user_action'] === 'update') {
+          $user_id       = intval($_POST['account_id']);
+          $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
+          $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+          $username      = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
+          $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
+          $email         = mysqli_real_escape_string($conn, $_POST['email']);
+          $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? '');
+          $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+
+          $photo_path   = null;
+          $passwordHash = null;
+
+          $update_fields = [
+              'first_name=?',
+              'middle_name=?',
+              'username=?',
+              'last_name=?',
+              'email=?',
+              'phone_number=?',
+              'address=?'
+          ];
+          $bind_types  = "sssssss";
+          $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $phone_number, $address];
+
+          if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+              $photo_path = handleFileUpload($_FILES['photo']);
+              if ($photo_path !== null) {
+                  $update_fields[] = 'photo_path=?';
+                  $bind_types     .= 's';
+                  $bind_values[]   = $photo_path;
+              }
+          }
+
+          if (!empty($_POST['password'])) {
+              $passwordHash    = password_hash($_POST['password'], PASSWORD_DEFAULT);
+              $update_fields[] = 'password=?';
+              $bind_types     .= 's';
+              $bind_values[]   = $passwordHash;
+          }
+
+          $sql = "UPDATE user_accounts SET " . implode(', ', $update_fields) . " WHERE id=?";
+          $bind_types  .= 'i';
+          $bind_values[] = $user_id;
+
+          $stmt = $conn->prepare($sql);
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+              exit;
+          }
+
+          $stmt->bind_param($bind_types, ...$bind_values);
+
+          $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? "User account updated successfully!" :
+                                "Error updating user account: " . $stmt->error
+          ]);
+          $stmt->close();
+          exit;
+      }
+
+      // ---------- DELETE USER ----------
+      if ($_POST['user_action'] === 'delete') {
+          $user_id = intval($_POST['user_id']);
+          $sql     = "DELETE FROM user_accounts WHERE id = ?";
+          $stmt    = $conn->prepare($sql);
+          if (!$stmt) {
+              echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
+              exit;
+          }
+          $stmt->bind_param("i", $user_id);
+
+          $ok = $stmt->execute();
+          echo json_encode([
+              'success' => $ok,
+              'message' => $ok ? "User account deleted successfully!" :
+                                "Error deleting user account: " . $conn->error
+          ]);
+          $stmt->close();
+          exit;
+      }
+  }
+
+  // =============================================
+  // GENERIC GET FETCH: lots / locations (AJAX)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
+      if ($_GET['fetch'] === 'lots') {
+          $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : 0;
+
+          if ($location_id > 0) {
+              $lotsQuery = "SELECT lots.*, lot_locations.location_name
+                            FROM lots
+                            LEFT JOIN lot_locations ON lots.location_id = lot_locations.id
+                            WHERE lots.location_id = $location_id
+                            ORDER BY lots.id DESC";
+          } else {
+              $lotsQuery = "SELECT lots.*, lot_locations.location_name
+                            FROM lots
+                            LEFT JOIN lot_locations ON lots.location_id = lot_locations.id
+                            ORDER BY lots.id DESC";
+          }
+
+          $lotsResult = mysqli_query($conn, $lotsQuery);
+          $lots        = [];
+          if ($lotsResult) {
+              while ($lot = mysqli_fetch_assoc($lotsResult)) {
+                  $lots[] = $lot;
+              }
+          }
+
+          header('Content-Type: application/json');
+          echo json_encode($lots);
+          exit;
+      }
+
+      if ($_GET['fetch'] === 'locations') {
+          $locationsQuery  = "SELECT id, location_name FROM lot_locations";
+          $locationsResult = mysqli_query($conn, $locationsQuery);
+          $locations       = [];
+          if ($locationsResult) {
+              while ($row = mysqli_fetch_assoc($locationsResult)) {
+                  $locations[] = $row;
+              }
+          }
+
+          header('Content-Type: application/json');
+          echo json_encode($locations);
+          exit;
+      }
+  }
+
+
+
+  // =============================================
+  // VIEWINGS: REQUEST & ASSIGN
+  // =============================================
+
+  // Request a viewing (public form)
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'request') {
+      $user_id          = $_SESSION['user_id'] ?? null;
+      $agent_id         = null;
+      $client_first_name= mysqli_real_escape_string($conn, $_POST['client_first_name']);
+      $client_last_name = mysqli_real_escape_string($conn, $_POST['client_last_name']);
+      $client_email     = mysqli_real_escape_string($conn, $_POST['client_email']);
+      $client_phone     = mysqli_real_escape_string($conn, $_POST['client_phone']);
+      $lot_id           = mysqli_real_escape_string($conn, $_POST['lot_id']);
+      $preferred_date   = mysqli_real_escape_string($conn, $_POST['preferred_date']);
+      $status           = 'requested';
+      $client_lat       = mysqli_real_escape_string($conn, $_POST['client_lat']);
+      $client_lng       = mysqli_real_escape_string($conn, $_POST['client_lng']);
+      $location_id      = mysqli_real_escape_string($conn, $_POST['location_id']);
+
+      $insertQuery = "INSERT INTO viewings (
+                          agent_id, user_id, client_first_name, client_last_name, client_email, client_phone,
+                          lot_no, preferred_at, status, client_lat, client_lng, location_id, lot_id, created_at
+                      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+
+      $stmt = $conn->prepare($insertQuery);
+      $stmt->bind_param(
+          "iissssissssss",
+          $agent_id, $user_id, $client_first_name, $client_last_name,
+          $client_email, $client_phone, $lot_id, $preferred_date,
+          $status, $client_lat, $client_lng, $location_id, $lot_id
+      );
+
+      if ($stmt->execute()) {
+          $success_message = "Viewing request submitted successfully!";
+      } else {
+          $error_message = "Error submitting request: " . $stmt->error;
+      }
+      $stmt->close();
+  }
+
+  // Assign agent to viewing (admin)
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'assign_agent') {
+      $viewingId = intval($_POST['viewing_id']);
+      $agentId   = intval($_POST['agent_id']);
+
+      $sql  = "UPDATE viewings SET agent_id = ?, status = 'scheduled' WHERE id = ?";
+      $stmt = $conn->prepare($sql);
+      if ($stmt) {
+          $stmt->bind_param("ii", $agentId, $viewingId);
+          if ($stmt->execute()) {
+              $success_message = "Agent assigned successfully!";
+          } else {
+              $error_message = "Failed to assign agent.";
           }
           $stmt->close();
-        }
-    }
-}
+      }
+      header("Location: " . $_SERVER['PHP_SELF'] . "#viewings");
+      exit;
+  }
 
-// =====================================================
-// USER ACCOUNT CRUD (AJAX: user_action)
-// =====================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
-    header('Content-Type: application/json');
+  // =============================================
+  // FETCH VIEWINGS & ACTIVE AGENTS FOR UI
+  // =============================================
 
-    // ---------- ADD USER ----------
-    if ($_POST['user_action'] === 'add') {
-        $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name']);
-        $username      = mysqli_real_escape_string($conn, $_POST['username']);
-        $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email         = mysqli_real_escape_string($conn, $_POST['email']);
-        $mobile_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
-        $address       = mysqli_real_escape_string($conn, $_POST['address']);
-        $password      = password_hash($_POST['password'], PASSWORD_DEFAULT);
+  // Viewing list
+  $all_viewings  = [];
+  // Only fetch active viewings for the default list, or modify to fetch all
+  $viewingsQuery = "
+      SELECT 
+          v.*,
+          ll.location_name,
+          l.block_number,
+          l.lot_number,
+          l.lot_size,
+          l.lot_price
+      FROM viewings v
+      LEFT JOIN lots l 
+          ON (v.lot_id IS NOT NULL AND l.id = v.lot_id) 
+          OR (v.lot_id IS NULL AND l.lot_number = v.lot_no)
+      LEFT JOIN lot_locations ll 
+          ON ll.id = l.location_id
+      ORDER BY v.created_at DESC
+      LIMIT 10
+  ";
 
-        $photo_path = null;
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-        }
+  $viewingsResult = mysqli_query($conn, $viewingsQuery);
+  if ($viewingsResult) {
+      while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
+          $all_viewings[] = $viewing;
+      }
+  }
 
-        $sql  = "INSERT INTO user_accounts 
-                (first_name, middle_name, username, last_name, email, mobile_number, address, password, photo_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
+  // Active agents for assignment dropdown
+  $agents      = [];
+  $agentsQuery = "SELECT id, first_name, last_name FROM agent_accounts WHERE status = 'active'";
+  $agentsResult = mysqli_query($conn, $agentsQuery);
+  if ($agentsResult) {
+      while ($agent = mysqli_fetch_assoc($agentsResult)) {
+          $agents[] = $agent;
+      }
+  }
 
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-        }
+  // =============================================
+  // SINGLE FETCH BLOCK FOR ACCOUNTS (ADMIN UI)
+  // =============================================
 
-        $stmt->bind_param("sssssssss", $first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address, $password, $photo_path);
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? "User account created successfully!" : "Error creating user account: " . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
-
-    // ---------- UPDATE USER ----------
-    if ($_POST['user_action'] === 'update') {
-        $user_id       = intval($_POST['account_id']);
-        $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
-        $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
-        $username      = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
-        $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
-        $email         = mysqli_real_escape_string($conn, $_POST['email']);
-        $mobile_number = mysqli_real_escape_string($conn, $_POST['mobile_number'] ?? '');
-        $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
-
-        $photo_path   = null;
-        $passwordHash = null;
-
-        $update_fields = [
-            'first_name=?', 'middle_name=?', 'username=?', 'last_name=?', 'email=?', 'mobile_number=?', 'address=?'
-        ];
-        $bind_types  = "sssssss";
-        $bind_values = [$first_name, $middle_name, $username, $last_name, $email, $mobile_number, $address];
-
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $photo_path = handleFileUpload($_FILES['photo']);
-            if ($photo_path !== null) {
-                $update_fields[] = 'photo_path=?';
-                $bind_types     .= 's';
-                $bind_values[]   = $photo_path;
-            }
-        }
-
-        if (!empty($_POST['password'])) {
-            $passwordHash    = password_hash($_POST['password'], PASSWORD_DEFAULT);
-            $update_fields[] = 'password=?';
-            $bind_types     .= 's';
-            $bind_values[]   = $passwordHash;
-        }
-
-        $sql = "UPDATE user_accounts SET " . implode(', ', $update_fields) . " WHERE id=?";
-        $bind_types  .= 'i';
-        $bind_values[] = $user_id;
-
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-        }
-
-        $stmt->bind_param($bind_types, ...$bind_values);
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? "User account updated successfully!" : "Error updating user account: " . $stmt->error
-        ]);
-        $stmt->close();
-        exit;
-    }
-
-    // ---------- DELETE USER ----------
-    if ($_POST['user_action'] === 'delete') {
-        $user_id = intval($_POST['user_id']);
-        $sql     = "DELETE FROM user_accounts WHERE id = ?";
-        $stmt    = $conn->prepare($sql);
-        if (!$stmt) {
-            echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
-            exit;
-        }
-        $stmt->bind_param("i", $user_id);
-        $ok = $stmt->execute();
-        echo json_encode([
-            'success' => $ok,
-            'message' => $ok ? "User account deleted successfully!" : "Error deleting user account: " . $conn->error
-        ]);
-        $stmt->close();
-        exit;
-    }
-}
-
-// =============================================
-// VIEWINGS: REQUEST & ASSIGN
-// =============================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'assign_agent') {
-    $viewingId = intval($_POST['viewing_id']);
-    $agentId   = intval($_POST['agent_id']);
-
-    $sql  = "UPDATE viewings SET agent_id = ?, status = 'scheduled' WHERE id = ?";
-    $stmt = $conn->prepare($sql);
-    if ($stmt) {
-        $stmt->bind_param("ii", $agentId, $viewingId);
-        if ($stmt->execute()) {
-            $success_message = "Agent assigned successfully!";
-        } else {
-            $error_message = "Failed to assign agent.";
-        }
-        $stmt->close();
-    }
-    header("Location: " . $_SERVER['PHP_SELF'] . "#viewings");
-    exit;
-}
-
-// Viewing list
-$all_viewings  = [];
-$viewingsQuery = "
-    SELECT 
-        v.*,
-        ll.location_name,
-        l.block_number,
-        l.lot_number,
-        l.lot_size,
-        l.lot_price
-    FROM viewings v
-    LEFT JOIN lots l 
-        ON (v.lot_id IS NOT NULL AND l.id = v.lot_id) 
-        OR (v.lot_id IS NULL AND l.lot_number = v.lot_no)
-    LEFT JOIN lot_locations ll 
-        ON ll.id = l.location_id
-    ORDER BY v.created_at DESC
-    LIMIT 10
-";
-$viewingsResult = mysqli_query($conn, $viewingsQuery);
-if ($viewingsResult) {
-    while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
-        $all_viewings[] = $viewing;
-    }
-}
-
-// Active agents
-$agents      = [];
-$agentsQuery = "SELECT id, first_name, last_name FROM agent_accounts WHERE status = 'active'";
-$agentsResult = mysqli_query($conn, $agentsQuery);
-if ($agentsResult) {
-    while ($agent = mysqli_fetch_assoc($agentsResult)) {
-        $agents[] = $agent;
-    }
-}
-
-// =============================================
-// FETCH ACCOUNTS FOR ADMIN UI
-// =============================================
-$adminAccounts   = [];
-$accountsQuery   = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, photo_path, availability, created_at FROM admin_accounts ORDER BY created_at DESC";
-$accountsResult  = mysqli_query($conn, $accountsQuery);
-if ($accountsResult) {
+  // Admin accounts
+  $adminAccounts   = [];
+  // FIXED: Removed missing columns from SELECT
+  $accountsQuery   = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, photo_path, availability, created_at FROM admin_accounts ORDER BY created_at DESC";
+  $accountsResult  = mysqli_query($conn, $accountsQuery);
+  if (!$accountsResult) {
+    die('Admin Accounts Query Error: ' . mysqli_error($conn));
+  }
   while ($account = mysqli_fetch_assoc($accountsResult)) {
     $adminAccounts[] = $account;
   }
-}
 
-$agentAccounts  = [];
-$agentQuery     = "SELECT id, first_name, middle_name, last_name, username, email, phone, address, availability, status, created_at FROM agent_accounts ORDER BY created_at DESC";
-$agentResult = mysqli_query($conn, $agentQuery);
-if ($agentResult) {
+  // Agent accounts
+  $agentAccounts  = [];
+  // FIXED: Removed missing columns from SELECT
+  $agentQuery     = "
+      SELECT 
+          id,
+          first_name,
+          middle_name,
+          last_name,
+          username,
+          email,
+          phone,
+          address,
+          availability,
+          status,
+          created_at
+      FROM agent_accounts
+      ORDER BY created_at DESC
+  ";
+
+  $agentResult = mysqli_query($conn, $agentQuery);
+
+  if (!$agentResult) {
+      die("Agent Query Error: " . mysqli_error($conn));
+  }
+
   while ($agent = mysqli_fetch_assoc($agentResult)) {
       $agentAccounts[] = $agent;
   }
-}
-
-$userAccounts = [];
-$userQuery    = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts ORDER BY created_at DESC LIMIT 5";
-$userResult   = mysqli_query($conn, $userQuery);
-if ($userResult) {
-    while ($user = mysqli_fetch_assoc($userResult)) {
-        $userAccounts[] = $user;
-    }
-}
 
 
-  // =============================================
-  // FETCH PAYMENTS & LOT OWNERS DATA
-  // =============================================
-  // All payments
-  $allPayments = [];
-  $pq = "SELECT p.id, p.user_id, p.lot_id, p.amount_paid, p.payment_date, p.payment_method,
-                p.reference_no, p.status, p.remarks,
-                u.first_name AS u_first, u.last_name AS u_last,
-                l.block_number, l.lot_number, ll.location_name
-         FROM payments p
-         LEFT JOIN user_accounts u ON p.user_id = u.id
-         LEFT JOIN lots l ON p.lot_id = l.id
-         LEFT JOIN lot_locations ll ON l.location_id = ll.id
-         ORDER BY p.payment_date DESC";
-  $pqr = mysqli_query($conn, $pq);
-  if ($pqr) { while ($pr = mysqli_fetch_assoc($pqr)) $allPayments[] = $pr; }
+  // User accounts
+  $userAccounts = [];
+  $userQuery    = "SELECT id, first_name, middle_name, last_name, email, mobile_number, address, created_at FROM user_accounts ORDER BY created_at DESC LIMIT 5";
+  $userResult   = mysqli_query($conn, $userQuery);
+  if ($userResult) {
+      while ($user = mysqli_fetch_assoc($userResult)) {
+          $userAccounts[] = $user;
+      }
+  }
 
-  // Lot owners: lots that are Sold or Reserved
-  $lotOwners = [];
-  $loq = "SELECT l.id, l.block_number, l.lot_number, l.lot_size, l.lot_price,
-                 l.status, l.payment_type, l.payment_amount, l.balance, l.owner_id,
-                 u.first_name AS o_first, u.last_name AS o_last, u.email AS o_email,
-                 ll.location_name
-          FROM lots l
-          LEFT JOIN user_accounts u ON l.owner_id = u.id
-          LEFT JOIN lot_locations ll ON l.location_id = ll.id
-          WHERE l.status IN ('Sold','Reserved')
-          ORDER BY l.id DESC";
-  $loqr = mysqli_query($conn, $loq);
-  if ($loqr) { while ($lo = mysqli_fetch_assoc($loqr)) $lotOwners[] = $lo; }
-
-  // All users for owner assignment dropdown
-  $allUsers = [];
-  $auq = mysqli_query($conn, "SELECT id, first_name, last_name, email FROM user_accounts ORDER BY first_name");
-  if ($auq) { while ($au = mysqli_fetch_assoc($auq)) $allUsers[] = $au; }
 
   // Handle file uploads
   function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
@@ -1124,149 +1407,680 @@ if ($userResult) {
       return null;
   }
 
-// Pending documents stats
-$pendingDocumentsQuery = "SELECT COUNT(*) as total FROM documents WHERE status = 'pending'";
-$pendingDocumentsResult = mysqli_query($conn, $pendingDocumentsQuery);
-$dashboard_stats['pending_documents'] = $pendingDocumentsResult ? mysqli_fetch_assoc($pendingDocumentsResult)['total'] : 0;
+    $dashboard_stats['pending_documents'] = getPendingDocumentsCount($conn);
 
-$monthly_sales = [];
-$salesQuery = "
-  SELECT DATE_FORMAT(sale_date, '%b %Y') AS month, SUM(amount) AS total
-  FROM sales
-  WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-  GROUP BY month
-  ORDER BY sale_date ASC
-";
-$salesResult = mysqli_query($conn, $salesQuery);
-if ($salesResult) {
-    while ($row = mysqli_fetch_assoc($salesResult)) {
-        $monthly_sales[] = [
-            'month' => $row['month'],
-            'amount' => (float)$row['total']
-        ];
+    $dashboard_stats['total_sales'] = 0;
+    if ($salesAmountCol) {
+      $salesTotalQuery = "SELECT IFNULL(SUM($salesAmountCol), 0) AS total FROM sales";
+      $salesTotalResult = mysqli_query($conn, $salesTotalQuery);
+      if ($salesTotalResult) {
+        $salesTotalRow = mysqli_fetch_assoc($salesTotalResult);
+        $dashboard_stats['total_sales'] = (float)($salesTotalRow['total'] ?? 0);
+      }
     }
-}
-
-// Handle fetching analytics data
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'analytics') {
-    $date_from = isset($_GET['date_from']) ? $_GET['date_from'] : null;
-    $date_to = isset($_GET['date_to']) ? $_GET['date_to'] : null;
-    $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
-
-    $salesQuery = "SELECT SUM(amount) as total FROM sales WHERE 1";
-    $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
-    $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
-    $pendingDocumentsQuery = "SELECT COUNT(*) as total FROM documents WHERE status = 'pending'";
-
-    $salesWhere = [];
-    if ($date_from) $salesWhere[] = "sale_date >= '" . mysqli_real_escape_string($conn, $date_from) . "'";
-    if ($date_to) $salesWhere[] = "sale_date <= '" . mysqli_real_escape_string($conn, $date_to) . "'";
-    if ($location_id) $salesWhere[] = "location_id = $location_id";
-    if ($salesWhere) $salesQuery .= " AND " . implode(' AND ', $salesWhere);
-
-    $monthlySalesQuery = "SELECT DATE_FORMAT(sale_date, '%b %Y') AS month, SUM(amount) AS total FROM sales WHERE 1";
-    if ($salesWhere) $monthlySalesQuery .= " AND " . implode(' AND ', $salesWhere);
-    $monthlySalesQuery .= " GROUP BY month ORDER BY sale_date ASC";
-
-    $salesResult = mysqli_query($conn, $salesQuery);
-    $lotsResult = mysqli_query($conn, $lotsQuery);
-    $agentsResult = mysqli_query($conn, $agentsQuery);
-    $pendingDocumentsResult = mysqli_query($conn, $pendingDocumentsQuery);
-
-    $kpis = [
-        'total_sales' => $salesResult ? (float)mysqli_fetch_assoc($salesResult)['total'] : 0,
-        'total_lots' => $lotsResult ? (int)mysqli_fetch_assoc($lotsResult)['total'] : 0,
-        'available_agents' => $agentsResult ? (int)mysqli_fetch_assoc($agentsResult)['total'] : 0,
-        'pending_documents' => $pendingDocumentsResult ? (int)mysqli_fetch_assoc($pendingDocumentsResult)['total'] : 0,
-    ];
 
     $monthly_sales = [];
-    $monthlySalesResult = mysqli_query($conn, $monthlySalesQuery);
-    if ($monthlySalesResult) {
-        while ($row = mysqli_fetch_assoc($monthlySalesResult)) {
-            $monthly_sales[] = ['month' => $row['month'], 'amount' => (float)$row['total']];
+    if ($salesAmountCol && $salesDateCol) {
+      $salesQuery = "
+      SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+      FROM sales
+      WHERE $salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+      GROUP BY YEAR($salesDateCol), MONTH($salesDateCol), month
+      ORDER BY YEAR($salesDateCol) ASC, MONTH($salesDateCol) ASC
+      ";
+      $salesResult = mysqli_query($conn, $salesQuery);
+      if ($salesResult) {
+        while ($row = mysqli_fetch_assoc($salesResult)) {
+          $monthly_sales[] = [
+            'month' => $row['month'],
+            'amount' => (float)$row['total']
+          ];
         }
+      }
     }
 
-    header('Content-Type: application/json');
-    echo json_encode(['kpis' => $kpis, 'monthly_sales' => $monthly_sales]);
-    exit;
-}
+  // Handle fetching analytics data
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'analytics') {
+      $date_from = isset($_GET['date_from']) ? $_GET['date_from'] : null;
+      $date_to = isset($_GET['date_to']) ? $_GET['date_to'] : null;
+      $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['export']) && $_GET['export'] === 'analytics') {
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="analytics_export.csv"');
-    $output = fopen('php://output', 'w');
-    fputcsv($output, ['Metric', 'Value']);
-    fclose($output);
-    exit;
-}
+      // KPIs
+      $salesQuery = $salesAmountCol
+        ? "SELECT IFNULL(SUM($salesAmountCol), 0) as total FROM sales WHERE 1"
+        : "SELECT 0 as total";
+      $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
+      $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
 
-// Helpers
-function respondJSON($data) { header("Content-Type: application/json"); echo json_encode($data); exit; }
-function logAudit($conn, $admin_id, $action, $details) {
-    $stmt = $conn->prepare("INSERT INTO audit_logs (admin_id, action, details) VALUES (?, ?, ?)");
-    $stmt->bind_param("iss", $admin_id, $action, $details);
-    $stmt->execute();
-    $stmt->close();
-}
-function sendNotification($conn, $title, $message, $type = 'info') {
-    $stmt = $conn->prepare("INSERT INTO notifications (title, message, type) VALUES (?, ?, ?)");
-    $stmt->bind_param("sss", $title, $message, $type);
-    $stmt->execute();
-    $stmt->close();
-}
+      // Add filters
+      $salesWhere = [];
+      if ($salesDateCol && $date_from) $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+      if ($salesDateCol && $date_to) $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+      if ($salesLocationCol && $location_id) $salesWhere[] = "$salesLocationCol = $location_id";
+      if ($salesWhere) $salesQuery .= " AND " . implode(' AND ', $salesWhere);
 
-// GET FETCH HANDLERS
-if (isset($_GET['fetch']) && $_GET['fetch'] === 'audit_logs') {
-    $res = mysqli_query($conn, "SELECT a.*, ad.first_name, ad.last_name FROM audit_logs a LEFT JOIN admin_accounts ad ON ad.id = a.admin_id ORDER BY a.created_at DESC LIMIT 100");
-    $logs = []; while ($row = mysqli_fetch_assoc($res)) { $logs[] = $row; } respondJSON($logs);
-}
-if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications') {
-    $res = mysqli_query($conn, "SELECT * FROM notifications ORDER BY created_at DESC LIMIT 20");
-    $data = []; while ($row = mysqli_fetch_assoc($res)) { $data[] = $row; } respondJSON($data);
-}
-if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications_count') {
-    $res = mysqli_query($conn, "SELECT COUNT(*) AS total FROM notifications");
-    $row = mysqli_fetch_assoc($res); respondJSON(["count" => intval($row["total"])]);
-}
-if (isset($_GET['fetch']) && $_GET['fetch'] === 'documents') {
-    $res = mysqli_query($conn, "SELECT * FROM documents WHERE status='pending' ORDER BY uploaded_at DESC");
-    $docs = []; while ($row = mysqli_fetch_assoc($res)) { $docs[] = $row; } respondJSON($docs);
-}
+      if ($location_id) {
+        $lotsQuery .= " AND location_id = $location_id";
+      }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'all_user_documents') {
-    $docs = [];
-    $query = "SELECT d.*, u.first_name, u.last_name, u.email FROM user_documents d LEFT JOIN user_accounts u ON d.user_id = u.id WHERE d.status = 'pending' ORDER BY d.uploaded_at DESC";
-    $stmt = $conn->prepare($query);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) { $docs[] = $row; }
-    $stmt->close();
-    header('Content-Type: application/json');
-    echo json_encode($docs);
-    exit;
-}
+      // Monthly sales trend
+      $monthlySalesQuery = null;
+      if ($salesAmountCol && $salesDateCol) {
+        $monthlyWhere = $salesWhere;
+        if (!$date_from && !$date_to) {
+          $monthlyWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
+        }
 
-// POST HANDLERS - Approve/Reject
-if (isset($_POST["action"]) && $_POST["action"] === "approve_document") {
-    $doc_id = intval($_POST["doc_id"]);
-    mysqli_query($conn, "UPDATE documents SET status='approved', reviewed_at=NOW() WHERE id = $doc_id");
-    @mysqli_query($conn, "UPDATE user_documents SET status='approved', reviewed_at=NOW() WHERE id = $doc_id");
-    logAudit($conn, $admin_id, "Document Approved", "Document ID: $doc_id approved");
-    sendNotification($conn, "Document Approved", "Document #$doc_id was approved.", "success");
-    respondJSON(["success" => true]);
-}
-if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
-    $doc_id = intval($_POST["doc_id"]);
-    $remarks = mysqli_real_escape_string($conn, $_POST["remarks"]);
-    mysqli_query($conn, "UPDATE documents SET status='rejected', remarks='$remarks', reviewed_at=NOW() WHERE id = $doc_id");
-    @mysqli_query($conn, "UPDATE user_documents SET status='rejected', remarks='$remarks', reviewed_at=NOW() WHERE id = $doc_id");
-    logAudit($conn, $admin_id, "Document Rejected", "Document ID: $doc_id rejected");
-    sendNotification($conn, "Document Rejected", "A document was rejected.", "warning");
-    respondJSON(["success" => true]);
-}
-?>
+        $monthlySalesQuery = "
+        SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+        FROM sales
+        WHERE 1
+        ";
+        if ($monthlyWhere) $monthlySalesQuery .= " AND " . implode(' AND ', $monthlyWhere);
+        $monthlySalesQuery .= " GROUP BY YEAR($salesDateCol), MONTH($salesDateCol), month ORDER BY YEAR($salesDateCol) ASC, MONTH($salesDateCol) ASC";
+      }
+
+      // Fetch KPIs
+      $salesResult = mysqli_query($conn, $salesQuery);
+      $lotsResult = mysqli_query($conn, $lotsQuery);
+      $agentsResult = mysqli_query($conn, $agentsQuery);
+
+      $kpis = [
+        'total_sales' => $salesResult ? (float)(mysqli_fetch_assoc($salesResult)['total'] ?? 0) : 0,
+        'total_lots' => $lotsResult ? (int)(mysqli_fetch_assoc($lotsResult)['total'] ?? 0) : 0,
+        'available_agents' => $agentsResult ? (int)(mysqli_fetch_assoc($agentsResult)['total'] ?? 0) : 0,
+        'pending_documents' => getPendingDocumentsCount($conn),
+      ];
+
+      // Fetch monthly sales
+      $monthly_sales = [];
+      if ($monthlySalesQuery) {
+        $monthlySalesResult = mysqli_query($conn, $monthlySalesQuery);
+        if ($monthlySalesResult) {
+          while ($row = mysqli_fetch_assoc($monthlySalesResult)) {
+            $monthly_sales[] = [
+              'month' => $row['month'],
+              'amount' => (float)$row['total']
+            ];
+          }
+          }
+      }
+
+      header('Content-Type: application/json');
+      echo json_encode([
+          'kpis' => $kpis,
+          'monthly_sales' => $monthly_sales,
+          'monthly_scope' => (!$date_from && !$date_to) ? 'last_12_months' : 'filtered_range'
+      ]);
+      exit;
+  }
+
+
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['export']) && $_GET['export'] === 'analytics') {
+      $date_from = isset($_GET['date_from']) ? $_GET['date_from'] : null;
+      $date_to = isset($_GET['date_to']) ? $_GET['date_to'] : null;
+      $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
+
+      header('Content-Type: text/csv');
+      header('Content-Disposition: attachment; filename="analytics_export.csv"');
+
+      $output = fopen('php://output', 'w');
+
+      // Write the header row
+      fputcsv($output, ['Metric', 'Value']);
+
+      // Fetch KPIs
+        $salesQuery = $salesAmountCol
+          ? "SELECT IFNULL(SUM($salesAmountCol), 0) as total FROM sales WHERE 1"
+          : "SELECT 0 as total";
+        $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
+      $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
+
+        $salesWhere = [];
+        if ($salesDateCol && $date_from) $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+        if ($salesDateCol && $date_to) $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+        if ($salesLocationCol && $location_id) $salesWhere[] = "$salesLocationCol = $location_id";
+        if ($salesWhere) $salesQuery .= " AND " . implode(' AND ', $salesWhere);
+
+        if ($location_id) {
+          $lotsQuery .= " AND location_id = $location_id";
+        }
+
+      $salesResult = mysqli_query($conn, $salesQuery);
+      $lotsResult = mysqli_query($conn, $lotsQuery);
+      $agentsResult = mysqli_query($conn, $agentsQuery);
+
+      $kpis = [
+          'Total Sales' => $salesResult ? (float)(mysqli_fetch_assoc($salesResult)['total'] ?? 0) : 0,
+          'Total Lots' => $lotsResult ? (int)(mysqli_fetch_assoc($lotsResult)['total'] ?? 0) : 0,
+          'Available Agents' => $agentsResult ? (int)(mysqli_fetch_assoc($agentsResult)['total'] ?? 0) : 0,
+          'Pending Documents' => getPendingDocumentsCount($conn),
+      ];
+
+      // Write KPIs to CSV
+      foreach ($kpis as $metric => $value) {
+          fputcsv($output, [$metric, $value]);
+      }
+
+      // Fetch monthly sales
+      fputcsv($output, []); // Empty row for separation
+      fputcsv($output, ['Month', 'Sales Amount']);
+        if ($salesAmountCol && $salesDateCol) {
+          $monthlyWhere = $salesWhere;
+          if (!$date_from && !$date_to) {
+            $monthlyWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
+          }
+
+          $monthlySalesQuery = "
+            SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+            FROM sales
+            WHERE 1
+          ";
+          if ($monthlyWhere) $monthlySalesQuery .= " AND " . implode(' AND ', $monthlyWhere);
+          $monthlySalesQuery .= " GROUP BY YEAR($salesDateCol), MONTH($salesDateCol), month ORDER BY YEAR($salesDateCol) ASC, MONTH($salesDateCol) ASC";
+
+          $monthlySalesResult = mysqli_query($conn, $monthlySalesQuery);
+          if ($monthlySalesResult) {
+            while ($row = mysqli_fetch_assoc($monthlySalesResult)) {
+              fputcsv($output, [$row['month'], (float)$row['total']]);
+            }
+          }
+      }
+
+      // Fetch top agents
+      fputcsv($output, []); // Empty row for separation
+      fputcsv($output, ['Agent Name', 'Email', 'Sales Count', 'Total Sales', 'Average Deal Size']);
+        $topAgentsWhere = [];
+        if ($salesDateCol && $date_from) $topAgentsWhere[] = "s.$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+        if ($salesDateCol && $date_to) $topAgentsWhere[] = "s.$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+        if ($salesLocationCol && $location_id) $topAgentsWhere[] = "s.$salesLocationCol = $location_id";
+        $topAgentsWhereSql = $topAgentsWhere ? 'WHERE ' . implode(' AND ', $topAgentsWhere) : '';
+
+        $topAgentsAmountExpr = $salesAmountCol ? "IFNULL(SUM(s.$salesAmountCol), 0)" : "0";
+        $topAgentsAvgExpr = $salesAmountCol
+          ? "IFNULL(ROUND(SUM(s.$salesAmountCol)/NULLIF(COUNT(s.id),0), 2), 0)"
+          : "0";
+
+        $topAgentsQuery = "
+          SELECT 
+              CONCAT(a.first_name, ' ', a.last_name) AS name,
+              a.email,
+              COUNT(s.id) AS sales_count,
+            $topAgentsAmountExpr AS total_amount,
+            $topAgentsAvgExpr AS avg_deal_size
+          FROM agent_accounts a
+          LEFT JOIN sales s ON a.id = s.agent_id
+          $topAgentsWhereSql
+          GROUP BY a.id
+          ORDER BY total_amount DESC, sales_count DESC
+          LIMIT 10
+      ";
+      $topAgentsResult = mysqli_query($conn, $topAgentsQuery);
+      if ($topAgentsResult) {
+          while ($row = mysqli_fetch_assoc($topAgentsResult)) {
+              fputcsv($output, [
+                  $row['name'],
+                  $row['email'],
+                  (int)$row['sales_count'],
+                  (float)$row['total_amount'],
+                  (float)$row['avg_deal_size']
+              ]);
+          }
+      }
+
+      fclose($output);
+      exit;
+  }
+
+
+  /* ============================================================
+    CORE HELPERS
+  ============================================================ */
+
+  // Respond with JSON
+  function respondJSON($data) {
+      header("Content-Type: application/json");
+      echo json_encode($data);
+      exit;
+  }
+
+  // Audit Log Writer
+  function logAudit($conn, $admin_id, $action, $details) {
+      $stmt = $conn->prepare("
+          INSERT INTO audit_logs (admin_id, action, details) 
+          VALUES (?, ?, ?)
+      ");
+      $stmt->bind_param("iss", $admin_id, $action, $details);
+      $stmt->execute();
+      $stmt->close();
+  }
+
+  // Send Notification
+  function sendNotification($conn, $title, $message, $type = 'info') {
+      $stmt = $conn->prepare("
+          INSERT INTO notifications (title, message, type) 
+          VALUES (?, ?, ?)
+      ");
+      $stmt->bind_param("sss", $title, $message, $type);
+      $stmt->execute();
+      $stmt->close();
+  }
+
+  // File Upload Helper
+  function safeUploadFile($fileKey, $folder = "uploads/documents/") {
+      if (!isset($_FILES[$fileKey]) || $_FILES[$fileKey]['error'] !== 0) return null;
+
+      if (!is_dir($folder)) mkdir($folder, 0777, true);
+
+      $ext = strtolower(pathinfo($_FILES[$fileKey]['name'], PATHINFO_EXTENSION));
+      $newName = time() . "_" . rand(1000, 9999) . "." . $ext;
+      $path = $folder . $newName;
+
+      if (move_uploaded_file($_FILES[$fileKey]["tmp_name"], $path)) {
+          return $path;
+      }
+      return null;
+  }
+
+      function getDocumentPendingFilterSql($alias = 'd') {
+        return "$alias.status IN ('pending', 'pending_review', 'under_review')";
+      }
+
+        function updateDocumentReviewStatus($conn, $table, $doc_id, $status, $remarks = '', $admin_id = null) {
+          if (!tableExists($conn, $table) || !columnExists($conn, $table, 'id') || !columnExists($conn, $table, 'status')) {
+            return [false, "Table or required columns missing: $table"];
+          }
+
+          $statusEsc = mysqli_real_escape_string($conn, $status);
+          $remarksEsc = mysqli_real_escape_string($conn, $remarks);
+
+          $setParts = ["status='$statusEsc'"];
+          if (columnExists($conn, $table, 'reviewed_at')) {
+            $setParts[] = "reviewed_at=NOW()";
+          }
+          if ($admin_id && columnExists($conn, $table, 'reviewed_by')) {
+            $setParts[] = "reviewed_by=" . intval($admin_id);
+          }
+
+          if ($status === 'rejected') {
+            if (columnExists($conn, $table, 'progress_notes')) {
+              $setParts[] = "progress_notes='$remarksEsc'";
+            }
+            if (columnExists($conn, $table, 'remarks')) {
+              $setParts[] = "remarks='$remarksEsc'";
+            }
+          }
+
+          $q = "UPDATE $table SET " . implode(', ', $setParts) . " WHERE id = " . intval($doc_id);
+          $ok = mysqli_query($conn, $q);
+          if (!$ok) {
+            return [false, mysqli_error($conn) ?: "Failed to update $table"];
+          }
+
+          if (mysqli_affected_rows($conn) > 0) {
+            return [true, null];
+          }
+
+          // Treat as success if the document exists but update made no changes.
+          $check = mysqli_query($conn, "SELECT id FROM $table WHERE id = " . intval($doc_id) . " LIMIT 1");
+          if ($check && mysqli_fetch_assoc($check)) {
+            return [true, null];
+          }
+
+          return [false, "Document not found in $table"];
+        }
+
+  /* ============================================================
+    FETCH HANDLERS — GET Requests
+  ============================================================ */
+
+  // ------------------------------------------------------------
+  // Fetch Audit Logs
+  // ------------------------------------------------------------
+  if (isset($_GET['fetch']) && $_GET['fetch'] === 'audit_logs') {
+
+      if (!tableExists($conn, 'audit_logs')) {
+        respondJSON([]);
+      }
+
+        $actionFilter = trim($_GET['action'] ?? '');
+        $adminFilter = trim($_GET['admin'] ?? '');
+        $dateFrom = trim($_GET['date_from'] ?? '');
+        $dateTo = trim($_GET['date_to'] ?? '');
+        $search = trim($_GET['search'] ?? '');
+
+        $where = [];
+        if ($actionFilter !== '') {
+          $where[] = "a.action LIKE '%" . mysqli_real_escape_string($conn, $actionFilter) . "%'";
+        }
+        if ($adminFilter !== '') {
+          $adminEsc = mysqli_real_escape_string($conn, $adminFilter);
+          $where[] = "(ad.first_name LIKE '%$adminEsc%' OR ad.last_name LIKE '%$adminEsc%')";
+        }
+        if ($dateFrom !== '') {
+          $where[] = "a.created_at >= '" . mysqli_real_escape_string($conn, $dateFrom) . " 00:00:00'";
+        }
+        if ($dateTo !== '') {
+          $where[] = "a.created_at < DATE_ADD('" . mysqli_real_escape_string($conn, $dateTo) . "', INTERVAL 1 DAY)";
+        }
+        if ($search !== '') {
+          $searchEsc = mysqli_real_escape_string($conn, $search);
+          $where[] = "(a.action LIKE '%$searchEsc%' OR a.details LIKE '%$searchEsc%')";
+        }
+
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $q = "
+          SELECT a.*, ad.first_name, ad.last_name
+          FROM audit_logs a
+          LEFT JOIN admin_accounts ad ON ad.id = a.admin_id
+          $whereSql
+          ORDER BY a.created_at DESC
+          LIMIT 200
+        ";
+      $res = mysqli_query($conn, $q);
+
+      $logs = [];
+      while ($row = mysqli_fetch_assoc($res)) {
+          $logs[] = $row;
+      }
+
+      respondJSON($logs);
+  }
+
+
+  // ------------------------------------------------------------
+  // Fetch Notifications
+  // ------------------------------------------------------------
+  if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications') {
+
+      if (!tableExists($conn, 'notifications')) {
+        respondJSON([]);
+      }
+
+        $typeFilter = trim($_GET['type'] ?? '');
+        $dateFrom = trim($_GET['date_from'] ?? '');
+        $dateTo = trim($_GET['date_to'] ?? '');
+        $search = trim($_GET['search'] ?? '');
+
+        $where = [];
+        $allowedTypes = ['info', 'success', 'warning', 'error'];
+        if ($typeFilter !== '' && in_array($typeFilter, $allowedTypes, true)) {
+          $where[] = "type = '" . mysqli_real_escape_string($conn, $typeFilter) . "'";
+        }
+        if ($dateFrom !== '') {
+          $where[] = "created_at >= '" . mysqli_real_escape_string($conn, $dateFrom) . " 00:00:00'";
+        }
+        if ($dateTo !== '') {
+          $where[] = "created_at < DATE_ADD('" . mysqli_real_escape_string($conn, $dateTo) . "', INTERVAL 1 DAY)";
+        }
+        if ($search !== '') {
+          $searchEsc = mysqli_real_escape_string($conn, $search);
+          $where[] = "(title LIKE '%$searchEsc%' OR message LIKE '%$searchEsc%')";
+        }
+
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+        $q = "SELECT * FROM notifications $whereSql ORDER BY created_at DESC LIMIT 100";
+      $res = mysqli_query($conn, $q);
+
+      $data = [];
+      while ($row = mysqli_fetch_assoc($res)) {
+          $data[] = $row;
+      }
+
+      respondJSON($data);
+  }
+
+
+  // ------------------------------------------------------------
+  // Fetch Notification Counter
+  // ------------------------------------------------------------
+  if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications_count') {
+
+      if (!tableExists($conn, 'notifications')) {
+        respondJSON(["count" => 0]);
+      }
+
+      $res = mysqli_query($conn, "SELECT COUNT(*) AS total FROM notifications");
+      $row = mysqli_fetch_assoc($res);
+
+      respondJSON(["count" => intval($row["total"])]);
+  }
+
+
+  // ------------------------------------------------------------
+  // Fetch Pending Documents
+  // ------------------------------------------------------------
+  if (isset($_GET['fetch']) && $_GET['fetch'] === 'documents') {
+
+      $statusFilter = trim($_GET['status'] ?? '');
+      $typeFilter = trim($_GET['doc_type'] ?? '');
+      $dateFrom = trim($_GET['date_from'] ?? '');
+      $dateTo = trim($_GET['date_to'] ?? '');
+      $search = trim($_GET['search'] ?? '');
+
+      $userDocAllowedStatuses = ['pending_review', 'under_review', 'approved', 'rejected', 'requires_revision'];
+      $legacyDocAllowedStatuses = ['pending', 'approved', 'rejected'];
+
+      if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
+        $where = [];
+        if ($statusFilter !== '' && $statusFilter !== 'all' && in_array($statusFilter, $userDocAllowedStatuses, true)) {
+          $where[] = "d.status = '" . mysqli_real_escape_string($conn, $statusFilter) . "'";
+        } else {
+          $where[] = getDocumentPendingFilterSql('d');
+        }
+        if ($typeFilter !== '' && columnExists($conn, 'user_documents', 'doc_type')) {
+          $where[] = "d.doc_type = '" . mysqli_real_escape_string($conn, $typeFilter) . "'";
+        }
+        if ($dateFrom !== '') {
+          $where[] = "d.uploaded_at >= '" . mysqli_real_escape_string($conn, $dateFrom) . " 00:00:00'";
+        }
+        if ($dateTo !== '') {
+          $where[] = "d.uploaded_at < DATE_ADD('" . mysqli_real_escape_string($conn, $dateTo) . "', INTERVAL 1 DAY)";
+        }
+        if ($search !== '') {
+          $searchEsc = mysqli_real_escape_string($conn, $search);
+          $where[] = "(d.file_name LIKE '%$searchEsc%' OR d.doc_type LIKE '%$searchEsc%' OR u.first_name LIKE '%$searchEsc%' OR u.last_name LIKE '%$searchEsc%' OR u.email LIKE '%$searchEsc%')";
+        }
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $q = "
+          SELECT 
+            d.id,
+            d.doc_type,
+            d.file_name,
+            d.file_path,
+            d.status,
+            d.uploaded_at,
+            u.first_name,
+            u.last_name,
+            u.email,
+            'user_documents' AS source
+          FROM user_documents d
+          LEFT JOIN user_accounts u ON d.user_id = u.id
+          $whereSql
+          ORDER BY d.uploaded_at DESC
+        ";
+        $res = mysqli_query($conn, $q);
+
+        $docs = [];
+        while ($row = mysqli_fetch_assoc($res)) {
+          $docs[] = $row;
+        }
+
+        respondJSON($docs);
+      }
+
+      if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
+        $where = [];
+        if ($statusFilter !== '' && $statusFilter !== 'all' && in_array($statusFilter, $legacyDocAllowedStatuses, true)) {
+          $where[] = "status = '" . mysqli_real_escape_string($conn, $statusFilter) . "'";
+        } else {
+          $where[] = "status = 'pending'";
+        }
+        if ($typeFilter !== '') {
+          if (columnExists($conn, 'documents', 'doc_type')) {
+            $where[] = "doc_type = '" . mysqli_real_escape_string($conn, $typeFilter) . "'";
+          } elseif (columnExists($conn, 'documents', 'type')) {
+            $where[] = "type = '" . mysqli_real_escape_string($conn, $typeFilter) . "'";
+          }
+        }
+        if ($dateFrom !== '') {
+          $where[] = "uploaded_at >= '" . mysqli_real_escape_string($conn, $dateFrom) . " 00:00:00'";
+        }
+        if ($dateTo !== '') {
+          $where[] = "uploaded_at < DATE_ADD('" . mysqli_real_escape_string($conn, $dateTo) . "', INTERVAL 1 DAY)";
+        }
+        if ($search !== '') {
+          $searchEsc = mysqli_real_escape_string($conn, $search);
+          $searchParts = [];
+          if (columnExists($conn, 'documents', 'filename')) $searchParts[] = "filename LIKE '%$searchEsc%'";
+          if (columnExists($conn, 'documents', 'file_name')) $searchParts[] = "file_name LIKE '%$searchEsc%'";
+          if (columnExists($conn, 'documents', 'type')) $searchParts[] = "type LIKE '%$searchEsc%'";
+          if (columnExists($conn, 'documents', 'doc_type')) $searchParts[] = "doc_type LIKE '%$searchEsc%'";
+          if ($searchParts) {
+            $where[] = '(' . implode(' OR ', $searchParts) . ')';
+          }
+        }
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $q = "SELECT *, 'documents' AS source FROM documents $whereSql ORDER BY uploaded_at DESC";
+        $res = mysqli_query($conn, $q);
+
+        $docs = [];
+        while ($row = mysqli_fetch_assoc($res)) {
+          $docs[] = $row;
+        }
+
+        respondJSON($docs);
+      }
+
+      respondJSON([]);
+    }
+
+
+    // ------------------------------------------------------------
+    // Fetch Pending Documents Counter
+    // ------------------------------------------------------------
+    if (isset($_GET['fetch']) && $_GET['fetch'] === 'documents_count') {
+      respondJSON(["count" => getPendingDocumentsCount($conn)]);
+    }
+
+
+  /* ============================================================
+    POST HANDLERS — ACTIONS
+  ============================================================ */
+
+  // ------------------------------------------------------------
+  // Approve Document
+  // ------------------------------------------------------------
+  if (isset($_POST["action"]) && $_POST["action"] === "approve_document") {
+
+      $doc_id = intval($_POST["doc_id"]);
+      $doc_source = $_POST['doc_source'] ?? 'user_documents';
+      $updated = false;
+      $lastError = null;
+
+      if ($doc_source === 'user_documents') {
+        [$updated, $lastError] = updateDocumentReviewStatus($conn, 'user_documents', $doc_id, 'approved', '', $admin_id);
+      }
+
+      if (!$updated) {
+        [$updated, $lastError] = updateDocumentReviewStatus($conn, 'documents', $doc_id, 'approved', '', $admin_id);
+      }
+
+      if (!$updated) {
+        respondJSON(["success" => false, "error" => $lastError ?: "Document not found or already updated."]);
+      }
+
+      logAudit($conn, $admin_id, "Document Approved", "Document ID: $doc_id approved");
+      sendNotification($conn, "Document Approved", "Document #$doc_id was approved.", "success");
+
+      respondJSON(["success" => true]);
+  }
+
+
+  // ------------------------------------------------------------
+  // Reject Document
+  // ------------------------------------------------------------
+  if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
+
+      $doc_id = intval($_POST["doc_id"]);
+      $remarks = $_POST["remarks"] ?? '';
+      $doc_source = $_POST['doc_source'] ?? 'user_documents';
+      $updated = false;
+      $lastError = null;
+
+      if ($doc_source === 'user_documents') {
+        [$updated, $lastError] = updateDocumentReviewStatus($conn, 'user_documents', $doc_id, 'rejected', $remarks, $admin_id);
+      }
+
+      if (!$updated) {
+        [$updated, $lastError] = updateDocumentReviewStatus($conn, 'documents', $doc_id, 'rejected', $remarks, $admin_id);
+      }
+
+      if (!$updated) {
+        respondJSON(["success" => false, "error" => $lastError ?: "Document not found or already updated."]);
+      }
+
+      logAudit($conn, $admin_id, "Document Rejected", "Document ID: $doc_id rejected");
+      sendNotification($conn, "Document Rejected", "A document was rejected.", "warning");
+
+      respondJSON(["success" => true]);
+  }
+
+
+  // ------------------------------------------------------------
+  // Handle document upload from agents/users (if used)
+  // ------------------------------------------------------------
+  if (isset($_POST["action"]) && $_POST["action"] === "upload_document") {
+
+      $user_id  = intval($_POST["user_id"] ?? 0);
+      $agent_id = intval($_POST["agent_id"] ?? 0);
+      $type     = mysqli_real_escape_string($conn, $_POST["type"]);
+
+      $file = safeUploadFile("document_file");
+      if (!$file) respondJSON(["success" => false, "error" => "Upload failed"]);
+
+      $stmt = $conn->prepare("
+          INSERT INTO documents (user_id, agent_id, filename, type, status) 
+          VALUES (?, ?, ?, ?, 'pending')
+      ");
+      $stmt->bind_param("iiss", $user_id, $agent_id, $file, $type);
+      $stmt->execute();
+      $stmt->close();
+
+      sendNotification($conn, "New Document Uploaded", "A new $type document was uploaded.", "info");
+
+      respondJSON(["success" => true]);
+  }
+
+  // Fetch all user documents for admin
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'all_user_documents') {
+      if (!tableExists($conn, 'user_documents')) {
+        header('Content-Type: application/json');
+        echo json_encode([]);
+        exit;
+      }
+
+      $docs = [];
+      $query = "SELECT d.*, u.first_name, u.last_name, u.email, 'user_documents' AS source
+        FROM user_documents d
+        LEFT JOIN user_accounts u ON d.user_id = u.id
+        WHERE " . getDocumentPendingFilterSql('d') . "
+        ORDER BY d.uploaded_at DESC";
+      $stmt = $conn->prepare($query);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      while ($row = $res->fetch_assoc()) {
+          $docs[] = $row;
+      }
+      $stmt->close();
+      header('Content-Type: application/json');
+      echo json_encode($docs);
+      exit;
+  }
+  ?>
 
   <!DOCTYPE html>
   <html lang="en">
@@ -1276,6 +2090,7 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     <title>Admin Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom/dist/panzoom.min.js"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
@@ -1293,11 +2108,17 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         font-family: 'Segoe UI', sans-serif;
       }
 
-    body {
-      background-color: #f6f6f6;
-      display: flex;
-      min-height: 100vh;
-    }
+      body {
+        background-color: #f6f6f6;
+        display: flex;
+        min-height: 100vh;
+      }
+
+      .sidebar-wrapper {
+        height: 100vh;
+        display: flex;
+        align-items: stretch;
+      }
 
       /* Unified UI controls: consistent buttons and form fields */
       button, input[type="button"], input[type="submit"], .btn {
@@ -1314,108 +2135,139 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         line-height: 1;
       }
 
-    input[type="number"], input[type="date"], input[type="datetime-local"],
-    select, textarea, input[type="text"], input[type="email"], input[type="password"], input[type="tel"] {
-      width: 100%;
-      padding: 10px 12px;
-      font-size: 14px;
-      border: 1px solid #ced4da;
-      border-radius: 6px;
-      background: #ffffff;
-      color: #222222;
-      outline: none;
-      transition: box-shadow .15s ease, border-color .15s ease;
-      box-sizing: border-box;
-    }
+      .user-profile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: rgba(255,255,255,0.08); /* translucent box like agent */
+        padding: 10px 12px;
+        border-radius: 12px;
+        width: 220px;
+        margin: 0 auto 16px;
+        box-shadow: none;
+        text-align: left;
+      }
 
-    input:focus, textarea:focus, select:focus {
-      border-color: #7aa97a;
-      box-shadow: 0 0 0 3px rgba(42, 139, 73, 0.12);
-    }
+      .user-profile img {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        background-color: transparent;
+        flex-shrink: 0;
+      }
 
-    .form-group label {
-      font-size: 13px;
-      margin-bottom: 6px;
-      display: block;
-      color: #2d482d;
-    }
+      .user-details {
+        font-size: 14px;
+        color: #ffffff;
+        line-height: 1.1;
+      }
 
-    /* Sidebar */
-    .sidebar {
+      .user-details div:first-child {
+        font-size: 15px;
+        font-weight: 600;
+        color: #ffffff;
+      }
+
+      .user-details div:last-child {
+        font-size: 13px;
+        color: rgba(255,255,255,0.85);
+      }
+      input[type="number"], input[type="date"], input[type="datetime-local"],
+      select, textarea {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #222222;
+        outline: none;
+        transition: box-shadow .15s ease, border-color .15s ease;
+        box-sizing: border-box;
+      }
+
+      input:focus, textarea:focus, select:focus {
+        border-color: #7aa97a;
+        box-shadow: 0 0 0 3px rgba(42, 139, 73, 0.12);
+      }
+
+      .form-group label {
+        font-size: 13px;
+        margin-bottom: 6px;
+        display: block;
+        color: #2d482d;
+      }
+
+  .sidebar {
       width: 290px;
       background-color: #14532d;
       border-radius: 0px;
       display: flex;
       flex-direction: column;
       padding: 40px 25px;
-      height: 100vh;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      height: 100%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
       position: sticky;
       top: 0;
+      /* FIX: allow scrolling inside the sidebar so the logout button isn't cut off */
+      overflow-y: auto; 
     }
 
-    .logo-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 20px;
-      margin-top: -10px;
+    /* Scrollbar styling for a cleaner look */
+    .sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .sidebar::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+    }
+    .sidebar::-webkit-scrollbar-thumb:hover {
+      background-color: rgba(255, 255, 255, 0.5);
     }
 
-    .logo-title h2 {
-      color: white;
-      font-size: 18px;
-      font-weight: 600;
-      margin: 0;
-      line-height: 1.2;
-    }
+      .user-profile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background-color: transparent; /* match agent transparent card */
+        padding: 6px 0;
+        border-radius: 8px;
+        width: 100%;
+        margin-bottom: 14px;
+        box-shadow: none;
+        text-align: center;
+      }
 
-    .profile-pic {
-      width: 70px;
-      height: 70px;
-      border-radius: 50%;
-      object-fit: cover;
-      background-color: transparent;
-    }
+      .user-profile img {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        object-fit: cover;
+        margin-right: 8px;
+        background-color: #d9d9d9;
+        margin-bottom: 6px;
+      }
 
-    .user-profile {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: rgba(255,255,255,0.08);
-      padding: 10px 12px;
-      border-radius: 12px;
-      width: 220px;
-      margin: 0 auto 16px;
-      box-shadow: none;
-      text-align: left;
-    }
+      .user-details {
+        font-size: 11px;
+        color: #ffffff;
+        line-height: 1.2;
+      }
 
-    .user-profile img {
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      object-fit: cover;
-      background-color: transparent;
-      flex-shrink: 0;
-    }
+      .user-details div:first-child {
+    font-size: 14px;
+    font-weight: 500;
+  }
 
-    .user-details {
-      font-size: 14px;
-      color: #ffffff;
-      line-height: 1.1;
-    }
-
-    .user-details div:first-child {
-      font-size: 15px;
-      font-weight: 600;
-      color: #ffffff;
-    }
-
-    .user-details div:last-child {
-      font-size: 13px;
-      color: rgba(255,255,255,0.85);
-    }
+  .user-details div:last-child {
+    font-size: 12px;
+    color: rgba(255,255,255,0.85);
+  }
 
       .nav {
         display: flex;
@@ -1442,184 +2294,200 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         cursor: pointer;
       }
 
-    .nav a:hover,
-    .nav a.active {
-      background: rgba(255,255,255,0.06);
-      color: #fff;
-      transform: translateY(-1px);
-    }
+      .nav a:hover,
+      .nav a.active {
+        background: rgba(255,255,255,0.06);
+        color: #fff;
+        transform: translateY(-1px);
+      }
+      
+      .nav-icon {
+        width: 24px;
+        height: 24px;
+        margin-right: 8px;
+        vertical-align: middle;
+        filter: brightness(0) invert(1);
+      }
 
-    .nav-icon {
-      width: 24px;
-      height: 24px;
-      margin-right: 8px;
-      vertical-align: middle;
-      filter: brightness(0) invert(1);
-    }
+      /* Eye icon using CSS for Manage Viewings */
+      .nav-icon-eye {
+        background-color: white;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z'/%3E%3C/svg%3E") no-repeat center;
+        mask-size: contain;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z'/%3E%3C/svg%3E") no-repeat center;
+        -webkit-mask-size: contain;
+        filter: none;
+      }
 
-    .nav-icon-eye {
-      background-color: white;
-      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z'/%3E%3C/svg%3E") no-repeat center;
-      mask-size: contain;
-      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z'/%3E%3C/svg%3E") no-repeat center;
-      -webkit-mask-size: contain;
-      filter: none;
-    }
+      .container {
+    flex: 1;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: auto;
+  }
 
-    .logout-icon {
-      display: inline-block;
-      transform: scaleX(-1);
-      -webkit-transform: scaleX(-1);
-    }
+      .table-section {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
 
-    /* Main Container */
-    .container {
-      flex: 1;
-      padding: 40px;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      overflow-y: auto;
-    }
+      .divider {
+        width: 5px;
+        background-color: #2D4D26;
+        height: calc(100vh - 40px);
+        margin-top: 20px;
+        border-radius: 5px;
+        display: none; /* hide the vertical divider/scroll-like line */
+      }
 
-    .header {
-      display: flex;
-      justify-content: flex-start;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 32px;
-      padding-left: 8px;
-    }
+      /* Flip logout icon horizontally */
+      .logout-icon {
+        display: inline-block;
+        transform: scaleX(-1);
+        -webkit-transform: scaleX(-1);
+      }
 
-    .header h2 {
-      color: #2d482d;
-      font-size: 30px;
-    }
+      .header {
+    display: flex;
+    justify-content: flex-start;     /* ← changed to left */
+    align-items: center;             /* better vertical alignment */
+    gap: 16px;                       /* optional – space between logo/title if any */
+    margin-bottom: 32px;
+    padding-left: 8px;               /* tiny left breathing room – optional */
+  }
 
-    .header small {
-      font-size: 14px;
-      color: #555;
-    }
+      .header h2 {
+        color: #2d482d;
+        font-size: 30px;
+      }
 
-    /* Cards */
-    .dashboard-cards {
-      display: flex;
-      gap: 20px;
-      margin-bottom: 30px;
-    }
+      .header small {
+        font-size: 14px;
+        color: #555;
+      }
 
-    .card {
-      background-color: #fff;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      min-width: 200px;
-      position: relative;
-    }
+      .dashboard-cards {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 30px;
+      }
 
-    .card-content {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
+      .card {
+        background-color: #fff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-width: 200px;
+        position: relative;
+      }
 
-    .card-text {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      padding-left: 10px;
-      padding-right: 10px;
-    }
+      .card-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
 
-    .card-title {
-      font-size: 14px;
-      font-weight: bold;
-      color: #2d482d;
-      margin-bottom: 5px;
-    }
+      .card-text {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding-left: 10px;
+        padding-right: 10px;
+      }
 
-    .card-subtitle {
-      font-size: 12px;
-      color: #555;
-      margin-bottom: 10px;
-    }
+      .card-title {
+        font-size: 14px;
+        font-weight: bold;
+        color: #2d482d;
+        margin-bottom: 5px;
+      }
 
-    .card-icon {
-      font-size: 26px;
-      color: #2d482d;
-      width: 60px;
-      height: 60px;
-      object-fit: contain;
-      position: absolute;
-      top: 50%;
-      right: 20px;
-      transform: translateY(-50%);
-    }
+      .card-subtitle {
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 10px;
+      }
 
-    .card-number {
-      font-size: 24px;
-      font-weight: bold;
-      color: #2d482d;
-    }
+      .card-icon {
+        font-size: 26px;
+        color: #2d482d;
+        width: 60px;
+        height: 60px;
+        object-fit: contain;
+        position: absolute;
+        top: 50%;
+        right: 20px;
+        transform: translateY(-50%);
+      }
 
-    /* Sections */
-    .section {
-      display: none;
-    }
+      .card-number {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2d482d;
+      }
 
-    .section.active {
-      display: block;
-      animation: fadeIn 0.36s ease;
-    }
+      .section {
+        display: none;
+      }
 
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
+      /* Show active section and animate like user dashboard */
+      .section.active {
+        display: block;
+        animation: fadeIn 0.36s ease;
+      }
 
-    /* Tables */
-    .table-section {
-      background-color: #fff;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-      width: 100%;
-      flex: 1;
-    }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
 
-    .table-section h2 {
-      font-size: 20px;
-      font-weight: 600;
-      color: #2d482d;
-      margin-bottom: 10px;
-    }
+      .table-section {
+        background-color: #fff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        width: 100%;
+        flex: 1;
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      font-size: 14px;
-      color: #2d482d;
-    }
+      .table-section h2 {
+        font-size: 20px;
+        font-weight: 600;
+        color: #2d482d;
+        margin-bottom: 10px;
+      }
 
-    thead {
-      background-color: #3e5f3e;
-      color: white;
-    }
+      .table-section table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        font-size: 14px;
+        color: #2d482d;
+      }
 
-    th, td {
-      padding: 12px 10px;
-      text-align: left;
-      border-bottom: 1px solid #ddd;
-    }
+      .table-section thead {
+        background-color: #3e5f3e;
+        color: white;
+      }
 
-    tbody tr:hover {
-      background-color: #f1f1f1;
-    }
+      .table-section th, .table-section td {
+        padding: 12px 10px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+      }
+
+      .table-section tbody tr:hover {
+        background-color: #f1f1f1;
+      }
 
       .table-section thead tr:hover {
         background-color: transparent;
@@ -1637,60 +2505,64 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         margin: 0 2px;
       }
 
-    .btn-primary:hover {
-      background-color: #555;
-    }
+      .table-section button:hover, .btn:hover {
+        background-color: #3e5f3e;
+      }
 
-    .btn-danger {
-      background-color: #dc3545;
-      color: white;
-      border: 1px solid #dc3545;
-    }
+      .btn-danger {
+        background-color: #dc3545;
+      }
 
-    .btn-danger:hover {
-      background-color: #c82333;
-      border-color: #c82333;
-    }
-    
-    .btn-small {
-      background: #f8f9fa;
-      border: 1px solid #ddd;
-      padding: 6px 12px;
-      border-radius: 4px;
-      font-size: 12px;
-      color: #666;
-      cursor: pointer;
-      margin-right: 5px;
-      transition: all 0.2s;
-    }
+      .btn-danger:hover {
+        background-color: #c82333;
+      }
 
-    .btn-small:hover {
-      background: #e9ecef;
-      border-color: #999;
-    }
+      .form-group {
+        margin-bottom: 15px;
+      }
 
-    .form-group {
-      margin-bottom: 15px;
-    }
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+        color: #2d482d;
+      }
 
-    .form-row {
-      display: flex;
-      gap: 15px;
-    }
-    .form-row-three {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 20px;
-    }
+      .form-group input, .form-group select {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
 
-    .alert {
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 20px;
-      font-size: 14px;
-    }
-    .alert.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .alert.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+      .form-row {
+        display: flex;
+        gap: 15px;
+      }
+
+      .alert {
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+        font-size: 14px;
+      }
+
+      .alert.success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .alert.error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .location-dropdown {
+        margin-bottom: 20px;
+      }
 
       .status-badge {
         padding: 4px 12px;
@@ -2168,57 +3040,258 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         border-color: #c82333;
       }
 
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-      color: #666;
-      background: #f9f9f9;
-      border-radius: 8px;
-      margin: 20px 0;
-    }
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: #666;
+        background: #f9f9f9;
+        border-radius: 8px;
+        margin: 20px 0;
+      }
 
-    /* Mapper Tool CSS */
-    #draw-layer {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      cursor: crosshair;
-      user-select: none;
-      z-index: 10;
-    }
-    #draw-layer.drawing-cursor { cursor: crosshair !important; }
-    .start-polygon-btn:hover {
-      background: #c8e6c9 !important;
-      color: #1b2e1b !important;
-      border-color: #1b2e1b !important;
-      box-shadow: 0 2px 8px rgba(44, 167, 44, 0.08) !important;
-      cursor: pointer !important;
-    }
-  </style>
-</head>
+      .lot-action-btn {
+        border: none;
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.12s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+      }
 
-<body onload="loadLocations()">
-  <div class="sidebar-wrapper">
-    <div class="sidebar">
-      <div class="logo-title">
-        <img src="assets/a.png" alt="Logo" class="profile-pic">
-        <div style="display:flex;flex-direction:column;justify-content:center;line-height:1;">
-          <h2 style="font-weight:700;font-size:1.18rem;letter-spacing:1px;line-height:1;color:white;margin:0;">NUEVO PUERTA</h2>
-          <span style="font-size:0.95rem;letter-spacing:0.5px;color:white;opacity:0.9;line-height:1;">REAL ESTATE</span>
-        </div>
-      </div>
+      .lot-action-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+      }
 
-      <div class="user-profile">
-        <div style="margin-right:12px; flex-shrink:0;">
-          <img src="assets/s.png" alt="User Image" />
+      .lot-action-btn-blueprint {
+        background: #0d6efd;
+        color: #fff;
+      }
+
+      .lot-action-btn-edit {
+        background: #3e5f3e;
+        color: #fff;
+      }
+
+      .lot-action-btn-delete {
+        background: #6c757d;
+        color: #fff;
+      }
+
+      .pin-modal-overlay {
+        display: none;
+        position: fixed;
+        z-index: 3000;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        justify-content: center;
+        align-items: center;
+        overflow: auto;
+      }
+
+      .pin-modal-card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+        width: 95%;
+        max-width: 1040px;
+        max-height: 92vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .pin-modal-header {
+        padding: 18px 24px;
+        background: linear-gradient(90deg, #223b22, #2d482d);
+        color: #fff;
+        border-radius: 12px 12px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .pin-modal-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .pin-modal-close {
+        font-size: 28px;
+        cursor: pointer;
+        color: #fff;
+        font-weight: 700;
+        line-height: 1;
+        opacity: 0.95;
+      }
+
+      .pin-modal-close:hover {
+        opacity: 1;
+      }
+
+      .pin-modal-content {
+        padding: 20px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .pin-status-row {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .pin-status-btn {
+        padding: 11px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        background: #fff;
+        transition: all 0.2s ease;
+      }
+
+      .pin-status-btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .pin-status-btn-available {
+        border: 2px solid #28a745;
+        color: #28a745;
+      }
+
+      .pin-status-btn-reserved {
+        border: 2px solid #ffc107;
+        color: #9a7000;
+      }
+
+      .pin-status-btn-sold {
+        border: 2px solid #dc3545;
+        color: #dc3545;
+      }
+
+      .pin-modal-help {
+        background: #2f3136;
+        color: #fff;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+
+      .blueprint-stage {
+        position: relative;
+        background: linear-gradient(135deg, #f5f7fa, #eef1f4);
+        border: 1px solid #d9e0e6;
+        border-radius: 10px;
+        overflow: hidden;
+        min-height: 420px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .blueprint-wrapper {
+        position: relative;
+        display: inline-block;
+      }
+
+      #blueprintImage {
+        max-width: 100%;
+        max-height: 72vh;
+        object-fit: contain;
+        display: block;
+      }
+
+      #blueprintCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        cursor: crosshair;
+        display: none;
+        pointer-events: auto;
+      }
+
+      .pin-modal-footer {
+        padding: 18px 24px;
+        background: #f9fafb;
+        border-top: 1px solid #e9ecef;
+        border-radius: 0 0 12px 12px;
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
+
+      .pin-modal-footer-btn {
+        border: none;
+        border-radius: 8px;
+        padding: 10px 18px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .pin-modal-footer-btn-draw { background: #28a745; }
+      .pin-modal-footer-btn-cancel { background: #6c757d; }
+      .pin-modal-footer-btn-save { background: #2d482d; }
+
+      @media (max-width: 768px) {
+        .pin-modal-card {
+          width: 98%;
+          max-height: 96vh;
+        }
+
+        .pin-modal-content,
+        .pin-modal-header,
+        .pin-modal-footer {
+          padding: 14px;
+        }
+
+        .blueprint-stage {
+          min-height: 320px;
+        }
+      }
+
+      textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+
+      .status-reschedule_requested {
+    background-color: #f4d03f;
+    color: #234;
+  }
+    </style>
+  </head>
+  <body onload="loadLocations()">
+    <div class="sidebar-wrapper">
+      <div class="sidebar">
+      <div class="logo-title" style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+    <img src="assets/a.png" alt="Logo" class="profile-pic" style="width:60px;height:60px;border-radius:50%;object-fit:cover;background-color:transparent;">
+    <div style="display:flex;flex-direction:column;justify-content:center;line-height:1;">
+      <h2 style="font-weight:700;font-size:1.18rem;letter-spacing:1px;line-height:1;color:white;margin:0;">NUEVO PUERTA</h2>
+      <span style="font-size:0.95rem;letter-spacing:0.5px;color:white;opacity:0.9;line-height:1;">REAL ESTATE</span>
+    </div>
+  </div>
+
+        <div style="background: rgba(255,255,255,0.08); border-radius:12px; padding:10px 12px; margin:0 auto 16px; width:220px; display:flex; align-items:center;">
+          <div style="margin-right:12px; flex-shrink:0;">
+            <img src="assets/s.png" alt="User Image" style="width:40px; height:40px; border-radius:50%; object-fit:cover; display:block;" />
+          </div>
+          <div style="line-height:1.1;">
+            <div style="font-weight:600; font-size:15px; color:#ffffff;">
+              <?php echo htmlspecialchars($admin_name); ?>
+            </div>
+            <div style="font-size:13px; color:rgba(255,255,255,0.85);">
+              <?php echo htmlspecialchars($admin_role); ?>
+            </div>
+          </div>
         </div>
-        <div style="line-height:1.1;">
-          <div><?php echo htmlspecialchars($admin_name); ?></div>
-          <div><?php echo htmlspecialchars($admin_role); ?></div>
-        </div>
-      </div>
 
         <div class="nav">
           <a data-target="section-dashboard" class="active">
@@ -2279,231 +3352,284 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
     <div class="divider"></div>
 
-  <div class="container">
-    
-    <div id="section-dashboard" class="section active">
-      <div class="header">
-        <div>
-          <h2>Welcome, <?php echo htmlspecialchars($admin_name); ?></h2>
-          <small>Admin Dashboard. Monitor and manage system activities.</small>
-        </div>
-      </div>
-
-      <div class="dashboard-cards">
-        <div class="card">
-          <div class="card-content">
-            <div class="card-text">
-              <div class="card-title">CLIENTS</div>
-              <div class="card-subtitle">Number of Clients</div>
-              <div class="card-number"><?php echo number_format($dashboard_stats['clients']); ?></div>
-            </div>
-            <img src="assets/mdi_people.png" alt="Clients Icon" class="card-icon">
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-content">
-            <div class="card-text">
-              <div class="card-title">LOTS</div>
-              <div class="card-subtitle">Total Number of Lots</div>
-              <div class="card-number"><?php echo number_format($dashboard_stats['lots']); ?></div>
-            </div>
-            <img src="assets/ooui_map-pin.png" alt="Lots Icon" class="card-icon">
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-content">
-            <div class="card-text">
-              <div class="card-title">AGENTS</div>
-              <div class="card-subtitle">Available Agents</div>
-              <div class="card-number"><?php echo number_format($dashboard_stats['agents']); ?></div>
-            </div>
-            <img src="assets/mdi_face-agent.png" alt="Agents Icon" class="card-icon">
-          </div>
-        </div>
-      </div>
-
-      <div class="table-section">
-        <h2>Recent Activity</h2>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
+    <div class="container">
+      <div id="section-dashboard" class="section">
+        <div class="header">
           <div>
-            <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent User Registrations</h3>
-            <?php
-            $recentUsersQuery = "SELECT first_name, middle_name, last_name, email, created_at 
-                                FROM user_accounts 
-                                ORDER BY created_at DESC 
-                                LIMIT 5";
-            $recentUsersResult = mysqli_query($conn, $recentUsersQuery);
-            
-            if ($recentUsersResult && mysqli_num_rows($recentUsersResult) > 0):
-            ?>
-              <div style="background: #f8f9fa; border-radius: 8px; padding: 15px;">
-                <?php while ($user = mysqli_fetch_assoc($recentUsersResult)): ?>
-                  <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">
-                    <div style="font-weight: 500; color: #333;">
-                      <?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']); ?>
-                    </div>
-                    <div style="font-size: 12px; color: #666;">
-                      <?php echo htmlspecialchars($user['email']); ?> • 
-                      <?php echo date('M d, Y', strtotime($user['created_at'])); ?>
-                    </div>
-                  </div>
-                <?php endwhile; ?>
+            <h2>Welcome, <?php echo htmlspecialchars($admin_name); ?></h2>
+            <small>Admin Dashboard. Monitor and manage system activities.</small>
+          </div>
+        </div>
+
+        <div class="dashboard-cards">
+          <div class="card">
+            <div class="card-content">
+              <div class="card-text">
+                <div class="card-title">CLIENTS</div>
+                <div class="card-subtitle">Number of Clients</div>
+                <div class="card-number"><?php echo number_format($dashboard_stats['clients']); ?></div>
               </div>
-            <?php else: ?>
-              <div style="text-align: center; color: #666; padding: 20px;">
-                No recent user registrations
-              </div>
-            <?php endif; ?>
+              <img src="assets/mdi_people.png" alt="Clients Icon" class="card-icon">
+            </div>
           </div>
 
-          <div>
-            <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent Viewing Requests</h3>
-            <?php
-            $recentViewingsQuery = "SELECT v.client_first_name, v.client_last_name, v.status, v.created_at, 
-                                          ll.location_name, l.block_number, l.lot_number
+          <div class="card">
+            <div class="card-content">
+              <div class="card-text">
+                <div class="card-title">LOTS</div>
+                <div class="card-subtitle">Total Number of Lots</div>
+                <div class="card-number"><?php echo number_format($dashboard_stats['lots']); ?></div>
+              </div>
+              <img src="assets/ooui_map-pin.png" alt="Lots Icon" class="card-icon">
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-content">
+              <div class="card-text">
+                <div class="card-title">AGENTS</div>
+                <div class="card-subtitle">Available Agents</div>
+                <div class="card-number"><?php echo number_format($dashboard_stats['agents']); ?></div>
+              </div>
+              <img src="assets/mdi_face-agent.png" alt="Agents Icon" class="card-icon">
+            </div>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <h2>Recent Activity</h2>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
+            <div>
+              <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent User Registrations</h3>
+              <?php
+              $recentUsersQuery = "SELECT first_name, middle_name, last_name, email, created_at 
+                                  FROM user_accounts 
+                                  ORDER BY created_at DESC 
+                                  LIMIT 5";
+              $recentUsersResult = mysqli_query($conn, $recentUsersQuery);
+              
+              if ($recentUsersResult && mysqli_num_rows($recentUsersResult) > 0):
+              ?>
+                <div style="background: #f8f9fa; border-radius: 8px; padding: 15px;">
+                  <?php while ($user = mysqli_fetch_assoc($recentUsersResult)): ?>
+                    <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; last-child:border-bottom: none;">
+                      <div style="font-weight: 500; color: #333;">
+                        <?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']); ?>
+                      </div>
+                      <div style="font-size: 12px; color: #666;">
+                        <?php echo htmlspecialchars($user['email']); ?> • 
+                        <?php echo date('M d, Y', strtotime($user['created_at'])); ?>
+                      </div>
+                    </div>
+                  <?php endwhile; ?>
+                </div>
+              <?php else: ?>
+                <div style="text-align: center; color: #666; padding: 20px;">
+                  No recent user registrations
+                </div>
+              <?php endif; ?>
+            </div>
+
+            <div>
+              <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">Recent Viewing Requests</h3>
+              <?php
+              $recentViewingsQuery = "SELECT v.client_first_name, v.client_last_name, v.status, v.created_at, 
+                                            ll.location_name, l.block_number, l.lot_number
                                     FROM viewings v
                                     LEFT JOIN lot_locations ll ON v.location_id = ll.id
                                     LEFT JOIN lots l ON v.lot_id = l.id
                                     ORDER BY v.created_at DESC 
                                     LIMIT 5";
-            $recentViewingsResult = mysqli_query($conn, $recentViewingsQuery);
-            
-            if ($recentViewingsResult && mysqli_num_rows($recentViewingsResult) > 0):
-            ?>
-              <div style="background: #f8f9fa; border-radius: 8px; padding: 15px;">
-                <?php while ($viewing = mysqli_fetch_assoc($recentViewingsResult)): ?>
-                  <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0;">
-                    <div style="font-weight: 500; color: #333;">
-                      <?php echo htmlspecialchars($viewing['client_first_name'] . ' ' . $viewing['client_last_name']); ?>
+              $recentViewingsResult = mysqli_query($conn, $recentViewingsQuery);
+              
+              if ($recentViewingsResult && mysqli_num_rows($recentViewingsResult) > 0):
+              ?>
+                <div style="background: #f8f9fa; border-radius: 8px; padding: 15px;">
+                  <?php while ($viewing = mysqli_fetch_assoc($recentViewingsResult)): ?>
+                    <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; last-child:border-bottom: none;">
+                      <div style="font-weight: 500; color: #333;">
+                        <?php echo htmlspecialchars($viewing['client_first_name'] . ' ' . $viewing['client_last_name']); ?>
+                      </div>
+                      <div style="font-size: 12px; color: #666;">
+                        <?php echo htmlspecialchars($viewing['location_name']); ?> - Block <?php echo htmlspecialchars($viewing['block_number']); ?>, Lot <?php echo htmlspecialchars($viewing['lot_number']); ?>
+                      </div>
+                      <div style="font-size: 11px; color: #999;">
+                        <span class="status-badge status-<?php echo strtolower($viewing['status']); ?>" style="font-size: 10px; padding: 2px 6px;">
+                          <?php echo htmlspecialchars(ucfirst($viewing['status'])); ?>
+                        </span>
+                        • <?php echo date('M d, Y', strtotime($viewing['created_at'])); ?>
+                      </div>
                     </div>
-                    <div style="font-size: 12px; color: #666;">
-                      <?php echo htmlspecialchars($viewing['location_name']); ?> - Block <?php echo htmlspecialchars($viewing['block_number']); ?>, Lot <?php echo htmlspecialchars($viewing['lot_number']); ?>
-                    </div>
-                    <div style="font-size: 11px; color: #999;">
-                      <span class="status-badge status-<?php echo strtolower($viewing['status']); ?>" style="font-size: 10px; padding: 2px 6px;">
-                        <?php echo htmlspecialchars(ucfirst($viewing['status'])); ?>
-                      </span>
-                      • <?php echo date('M d, Y', strtotime($viewing['created_at'])); ?>
-                    </div>
-                  </div>
-                <?php endwhile; ?>
-              </div>
-            <?php else: ?>
-              <div style="text-align: center; color: #666; padding: 20px;">
-                No recent viewing requests
-              </div>
-            <?php endif; ?>
-          </div>
-        </div>
-
-        <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-          <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">System Overview</h3>
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
-            <?php
-            // Get additional stats
-            $pendingViewingsQuery = "SELECT COUNT(*) as total FROM viewings WHERE status = 'pending'";
-            $pendingViewingsResult = mysqli_query($conn, $pendingViewingsQuery);
-            $pendingViewings = $pendingViewingsResult ? mysqli_fetch_assoc($pendingViewingsResult)['total'] : 0;
-
-            $availableLotsQuery = "SELECT COUNT(*) as total FROM lots WHERE status = 'Available'";
-            $availableLotsResult = mysqli_query($conn, $availableLotsQuery);
-            $availableLots = $availableLotsResult ? mysqli_fetch_assoc($availableLotsResult)['total'] : 0;
-
-            $soldLotsQuery = "SELECT COUNT(*) as total FROM lots WHERE status = 'Sold'";
-            $soldLotsResult = mysqli_query($conn, $soldLotsQuery);
-            $soldLots = $soldLotsResult ? mysqli_fetch_assoc($soldLotsResult)['total'] : 0;
-            ?>
-            
-            <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
-              <div style="font-size: 24px; font-weight: bold; color: #28a745;"><?php echo $pendingViewings; ?></div>
-              <div style="font-size: 12px; color: #666;">Pending Viewings</div>
-            </div>
-            
-            <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
-              <div style="font-size: 24px; font-weight: bold; color: #17a2b8;"><?php echo $availableLots; ?></div>
-              <div style="font-size: 12px; color: #666;">Available Lots</div>
-            </div>
-            
-            <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
-              <div style="font-size: 24px; font-weight: bold; color: #dc3545;"><?php echo $soldLots; ?></div>
-              <div style="font-size: 12px; color: #666;">Sold Lots</div>
-            </div>
-            
-            <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
-              <div style="font-size: 24px; font-weight: bold; color: #6f42c1;">
-                <?php echo ($dashboard_stats['lots'] > 0) ? round(($soldLots / $dashboard_stats['lots']) * 100, 1) : 0; ?>%
-              </div>
-              <div style="font-size: 12px; color: #666;">Sales Rate</div>
+                  <?php endwhile; ?>
+                </div>
+              <?php else: ?>
+                <div style="text-align: center; color: #666; padding: 20px;">
+                  No recent viewing requests
+                </div>
+              <?php endif; ?>
             </div>
           </div>
+
+          <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+            <h3 style="color: #2d482d; margin-bottom: 15px; font-size: 16px;">System Overview</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+              <?php
+              // Get additional stats
+              $pendingViewingsQuery = "SELECT COUNT(*) as total FROM viewings WHERE status = 'pending'";
+              $pendingViewingsResult = mysqli_query($conn, $pendingViewingsQuery);
+              $pendingViewings = $pendingViewingsResult ? mysqli_fetch_assoc($pendingViewingsResult)['total'] : 0;
+
+              $availableLotsQuery = "SELECT COUNT(*) as total FROM lots WHERE status = 'Available'";
+              $availableLotsResult = mysqli_query($conn, $availableLotsQuery);
+              $availableLots = $availableLotsResult ? mysqli_fetch_assoc($availableLotsResult)['total'] : 0;
+
+              $soldLotsQuery = "SELECT COUNT(*) as total FROM lots WHERE status = 'Sold'";
+              $soldLotsResult = mysqli_query($conn, $soldLotsQuery);
+              $soldLots = $soldLotsResult ? mysqli_fetch_assoc($soldLotsResult)['total'] : 0;
+              ?>
+              
+              <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
+                <div style="font-size: 24px; font-weight: bold; color: #28a745;"><?php echo $pendingViewings; ?></div>
+                <div style="font-size: 12px; color: #666;">Pending Viewings</div>
+              </div>
+              
+              <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
+                <div style="font-size: 24px; font-weight: bold; color: #17a2b8;"><?php echo $availableLots; ?></div>
+                <div style="font-size: 12px; color: #666;">Available Lots</div>
+              </div>
+              
+              <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
+                <div style="font-size: 24px; font-weight: bold; color: #dc3545;"><?php echo $soldLots; ?></div>
+                <div style="font-size: 12px; color: #666;">Sold Lots</div>
+              </div>
+              
+              <div style="text-align: center; padding: 15px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
+                <div style="font-size: 24px; font-weight: bold; color: #6f42c1;">
+                  <?php echo ($dashboard_stats['lots'] > 0) ? round(($soldLots / $dashboard_stats['lots']) * 100, 1) : 0; ?>%
+                </div>
+                <div style="font-size: 12px; color: #666;">Sales Rate</div>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
+
+    <div id="section-accounts" class="section hidden">
+    <div class="header">
+      <div>
+        <h2>Account Management</h2>
+        <small>Create, edit, and manage different types of accounts</small>
       </div>
     </div>
 
-    <div id="section-accounts" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Account Management</h2>
-          <small>Create, edit, and manage different types of accounts</small>
-        </div>
+    <div class="table-section">
+      <?php if (isset($_SESSION['success_message'])): ?>
+        <div class="alert success"><?php echo $_SESSION['success_message']; ?></div>
+        <?php unset($_SESSION['success_message']); ?>
+      <?php endif; ?>
+
+      <?php if (isset($error_message)): ?>
+        <div class="alert error"><?php echo $error_message; ?></div>
+      <?php endif; ?>
+
+      <div class="account-type-nav">
+        <a href="#" onclick="showAccountType('admin')" id="admin-tab" class="active">Admin Accounts</a>
+        <a href="#" onclick="showAccountType('agent')" id="agent-tab">Agent Accounts</a>
+        <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
       </div>
 
-      <div class="table-section">
-        <?php if (isset($_SESSION['success_message'])): ?>
-          <div class="alert success"><?php echo $_SESSION['success_message']; ?></div>
-          <?php unset($_SESSION['success_message']); ?>
-        <?php endif; ?>
+  <div id="admin-accounts" class="account-section active">
+    <div class="form-container">
+      <div class="form-title">Add New Admin Account</div>
+      
+      <form method="POST" enctype="multipart/form-data" id="admin-account-form">
+        <input type="hidden" name="account_action" value="add">
+        
+        <div class="form-section">
+          <div class="form-section-title">Personal Information</div>
 
-        <?php if (isset($error_message)): ?>
-          <div class="alert error"><?php echo $error_message; ?></div>
-        <?php endif; ?>
+          <div class="form-row-three">
+            <div class="form-group">
+              <label for="admin_first_name">First Name</label>
+              <input type="text" id="admin_first_name" name="first_name" required>
+            </div>
+            <div class="form-group">
+              <label for="admin_middle_name">Middle Name (Optional)</label>
+              <input type="text" id="admin_middle_name" name="middle_name">
+            </div>
+            <div class="form-group">
+              <label for="admin_last_name">Last Name</label>
+              <input type="text" id="admin_last_name" name="last_name" required>
+            </div>
+          </div>
 
-        <div class="account-type-nav">
-          <a href="#" onclick="showAccountType('admin')" id="admin-tab" class="active">Admin Accounts</a>
-          <a href="#" onclick="showAccountType('agent')" id="agent-tab">Agent Accounts</a>
-          <a href="#" onclick="showAccountType('user')" id="user-tab">User Accounts</a>
+          <div class="form-group">
+            <label for="admin_username">Username</label>
+            <input type="text" id="admin_username" name="username" required>
+          </div>
         </div>
 
-        <div id="admin-accounts" class="account-section active">
-            <div class="form-container">
-              <div class="form-title">Add New Admin Account</div>
-              <form method="POST" enctype="multipart/form-data" id="admin-account-form">
-                <input type="hidden" name="account_action" value="add">
-                
-                <div class="form-section">
-                  <div class="form-section-title">Personal Information</div>
-                  <div class="form-row-three">
-                    <div class="form-group"><label>First Name</label><input type="text" name="first_name" required></div>
-                    <div class="form-group"><label>Middle Name (Optional)</label><input type="text" name="middle_name"></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" name="last_name" required></div>
-                  </div>
-                  <div class="form-group"><label>Username</label><input type="text" name="username" required></div>
-                </div>
-
-                <div class="form-section">
-                  <div class="form-section-title">Contact Information</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Email</label><input type="email" name="email" required></div>
-                    <div class="form-group"><label>Phone</label><input type="tel" name="phone" required></div>
-                  </div>
-                  <div class="form-group"><label>Address</label><textarea name="address" required></textarea></div>
-                </div>
-
-                <div class="form-section">
-                  <div class="form-section-title">Account Security</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Password</label><input type="password" id="admin_password" name="password" required></div>
-                    <div class="form-group">
-                      <label>Confirm Password</label><input type="password" id="admin_confirm_password" name="confirm_password" required>
-                      <small id="admin-password-error" style="color:#dc3545;display:none;font-size:13px;">Passwords do not match.</small>
-                    </div>
-                  </div>
-                </div>
-
-                <button type="submit" class="btn-primary">Create Admin Account</button>
-              </form>
+        <div class="form-section">
+          <div class="form-section-title">Contact Information</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="email">Email</label>
+              <input type="email" id="email" name="email" required>
             </div>
+            <div class="form-group">
+              <label for="phone">Phone</label>
+              <input type="tel" id="phone" name="phone" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="address">Address</label>
+            <textarea id="address" name="address" required></textarea>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">Profile Photo (Optional)</div>
+          <div class="photo-upload-section">
+            <div class="photo-placeholder" id="admin-photo-preview">
+              No Photo
+            </div>
+            <div class="file-input-wrapper">
+              <input type="file" id="admin_photo" name="photo" accept="image/*"
+                    onchange="previewPhoto(this, 'admin-photo-preview')">
+              <label for="admin_photo" class="file-input-label">Choose Photo</label>
+            </div>
+            <div style="font-size: 12px; color: #999; margin-top: 8px;">
+              JPG, PNG, or GIF (Max 5MB) — Optional
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">Account Security</div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="admin_password">Password</label>
+              <input type="password" id="admin_password" name="password" required>
+            </div>
+
+            <div class="form-group">
+              <label for="admin_confirm_password">Confirm Password</label>
+              <input type="password" id="admin_confirm_password" name="confirm_password" required>
+              <small id="admin-password-error"
+                    style="color:#dc3545;display:none;font-size:13px;">
+                Passwords do not match.
+              </small>
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary">Create Admin Account</button>
+        <button type="button" class="btn btn-danger"
+                onclick="resetForm('admin-account-form')">Cancel</button>
+      </form>
+    </div>
 
     <div class="accounts-table">
       <h3>Existing Admin Accounts</h3>
@@ -2554,53 +3680,103 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
 
 
-        <div id="agent-accounts" class="account-section">
-            <div class="form-container">
-              <div class="form-title">Create Agent Account</div>
-              <form method="POST" enctype="multipart/form-data" id="agent-account-form">
-                <input type="hidden" name="agent_action" value="add">
-                
-                <div class="form-section">
-                  <div class="form-section-title">Personal Information</div>
-                  <div class="form-row-three">
-                    <div class="form-group"><label>First Name</label><input type="text" name="first_name" required></div>
-                    <div class="form-group"><label>Middle Name</label><input type="text" name="middle_name"></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" name="last_name" required></div>
-                  </div>
-                  <div class="form-group"><label>Username</label><input type="text" name="username" required></div>
-                </div>
-
-                <div class="form-section">
-                  <div class="form-section-title">Contact Information</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Email</label><input type="email" name="email" required></div>
-                    <div class="form-group"><label>Phone</label><input type="tel" name="phone" required></div>
-                  </div>
-                  <div class="form-group"><label>Address</label><textarea name="address" required></textarea></div>
-                </div>
-
-                <div class="form-section">
-                  <div class="form-section-title">Account Security</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Password</label><input type="password" name="password" required></div>
-                    <div class="form-group"><label>Confirm Password</label><input type="password" required></div>
-                  </div>
-                </div>
-
-                <div class="form-section">
-                  <div class="form-section-title">Availability Status</div>
-                  <div class="availability-toggle">
-                    <label class="toggle-switch">
-                      <input type="checkbox" name="availability" checked>
-                      <span class="slider"></span>
-                    </label>
-                    <span>Available for client assignments</span>
-                  </div>
-                </div>
-
-                <button type="submit" class="btn-primary">Create Agent Account</button>
-              </form>
+    <div id="agent-accounts" class="account-section">
+    <div class="form-container">
+      <div class="form-title">Create Agent Account</div>
+      
+      <form method="POST" enctype="multipart/form-data" id="agent-account-form">
+        <input type="hidden" name="agent_action" value="add">
+        
+        <div class="form-section">
+          <div class="form-section-title">Personal Information</div>
+          <div class="form-row-three">
+            <div class="form-group">
+              <label for="agent_first_name">First Name</label>
+              <input type="text" id="agent_first_name" name="first_name" required>
             </div>
+            <div class="form-group">
+              <label for="agent_middle_name">Middle Name (Optional)</label>
+              <input type="text" id="agent_middle_name" name="middle_name">
+            </div>
+            <div class="form-group">
+              <label for="agent_last_name">Last Name</label>
+              <input type="text" id="agent_last_name" name="last_name" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="agent_username">Username</label>
+            <input type="text" id="agent_username" name="username" required>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">Contact Information</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="agent_email">Email</label>
+              <input type="email" id="agent_email" name="email" required>
+            </div>
+            <div class="form-group">
+              <label for="agent_phone">Phone</label>
+              <input type="tel" id="agent_phone" name="phone" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="agent_address">Address</label>
+            <textarea id="agent_address" name="address" required></textarea>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">Profile Photo (Optional)</div>
+          <div class="photo-upload-section">
+            <div class="photo-placeholder" id="agent-photo-preview">
+              No Photo
+            </div>
+            <div class="file-input-wrapper">
+              <input type="file" id="agent_photo" name="photo" accept="image/*"
+                    onchange="previewPhoto(this, 'agent-photo-preview')">
+              <label for="agent_photo" class="file-input-label">Choose Photo</label>
+            </div>
+            <div style="font-size: 12px; color: #999; margin-top: 8px;">
+              JPG, PNG, or GIF (Max 5MB) — Optional
+            </div>
+          </div>
+        </div>
+
+    <div class="form-section">
+    <div class="form-section-title">Account Security</div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="agent_password">Password</label>
+        <input type="password" id="agent_password" name="password" required>
+      </div>
+
+      <div class="form-group">
+        <label for="agent_confirm_password">Confirm Password</label>
+        <input type="password" id="agent_confirm_password" name="confirm_password" required>
+        <small id="agent-password-error" style="color:#dc3545;display:none;">
+          Passwords do not match.
+        </small>
+      </div>
+    </div>
+  </div> <div class="form-section">
+    <div class="form-section-title">Availability Status</div>
+    <div class="availability-toggle">
+      <label class="toggle-switch">
+        <input type="checkbox" name="availability" id="agent_availability" checked>
+        <span class="slider"></span>
+      </label>
+      <span>Available for client assignments</span>
+    </div>
+  </div>
+
+
+        <button type="submit" class="btn-primary">Create Agent Account</button>
+        <button type="button" class="btn btn-danger" onclick="resetForm('agent-account-form')">Cancel</button>
+      </form>
+    </div>
 
 
     <div class="accounts-table">
@@ -2655,38 +3831,72 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
   </div>
 
 
-        <div id="user-accounts" class="account-section">
-            <div class="form-container">
-              <div class="form-title">Create User Account</div>
-              <form method="POST" id="user-account-form">
-                <input type="hidden" name="user_action" value="add">
-                
-                <div class="form-section">
-                  <div class="form-section-title">Personal Information</div>
-                  <div class="form-row-three">
-                    <div class="form-group"><label>First Name</label><input type="text" name="first_name" required></div>
-                    <div class="form-group"><label>Middle Name</label><input type="text" name="middle_name"></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" name="last_name" required></div>
-                  </div>
-                  <div class="form-group"><label>Username</label><input type="text" name="username" required></div>
+      <div id="user-accounts" class="account-section">
+        <div class="form-container">
+          <div class="form-title">Create User Account</div>
+          
+          <form method="POST" id="user-account-form">
+            <input type="hidden" name="user_action" value="add">
+            
+            <div class="form-section">
+              <div class="form-section-title">PERSONAL INFORMATION</div>
+              <div class="form-row-three">
+                <div class="form-group">
+                  <label for="user_first_name">First Name</label>
+                  <input type="text" id="user_first_name" name="first_name" required>
                 </div>
+                <div class="form-group">
+                  <label for="user_middle_name">Middle Name (Optional)</label>
+                  <input type="text" id="user_middle_name" name="middle_name">
+                </div>
+                <div class="form-group">
+                  <label for="user_last_name">Last Name</label>
+                  <input type="text" id="user_last_name" name="last_name" required>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="user_username">Username</label>
+                <input type="text" id="user_username" name="username" required>
+              </div>
+            </div>
 
-                <div class="form-section">
-                  <div class="form-section-title">Contact Information</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Email</label><input type="email" name="email" required></div>
-                    <div class="form-group"><label>Phone</label><input type="tel" name="phone_number" required></div>
-                  </div>
-                  <div class="form-group"><label>Address</label><textarea name="address" required></textarea></div>
+            <div class="form-section">
+              <div class="form-section-title">Contact Information</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="user_email">Email</label>
+                  <input type="email" id="user_email" name="email" required>
                 </div>
+                <div class="form-group">
+                  <label for="user_mobile">Phone</label>
+                  <input type="tel" id="user_mobile" name="Phone_number" required>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="user_address">Address</label>
+                <textarea id="user_address" name="address" required></textarea>
+              </div>
+            </div>
 
-                <div class="form-section">
-                  <div class="form-section-title">Account Security</div>
-                  <div class="form-row">
-                    <div class="form-group"><label>Password</label><input type="password" name="password" required></div>
-                    <div class="form-group"><label>Confirm Password</label><input type="password" required></div>
-                  </div>
-                </div>
+          <div class="form-section">
+    <div class="form-section-title">Account Security</div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="user_password">Password</label>
+        <input type="password" id="user_password" name="password" required>
+      </div>
+
+      <div class="form-group">
+        <label for="user_confirm_password">Confirm Password</label>
+        <input type="password" id="user_confirm_password" required>
+        <small id="user-password-error"
+              style="color:#dc3545;display:none;font-size:13px;">
+          Passwords do not match.
+        </small>
+      </div>
+    </div>
+  </div>
 
   <button type="submit" class="btn-primary">Create User Account</button>
   <button type="button" class="btn btn-danger" onclick="resetForm('user-account-form')">
@@ -2739,8 +3949,8 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         </div>
       </div>
 
-      </div>
     </div>
+  </div>
 
       <div id="section-lots" class="section hidden">
         <div class="header">
@@ -2818,9 +4028,9 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
   </tbody>
           </table>
 
-        <div style="margin-top: 20px; display: flex; gap: 10px;">
-          <button onclick="addNewLot()" class="btn-primary">+ Add New Lot</button>
-          <button onclick="bulkDeleteLots()" class="btn-danger btn-primary">Delete Selected</button>
+
+          <button onclick="addNewLot()">Add New Lot</button>
+          <button onclick="bulkDeleteLots()" class="btn btn-danger" style="margin-top:10px;">Delete Selected Lots</button>
         </div>
       </div>
 
@@ -2857,181 +4067,48 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       </div>
 
       <!-- Blueprint Pin Modal -->
-      <div id="pinModal" style="
-        display: none;
-        position: fixed;
-        z-index: 3000;
-        left: 0; top: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.7);
-        justify-content: center; align-items: center;
-        overflow: auto;
-        font-family: 'Segoe UI', sans-serif;
-      ">
-        <div style="
-          background: #fff;
-          border-radius: 8px;
-          box-shadow: 0 5px 25px rgba(0,0,0,0.3);
-          width: 95%; max-width: 1000px; position: relative;
-          max-height: 90vh;
-          overflow-y: auto;
-          display: flex;
-          flex-direction: column;
-        ">
+      <div id="pinModal" class="pin-modal-overlay">
+        <div class="pin-modal-card">
           <!-- Header -->
-          <div style="
-            padding: 20px 24px;
-            background: #2d482d;
-            color: white;
-            border-radius: 8px 8px 0 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          ">
-            <h3 style="margin: 0; font-size: 18px;">
+          <div class="pin-modal-header">
+            <h3 class="pin-modal-title">
               Mapping: <span id="pinModalLotInfo"></span>
             </h3>
-            <span onclick="closePinModal()" style="
-              font-size: 28px;
-              cursor: pointer;
-              color: white;
-              font-weight: bold;
-            ">&times;</span>
+            <span onclick="closePinModal()" class="pin-modal-close">&times;</span>
           </div>
 
           <!-- Content -->
-          <div style="
-            padding: 20px 24px;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-          ">
+          <div class="pin-modal-content">
             <!-- Status Selection Buttons -->
-            <div style="
-              display: flex;
-              gap: 12px;
-              justify-content: center;
-            ">
-              <button id="statusBtn_Available" type="button" onclick="selectLotStatus('Available')" style="
-                padding: 12px 24px;
-                border: 2px solid #28a745;
-                background: #28a745;
-                color: white;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 500;
-                transition: all 0.3s;
-              ">
+            <div class="pin-status-row">
+              <button id="statusBtn_Available" type="button" onclick="selectLotStatus('Available')" class="pin-status-btn pin-status-btn-available" style="background:#28a745;color:#fff;">
                 Available
               </button>
-              <button id="statusBtn_Reserved" type="button" onclick="selectLotStatus('Reserved')" style="
-                padding: 12px 24px;
-                border: 2px solid #ffc107;
-                background: white;
-                color: #ffc107;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 500;
-                transition: all 0.3s;
-              ">
+              <button id="statusBtn_Reserved" type="button" onclick="selectLotStatus('Reserved')" class="pin-status-btn pin-status-btn-reserved">
                 Reserved
               </button>
-              <button id="statusBtn_Sold" type="button" onclick="selectLotStatus('Sold')" style="
-                padding: 12px 24px;
-                border: 2px solid #dc3545;
-                background: white;
-                color: #dc3545;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 500;
-                transition: all 0.3s;
-              ">
+              <button id="statusBtn_Sold" type="button" onclick="selectLotStatus('Sold')" class="pin-status-btn pin-status-btn-sold">
                 Sold
               </button>
             </div>
 
-            <div style="
-              background: #333;
-              color: white;
-              padding: 10px 14px;
-              border-radius: 4px;
-              font-size: 13px;
-            ">
+            <div class="pin-modal-help">
               Click each corner/edge point of the lot to trace its real shape. Click near the first point (or double-click) to close the polygon.
             </div>
 
             <!-- Blueprint Container -->
-            <div style="
-              position: relative;
-              background: #f5f5f5;
-              border: 1px solid #ddd;
-              border-radius: 4px;
-              overflow: hidden;
-              flex: 1;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              min-height: 400px;
-            ">
-              <img id="blueprintImage" src="" alt="Blueprint" style="
-                max-width: 100%;
-                max-height: 100%;
-                object-fit: contain;
-                cursor: crosshair;
-              ">
-              <canvas id="blueprintCanvas" style="
-                position: absolute;
-                top: 0;
-                left: 0;
-                cursor: crosshair;
-                display: none;
-              "></canvas>
+            <div class="blueprint-stage" id="blueprint-stage">
+              <div class="blueprint-wrapper" id="blueprint-wrapper" style="position: relative; display: inline-block;">
+                <img id="blueprintImage" src="" alt="Blueprint" style="display: block; max-width: 100%; height: auto; pointer-events: none;">
+                <div id="draw-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;"></div>
+              </div>
             </div>
-          </div>
 
           <!-- Footer with Buttons -->
-          <div style="
-            padding: 20px 24px;
-            background: #f9f9f9;
-            border-top: 1px solid #eee;
-            border-radius: 0 0 8px 8px;
-            display: flex;
-            gap: 12px;
-            justify-content: flex-end;
-          ">
-            <button onclick="toggleDrawingMode()" id="toggleDrawBtn" style="
-              background: #28a745;
-              color: white;
-              padding: 10px 20px;
-              border: none;
-              border-radius: 4px;
-              cursor: pointer;
-              font-size: 14px;
-              font-weight: 500;
-            ">Start Drawing Polygon</button>
-            <button onclick="closePinModal()" style="
-              background: #6c757d;
-              color: white;
-              padding: 10px 20px;
-              border: none;
-              border-radius: 4px;
-              cursor: pointer;
-              font-size: 14px;
-              font-weight: 500;
-            ">Cancel</button>
-            <button onclick="savePinLocation()" style="
-              background: #2d482d;
-              color: white;
-              padding: 10px 20px;
-              border: none;
-              border-radius: 4px;
-              cursor: pointer;
-              font-size: 14px;
-              font-weight: 500;
-            ">Save Pin Location</button>
+          <div class="pin-modal-footer">
+            <button onclick="toggleDrawingMode()" id="toggleDrawBtn" class="pin-modal-footer-btn pin-modal-footer-btn-draw">Start Drawing Polygon</button>
+            <button onclick="closePinModal()" class="pin-modal-footer-btn pin-modal-footer-btn-cancel">Cancel</button>
+            <button onclick="savePinLocation()" class="pin-modal-footer-btn pin-modal-footer-btn-save">Save Pin Location</button>
           </div>
         </div>
       </div>
@@ -3110,22 +4187,24 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
           </form>
         </div>
       </div>
-
-    <div id="section-viewings" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Manage Viewing Requests</h2>
-          <small>Review and assign viewing requests to agents</small>
-        </div>
       </div>
-      <div class="table-section">
-        <?php if (isset($success_message)): ?>
-          <div class="alert success"><?php echo $success_message; ?></div>
-        <?php endif; ?>
+      
+      <div id="section-viewings" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Manage Viewing Requests</h2>
+            <small>Review and assign viewing requests to agents</small>
+          </div>
+        </div>
 
-        <?php if (isset($error_message)): ?>
-          <div class="alert error"><?php echo $error_message; ?></div>
-        <?php endif; ?>
+        <div class="table-section">
+          <?php if (isset($success_message)): ?>
+            <div class="alert success"><?php echo $success_message; ?></div>
+          <?php endif; ?>
+
+          <?php if (isset($error_message)): ?>
+            <div class="alert error"><?php echo $error_message; ?></div>
+          <?php endif; ?>
 
           <?php if (empty($all_viewings)): ?>
             <div style="text-align: center; padding: 40px; color: #666;">
@@ -3230,295 +4309,367 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
                               </div>
                             <?php endif; ?>
                           </form>
-                        <?php endif; ?>
-                      </div>
-                  </td>
-                </tr>
-              <?php endforeach; ?>
-            </tbody>
-          </table>
-        <?php endif; ?>
-      </div>
-    </div>
-
-    <div id="section-analytics" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Analytics Dashboard</h2>
-          <small>Track sales performance and agent statistics</small>
-        </div>
-      </div>
-
-      <div class="table-section">
-        <div class="analytics-filters" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e0e0e0; position: relative;">
-          <button onclick="exportAnalytics()" class="btn-primary" style="position: absolute; top: 20px; right: 20px; padding: 9px 20px; white-space: nowrap;">Export Analytics</button>
-
-          <h3 style="margin: 0 0 15px 0; color: #2d482d; font-size: 16px; font-weight: 600;">Filter Options</h3>
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 15px; align-items: end;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="analytics_date_from">Date From</label>
-              <input type="date" id="analytics_date_from" name="date_from" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="analytics_date_to">Date To</label>
-              <input type="date" id="analytics_date_to" name="date_to" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="analytics_location">Location (Optional)</label>
-              <select id="analytics_location" name="location" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-                <option value="">All Locations</option>
-              </select>
-            </div>
-            <div>
-              <button onclick="applyAnalyticsFilters()" class="btn-primary" style="padding: 9px 20px; white-space: nowrap;">Apply Filters</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="analytics-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
-        <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div>
-              <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Sales</div>
-              <div id="kpi-total-sales" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
-            </div>
-          </div>
-        </div>
-        <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div>
-              <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Lots</div>
-              <div id="kpi-total-lots" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
-            </div>
-          </div>
-        </div>
-        <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);margin-top: 30px;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div>
-              <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Available Agents</div>
-              <div id="kpi-available-agents" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 30px; overflow: hidden;">
-        <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
-          <h3 style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Top Agents by Sales</h3>
-        </div>
-        <div id="top-agents-loading" style="text-align: center; padding: 40px; color: #666;">Loading agents data...</div>
-        <div id="top-agents-content" style="display: none;">
-          <table id="top-agents-table" style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="background: #f8f9fa;">
-                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Rank</th>
-                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Agent</th>
-                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Sales Count</th>
-                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Total Amount</th>
-                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Avg Deal Size</th>
-              </tr>
-            </thead>
-            <tbody id="top-agents-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
-        <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
-          <h3 style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Monthly Sales Trend (Last 12 Months)</h3>
-        </div>
-        <div style="padding: 30px;">
-          <canvas id="monthly-sales-chart" width="400" height="200"></canvas>
-        </div>
-      </div>
-    </div>
-
-    <div id="section-notifications" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Notifications</h2>
-          <small>System alerts and updates</small>
-        </div>
-      </div>
-      <div class="table-section">
-        <div id="notifications-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 350px; overflow-y: auto;">
-          <p style="text-align: center; color: #666;">Loading notifications...</p>
-        </div>
-      </div>
-    </div>
-
-    <div id="section-audit-logs" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Audit Logs</h2>
-          <small>Track admin actions and system changes</small>
-        </div>
-      </div>
-      <div class="table-section">
-        <div id="audit-logs-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 400px; overflow-y: auto;">
-          <p style="text-align: center; color: #666;">Loading audit logs...</p>
-        </div>
-      </div>
-    </div>
-
-    <div id="section-documents" class="section hidden">
-      <div class="header">
-        <div>
-          <h2>Document Review</h2>
-          <small>Review and manage pending documents</small>
-        </div>
-      </div>
-      <div class="table-section">
-        <div id="documents-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 400px; overflow-y: auto;">
-          <p style="text-align: center; color: #666;">Loading documents...</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-      <!-- ============ PAYMENTS SECTION ============ -->
-      <div id="section-payments" class="section hidden">
-        <div class="header">
-          <div>
-            <h2>Payments</h2>
-            <small>View all payment transactions and update their status</small>
-          </div>
-        </div>
-
-        <div class="table-section">
-          <?php if (empty($allPayments)): ?>
-            <div style="background:#fafafa; padding:40px; text-align:center; border-radius:8px; font-size:18px; color:#666;">
-              <p>No payment records found.</p>
-            </div>
-          <?php else: ?>
-            <div style="overflow-x:auto;">
-              <table style="width:100%; border-collapse:collapse;">
-                <thead>
-                  <tr style="background:#14532d; color:#fff;">
-                    <th style="padding:12px 10px;">Date</th>
-                    <th style="padding:12px 10px;">Payer</th>
-                    <th style="padding:12px 10px;">Lot</th>
-                    <th style="padding:12px 10px;">Location</th>
-                    <th style="padding:12px 10px;">Amount</th>
-                    <th style="padding:12px 10px;">Method</th>
-                    <th style="padding:12px 10px;">Reference</th>
-                    <th style="padding:12px 10px;">Remarks</th>
-                    <th style="padding:12px 10px;">Status</th>
-                    <th style="padding:12px 10px;">Action</th>
+                        </div>
+                      </td>
                   </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($allPayments as $pay): ?>
-                    <tr style="border-bottom:1px solid #eee; background:#fff;" id="pay-row-<?php echo (int)$pay['id']; ?>">
-                      <td style="padding:10px 8px; white-space:nowrap;"><?php echo date('M d, Y', strtotime($pay['payment_date'])); ?></td>
-                      <td style="padding:10px 8px;"><strong><?php echo htmlspecialchars(trim(($pay['u_first'] ?? '') . ' ' . ($pay['u_last'] ?? '')) ?: 'Unknown'); ?></strong></td>
-                      <td style="padding:10px 8px;">Blk <?php echo htmlspecialchars($pay['block_number'] ?? '-'); ?> Lot <?php echo htmlspecialchars($pay['lot_number'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($pay['location_name'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px; font-weight:600;">&#8369;<?php echo number_format((float)$pay['amount_paid'], 2); ?></td>
-                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($pay['payment_method'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px; font-size:12px;"><?php echo htmlspecialchars($pay['reference_no'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px; font-size:12px; max-width:150px; overflow:hidden; text-overflow:ellipsis;"><?php echo htmlspecialchars($pay['remarks'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px;" id="pay-status-<?php echo (int)$pay['id']; ?>">
-                        <?php
-                          $pst = $pay['status'] ?? 'Pending';
-                          $pstColor = $pst === 'Verified' ? 'background:#dcfce7;color:#166534;' : ($pst === 'Rejected' ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef3c7;color:#92400e;');
-                        ?>
-                        <span style="padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; <?php echo $pstColor; ?>"><?php echo htmlspecialchars($pst); ?></span>
-                      </td>
-                      <td style="padding:10px 8px; white-space:nowrap;">
-                        <?php if (($pay['status'] ?? 'Pending') === 'Pending'): ?>
-                          <button onclick="updatePaymentStatus(<?php echo (int)$pay['id']; ?>, 'Verified')" class="btn-small" style="padding:6px 12px; font-size:12px; margin-right:3px; background:#16a34a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Verify</button>
-                          <button onclick="updatePaymentStatus(<?php echo (int)$pay['id']; ?>, 'Rejected')" class="btn-small btn-danger" style="padding:6px 12px; font-size:12px; border:none; border-radius:4px; cursor:pointer;">Reject</button>
-                        <?php else: ?>
-                          <span style="color:#999; font-size:12px;">Done</span>
-                        <?php endif; ?>
-                      </td>
-                    </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            </div>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
           <?php endif; ?>
         </div>
       </div>
 
-      <!-- ============ LOT OWNERS SECTION ============ -->
+      <div id="viewClientModal" style="
+        display: none; 
+        position: fixed; 
+        z-index: 2000;
+        left: 0; 
+        top: 0; 
+        width: 100%; 
+        height: 100%; 
+        overflow: auto; 
+        background-color: rgba(0,0,0,0.6);
+        justify-content: center; 
+        align-items: center;
+      ">
+        <div style="
+          background-color: #fff;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+          width: 90%; 
+          max-width: 450px; 
+          position: relative;
+        ">
+          <span onclick="closeViewClientModal()" style="
+            color: #aaa;
+            float: right;
+            font-size: 32px;
+            font-weight: normal;
+            line-height: 1;
+            cursor: pointer;
+            margin-left: 15px;
+          ">&times;</span>
+          
+          <h3 style="color: #3e5f3e; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            Client Profile
+          </h3>
+          
+          <div id="viewClientContent">
+            Loading client details...
+          </div>
+        </div>
+      </div>
+
+      <div id="editAccountModal" style="
+        display: none;
+        position: fixed;
+        z-index: 2100;
+        left: 0; top: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.6);
+        justify-content: center; align-items: center;
+        overflow: auto;
+      ">
+        <div style="
+          background: #fff;
+          padding: 24px;
+          border-radius: 8px;
+          box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+          width: 95%; max-width: 500px; position: relative;
+          max-height: 90vh;
+          overflow-y: auto;
+        ">
+          <span onclick="closeEditAccountModal()" style="
+            color: #aaa; float: right; font-size: 32px; font-weight: normal; line-height: 1; cursor: pointer; margin-left: 15px;
+          ">&times;</span>
+          <h3 style="color: #3e5f3e; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            Edit Account
+          </h3>
+          <form id="editAccountForm" enctype="multipart/form-data">
+            <input type="hidden" id="edit_account_id" name="account_id">
+            <input type="hidden" id="edit_account_type" name="account_type">
+            <div id="editAccountPhotoSection"></div>
+            <div id="editAccountFields"></div>
+            <button type="submit" class="btn-primary" style="margin-top: 18px;">Save Changes</button>
+          </form>
+        </div>
+      </div>
+
+      <div id="section-analytics" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Analytics Dashboard</h2>
+            <small>Track sales performance and agent statistics</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <div class="analytics-filters" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e0e0e0; position: relative;">
+            <button onclick="exportAnalytics()" class="btn-primary" style="position: absolute; top: 20px; right: 20px; padding: 9px 20px; white-space: nowrap;">Export Analytics</button>
+
+            <h3 style="margin: 0 0 15px 0; color: #2d482d; font-size: 16px; font-weight: 600;">Filter Options</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 15px; align-items: end;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="analytics_date_from">Date From</label>
+                <input type="date" id="analytics_date_from" name="date_from" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="analytics_date_to">Date To</label>
+                <input type="date" id="analytics_date_to" name="date_to" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="analytics_location">Location (Optional)</label>
+                <select id="analytics_location" name="location" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                  <option value="">All Locations</option>
+                </select>
+              </div>
+              <div>
+                <button onclick="applyAnalyticsFilters()" class="btn-primary" style="padding: 9px 20px; white-space: nowrap;">Apply Filters</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
+          <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Sales</div>
+                <div id="kpi-total-sales" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
+                <div id="kpi-total-sales-range-label" style="font-size: 12px; color: #666; margin-top: 4px;">Based on selected filters</div>
+              </div>
+              <div style="width: 50px; height: 50px; background: #2d482d; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
+                  <path d="M12 9V13M12 17H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Total Lots</div>
+                <div id="kpi-total-lots" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
+                <div style="font-size: 12px; color: #666; margin-top: 4px;">Available properties</div>
+              </div>
+              <div style="width: 50px; height: 50px; background: #17a2b8; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);margin-top: 30px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Available Agents</div>
+                <div id="kpi-available-agents" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
+                <div style="font-size: 12px; color: #666; margin-top: 4px;">Active and ready</div>
+              </div>
+              <div style="width: 50px; height: 50px; background: #28a745; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
+                  <path d="M16 4c0-1.11.89-2 2-2s2 .89 2 2-.89 2-2 2-2-.89-2-2zm4 18v-6h2.5l-2.54-7.63A2 2 0 0 0 17.87 7H14.8c-.8 0-1.54.35-2.05.96L11 10.5V7H9v8h2.5l1.5-3.5 2 6z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: #2d482d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Pending Documents</div>
+                <div id="kpi-pending-documents" style="font-size: 28px; font-weight: bold; color: #2d482d;">Loading...</div>
+                <div style="font-size: 12px; color: #666; margin-top: 4px;">Awaiting review</div>
+              </div>
+              <div style="width: 50px; height: 50px; background: #ffc107; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
+                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 2 2h8c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 30px; overflow: hidden;">
+          <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
+            <h3 style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Top Agents by Sales</h3>
+          </div>
+          <div id="top-agents-loading" style="text-align: center; padding: 40px; color: #666;">
+            Loading agents data...
+          </div>
+          <div id="top-agents-content" style="display: none;">
+            <table id="top-agents-table" style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr style="background: #f8f9fa;">
+                  <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Rank</th>
+                  <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Agent</th>
+                  <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Sales Count</th>
+                  <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Total Amount</th>
+                  <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0;">Avg Deal Size</th>
+                </tr>
+              </thead>
+              <tbody id="top-agents-tbody">
+                </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+          <div style="background: #f8f9fa; padding: 20px; border-bottom: 1px solid #e0e0e0;">
+            <h3 id="monthly-sales-title" style="margin: 0; color: #2d482d; font-size: 18px; font-weight: 600;">Monthly Sales Trend (Last 12 Months)</h3>
+          </div>
+          <div id="monthly-sales-chart-wrap" style="position: relative; padding: 24px 24px 18px; background: linear-gradient(180deg, #fcfdfc 0%, #f6f9f6 100%);">
+            <canvas id="monthly-sales-chart" style="display:block; width:100%; height:320px;"></canvas>
+            <div id="monthly-sales-tooltip" style="display:none; position:absolute; z-index:5; pointer-events:none; background:rgba(18,24,22,0.94); color:#fff; padding:8px 10px; border-radius:8px; font-size:12px; line-height:1.35; white-space:nowrap; box-shadow:0 8px 18px rgba(0,0,0,0.22);"></div>
+            <div style="margin-top: 10px; font-size: 12px; color: #6b7280;">Values are shown in PHP currency (PHP).</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="section-notifications" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Notifications</h2>
+            <small>System alerts and updates</small>
+          </div>
+        </div>
+        <div class="table-section">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 12px; align-items:end;">
+            <input type="date" id="notif_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="From">
+            <input type="date" id="notif_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="To">
+            <select id="notif_type" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
+              <option value="">All Types</option>
+              <option value="info">Info</option>
+              <option value="success">Success</option>
+              <option value="warning">Warning</option>
+              <option value="error">Error</option>
+            </select>
+            <input type="text" id="notif_search" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Search title/message">
+            <button type="button" class="btn-primary" onclick="applyNotificationFilters()">Apply</button>
+            <button type="button" class="btn" onclick="resetNotificationFilters()">Reset</button>
+          </div>
+          <div id="notifications-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 350px; overflow-y: auto;">
+            <p style="text-align: center; color: #666;">Loading notifications...</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="section-audit-logs" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Audit Logs</h2>
+            <small>Track admin actions and system changes</small>
+          </div>
+        </div>
+        <div class="table-section">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 12px; align-items:end;">
+            <input type="date" id="audit_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="From">
+            <input type="date" id="audit_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="To">
+            <input type="text" id="audit_action" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Action">
+            <input type="text" id="audit_search" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Search details">
+            <button type="button" class="btn-primary" onclick="applyAuditFilters()">Apply</button>
+            <button type="button" class="btn" onclick="resetAuditFilters()">Reset</button>
+          </div>
+          <div id="audit-logs-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 400px; overflow-y: auto;">
+            <p style="text-align: center; color: #666;">Loading audit logs...</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="section-documents" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Document Review</h2>
+            <small>Review and manage pending documents</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 12px; align-items:end;">
+            <input type="date" id="docs_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="From">
+            <input type="date" id="docs_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="To">
+            <select id="docs_status" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
+              <option value="">Pending Only</option>
+              <option value="all">All Statuses</option>
+              <option value="pending_review">Pending Review</option>
+              <option value="under_review">Under Review</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="requires_revision">Requires Revision</option>
+              <option value="pending">Pending (Legacy)</option>
+            </select>
+            <input type="text" id="docs_type" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Doc type">
+            <input type="text" id="docs_search" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Search file/user/email">
+            <button type="button" class="btn-primary" onclick="applyDocumentFilters()">Apply</button>
+            <button type="button" class="btn" onclick="resetDocumentFilters()">Reset</button>
+          </div>
+          <div id="documents-container" style="background: #f8f9fa; border-radius: 8px; padding: 20px; max-height: 400px; overflow-y: auto;">
+            <p style="text-align: center; color: #666;">Loading documents...</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="section-payments" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Payment Overview</h2>
+            <small>View all lot payments by type (Down Payment, Cash)</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <h3>Payment Summary</h3>
+          <table class="accounts-table" style="width: 100%; border-collapse: collapse; margin-top: 15px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+            <thead>
+              <tr style="background: #f8f9fa;">
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Block</th>
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Number</th>
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Location</th>
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Owner</th>
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Type</th>
+                <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Amount</th>
+                <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Price</th>
+                <th style="padding: 15px; text-align: center; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="payments-tbody">
+              <tr>
+                <td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">Loading payments...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="section-lot-owners" class="section hidden">
         <div class="header">
           <div>
             <h2>Lot Owners</h2>
-            <small>View all sold/reserved lots, assign owners, and manage payment details</small>
+            <small>Manage lot owners and their payment status</small>
           </div>
         </div>
 
         <div class="table-section">
-          <?php if (empty($lotOwners)): ?>
-            <div style="background:#fafafa; padding:40px; text-align:center; border-radius:8px; font-size:18px; color:#666;">
-              <p>No sold or reserved lots found.</p>
-            </div>
-          <?php else: ?>
-            <div style="overflow-x:auto;">
-              <table style="width:100%; border-collapse:collapse;">
-                <thead>
-                  <tr style="background:#14532d; color:#fff;">
-                    <th style="padding:12px 10px;">Location</th>
-                    <th style="padding:12px 10px;">Lot</th>
-                    <th style="padding:12px 10px;">Price</th>
-                    <th style="padding:12px 10px;">Status</th>
-                    <th style="padding:12px 10px;">Payment Type</th>
-                    <th style="padding:12px 10px;">Down Payment</th>
-                    <th style="padding:12px 10px;">Balance Paid</th>
-                    <th style="padding:12px 10px;">Remaining</th>
-                    <th style="padding:12px 10px;">Owner</th>
-                    <th style="padding:12px 10px;">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($lotOwners as $lo): ?>
-                    <?php
-                      $lotPrice = (float)($lo['lot_price'] ?? 0);
-                      $balPaid  = (float)($lo['balance'] ?? 0);
-                      $remaining = max(0, $lotPrice - $balPaid);
-                      $ownerName = trim(($lo['o_first'] ?? '') . ' ' . ($lo['o_last'] ?? ''));
-                      $loStatus = $lo['status'] ?? '';
-                      $statusColor = $loStatus === 'Sold' ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef3c7;color:#92400e;';
-                    ?>
-                    <tr style="border-bottom:1px solid #eee; background:#fff;" id="lot-owner-row-<?php echo (int)$lo['id']; ?>">
-                      <td style="padding:10px 8px;"><?php echo htmlspecialchars($lo['location_name'] ?? '-'); ?></td>
-                      <td style="padding:10px 8px;"><strong>Blk <?php echo htmlspecialchars($lo['block_number']); ?> - Lot <?php echo htmlspecialchars($lo['lot_number']); ?></strong></td>
-                      <td style="padding:10px 8px; font-weight:600;">&#8369;<?php echo number_format($lotPrice, 2); ?></td>
-                      <td style="padding:10px 8px;"><span style="padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; <?php echo $statusColor; ?>"><?php echo htmlspecialchars($loStatus); ?></span></td>
-                      <td style="padding:10px 8px;">
-                        <select id="paytype-<?php echo (int)$lo['id']; ?>" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
-                          <option value="Down Payment" <?php echo ($lo['payment_type'] ?? '') === 'Down Payment' ? 'selected' : ''; ?>>Down Payment</option>
-                          <option value="Fully Paid" <?php echo ($lo['payment_type'] ?? '') === 'Fully Paid' ? 'selected' : ''; ?>>Fully Paid</option>
-                          <option value="Not Applicable" <?php echo ($lo['payment_type'] ?? '') === 'Not Applicable' ? 'selected' : ''; ?>>Not Applicable</option>
-                        </select>
-                      </td>
-                      <td style="padding:10px 8px;">&#8369;<?php echo number_format((float)($lo['payment_amount'] ?? 0), 2); ?></td>
-                      <td style="padding:10px 8px; color:#16a34a; font-weight:600;">&#8369;<?php echo number_format($balPaid, 2); ?></td>
-                      <td style="padding:10px 8px; color:<?php echo $remaining > 0 ? '#dc2626' : '#16a34a'; ?>; font-weight:600;">&#8369;<?php echo number_format($remaining, 2); ?></td>
-                      <td style="padding:10px 8px;">
-                        <select id="owner-<?php echo (int)$lo['id']; ?>" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; max-width:160px;">
-                          <option value="0">-- No owner --</option>
-                          <?php foreach ($allUsers as $au): ?>
-                            <option value="<?php echo (int)$au['id']; ?>" <?php echo ((int)($lo['owner_id'] ?? 0) === (int)$au['id']) ? 'selected' : ''; ?>>
-                              <?php echo htmlspecialchars($au['first_name'] . ' ' . $au['last_name']); ?>
-                            </option>
-                          <?php endforeach; ?>
-                        </select>
-                      </td>
-                      <td style="padding:10px 8px; white-space:nowrap;">
-                        <button onclick="saveLotOwner(<?php echo (int)$lo['id']; ?>)" class="btn-small" style="padding:6px 12px; font-size:12px; margin-right:3px; background:#16a34a; color:#fff; border:none; border-radius:4px; cursor:pointer;">Save</button>
-                        <button onclick="saveLotPaymentType(<?php echo (int)$lo['id']; ?>)" class="btn-small" style="padding:6px 12px; font-size:12px; background:#0284c7; color:#fff; border:none; border-radius:4px; cursor:pointer;">Update Payment</button>
-                      </td>
-                    </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            </div>
-          <?php endif; ?>
+          <h3>Lot Owners List</h3>
+          <table class="accounts-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+            <thead>
+              <tr>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Owner Name</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Email</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Mobile</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Lot Details</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Payment Status</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="lot-owners-tbody">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: #666;">Loading lot owners...</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -3530,6 +4681,9 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
+  // Admin Dashboard JavaScript v1.3 - CRITICAL FIX - March 8, 2026
+  // Fixed: Canvas positioning issue - wrapped image and canvas together for proper overlay
+  // Fixed: Lots auto-load, button text "Set Pin", added drawing debug logs
   // ================================
   // MAIN NAVIGATION & INITIAL SETUP
   // ================================
@@ -3542,10 +4696,10 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       'section-viewings',
       'section-analytics',
       'section-documents',
-      'section-notifications',
-      'section-audit-logs',
       'section-payments',
-      'section-lot-owners'
+      'section-lot-owners',
+      'section-notifications',
+      'section-audit-logs'
     ];
     
     function showSection(targetId) {
@@ -3568,6 +4722,7 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       // Load data based on section
       if (targetId === 'section-lots') {
         loadLocations();
+        loadLots(''); // Load all lots when section is shown
       } else if (targetId === 'section-analytics') {
         loadAnalyticsData();
       } else if (targetId === 'section-documents') {
@@ -3576,6 +4731,10 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         loadNotifications();
       } else if (targetId === 'section-audit-logs') {
         loadAuditLogs();
+      } else if (targetId === 'section-payments') {
+        loadPayments();
+      } else if (targetId === 'section-lot-owners') {
+        loadLotOwners();
       }
     }
 
@@ -3898,9 +5057,9 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     }
 
     if (docsBadge) {
-      fetch(window.location.pathname + '?fetch=documents')
+      fetch(window.location.pathname + '?fetch=documents_count')
         .then(r => r.json())
-        .then(docs => updateBadge(docsBadge, docs.length || 0))
+        .then(data => updateBadge(docsBadge, data.count || 0))
         .catch(() => {});
     }
   }
@@ -3933,9 +5092,11 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
   }
 
   function loadLots(locationId = '') {
+    console.log('Loading lots for location:', locationId); // Debug log
     fetch(`${window.location.pathname}?fetch=lots&location_id=${locationId}`)
       .then(response => response.json())
       .then(data => {
+        console.log('Lots data received:', data); // Debug log
         const tbody = document.getElementById('lots-table-body');
         const newRow = document.getElementById('new-row');
         if (!tbody) return;
@@ -3963,9 +5124,9 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
               <td>${lot.status}</td>
               <td>${paymentText}</td>
               <td style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <button onclick='openPinModal(${lot.id}, ${JSON.stringify(lot)})' style="background: #dc3545; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Set Pin</button>
-                <button onclick='openEditLotModal(${JSON.stringify(lot)})' style="background: #3e5f3e; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Edit</button>
-                <button onclick="deleteLot(${lot.id})" style="background: #666; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
+                <button onclick='openPinModal(${lot.id}, ${JSON.stringify(lot)})' class="lot-action-btn lot-action-btn-blueprint">Set Pin</button>
+                <button onclick='openEditLotModal(${JSON.stringify(lot)})' class="lot-action-btn lot-action-btn-edit">Edit</button>
+                <button onclick="deleteLot(${lot.id})" class="lot-action-btn lot-action-btn-delete">Delete</button>
               </td>
             `;
           });
@@ -3973,7 +5134,10 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
         if (newRow) tbody.appendChild(newRow);
       })
-      .catch(error => console.error('Error loading lots:', error));
+      .catch(error => {
+        console.error('Error loading lots:', error);
+        alert('Error loading lots. Check console for details.');
+      });
   }
 
   function saveLot() {
@@ -4208,6 +5372,20 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     setTimeout(() => msgDiv.style.display = 'none', 3000);
   }
 
+  // Backward-compatible notifier used by multiple sections.
+  function showMessage(msg, success = true) {
+    const msgDiv = document.getElementById('lot-message');
+    if (msgDiv) {
+      showLotMessage(msg, success);
+      return;
+    }
+    if (!success) {
+      alert(msg);
+    } else {
+      console.log(msg);
+    }
+  }
+
   // ===========================
   // DOCUMENT REVIEW FUNCTIONS
   // ===========================
@@ -4217,28 +5395,43 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
     container.innerHTML = '<p style="text-align: center; color: #666;">Loading documents...</p>';
 
-    fetch(window.location.pathname + '?fetch=all_user_documents')
+    const params = new URLSearchParams();
+    params.append('fetch', 'documents');
+
+    const status = document.getElementById('docs_status')?.value || '';
+    const docType = document.getElementById('docs_type')?.value?.trim() || '';
+    const dateFrom = document.getElementById('docs_date_from')?.value || '';
+    const dateTo = document.getElementById('docs_date_to')?.value || '';
+    const search = document.getElementById('docs_search')?.value?.trim() || '';
+
+    if (status) params.append('status', status);
+    if (docType) params.append('doc_type', docType);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (search) params.append('search', search);
+
+    fetch(window.location.pathname + '?' + params.toString())
       .then(response => response.json())
       .then(documents => {
-        const docsBadge = document.getElementById('documents-badge');
-        updateBadge(docsBadge, documents.length || 0);
-
         if (!documents.length) {
-          container.innerHTML = '<p style="text-align: center; color: #666;">No user documents found.</p>';
+          container.innerHTML = '<p style="text-align: center; color: #666;">No pending documents found.</p>';
           return;
         }
 
         container.innerHTML = documents.map(doc => {
           const docId = doc.id ?? doc.doc_id ?? doc.document_id;
+          const source = doc.source || 'user_documents';
+          const fileName = doc.file_name || doc.filename || 'Untitled Document';
+          const docTypeLabel = doc.doc_type || doc.type || 'N/A';
           const actionButtons = docId
-            ? `<button class="btn btn-sm btn-primary" onclick="approveDocument(${docId})">Approve</button>
-               <button class="btn btn-sm btn-danger"  onclick="rejectDocument(${docId})">Reject</button>`
+            ? `<button class="btn btn-sm btn-primary" onclick="approveDocument(${docId}, '${source}')">Approve</button>
+               <button class="btn btn-sm btn-danger"  onclick="rejectDocument(${docId}, '${source}')">Reject</button>`
             : '';
 
           return `
             <div data-doc-id="${docId ?? ''}" style="padding: 12px; margin-bottom: 10px; border-radius: 6px; background: #fff; border: 1px solid #e0e0e0;">
-              <strong>${doc.file_name || 'Untitled Document'}</strong>
-              <div style="font-size: 13px; color: #333;">Type: ${doc.doc_type || 'N/A'}</div>
+              <strong>${fileName}</strong>
+              <div style="font-size: 13px; color: #333;">Type: ${docTypeLabel}</div>
               <div style="font-size: 13px; color: #333;">User: ${doc.first_name || ''} ${doc.last_name || ''} (${doc.email || ''})</div>
               <div style="font-size: 12px; color: #999;">
                 Uploaded: ${doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : 'N/A'}
@@ -4260,28 +5453,42 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       });
   }
 
-  function approveDocument(id) {
+  function applyDocumentFilters() {
+    loadDocuments();
+  }
+
+  function resetDocumentFilters() {
+    const ids = ['docs_status', 'docs_type', 'docs_date_from', 'docs_date_to', 'docs_search'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    loadDocuments();
+  }
+
+  function approveDocument(id, source = 'user_documents') {
     if (!confirm('Approve this document?')) return;
 
     const formData = new FormData();
     formData.append('action', 'approve_document');
     formData.append('doc_id', id);
+    formData.append('doc_source', source);
 
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(r => r.json())
       .then(res => {
         if (res.success) {
-          alert('Document approved.');
-          updateDocumentCardStatus(id, 'Approved');
+          showMessage('Document approved.', true);
+          loadDocuments();
           refreshBadges();
         } else {
-          alert('Failed to approve document.');
+          alert('Failed to approve document: ' + (res.error || 'Unknown error'));
         }
       })
       .catch(() => alert('Failed to approve document.'));
   }
 
-  function rejectDocument(id) {
+  function rejectDocument(id, source = 'user_documents') {
     const remarks = prompt('Enter remarks for rejection (optional):', '');
     if (remarks === null) return;
 
@@ -4289,16 +5496,17 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     formData.append('action', 'reject_document');
     formData.append('doc_id', id);
     formData.append('remarks', remarks);
+    formData.append('doc_source', source);
 
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(r => r.json())
       .then(res => {
         if (res.success) {
-          alert('Document rejected.');
-          updateDocumentCardStatus(id, 'Rejected');
+          showMessage('Document rejected.', true);
+          loadDocuments();
           refreshBadges();
         } else {
-          alert('Failed to reject document.');
+          alert('Failed to reject document: ' + (res.error || 'Unknown error'));
         }
       })
       .catch(() => alert('Failed to reject document.'));
@@ -4328,12 +5536,22 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
     container.innerHTML = '<p style="text-align: center; color: #666;">Loading notifications...</p>';
 
-    fetch(window.location.pathname + '?fetch=notifications')
+    const params = new URLSearchParams();
+    params.append('fetch', 'notifications');
+
+    const type = document.getElementById('notif_type')?.value || '';
+    const dateFrom = document.getElementById('notif_date_from')?.value || '';
+    const dateTo = document.getElementById('notif_date_to')?.value || '';
+    const search = document.getElementById('notif_search')?.value?.trim() || '';
+
+    if (type) params.append('type', type);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (search) params.append('search', search);
+
+    fetch(window.location.pathname + '?' + params.toString())
       .then(response => response.json())
       .then(notifications => {
-        const notifBadge = document.getElementById('notifications-badge');
-        updateBadge(notifBadge, notifications.length || 0);
-
         if (!notifications.length) {
           container.innerHTML = '<p style="text-align: center; color: #666;">No notifications available.</p>';
           return;
@@ -4351,6 +5569,19 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load notifications.</p>';
         console.error('Error loading notifications:', error);
       });
+  }
+
+  function applyNotificationFilters() {
+    loadNotifications();
+  }
+
+  function resetNotificationFilters() {
+    const ids = ['notif_type', 'notif_date_from', 'notif_date_to', 'notif_search'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    loadNotifications();
   }
 
   function getNotificationColor(type) {
@@ -4380,7 +5611,20 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
 
     container.innerHTML = '<p style="text-align: center; color: #666;">Loading audit logs...</p>';
 
-    fetch(window.location.pathname + '?fetch=audit_logs')
+    const params = new URLSearchParams();
+    params.append('fetch', 'audit_logs');
+
+    const action = document.getElementById('audit_action')?.value?.trim() || '';
+    const dateFrom = document.getElementById('audit_date_from')?.value || '';
+    const dateTo = document.getElementById('audit_date_to')?.value || '';
+    const search = document.getElementById('audit_search')?.value?.trim() || '';
+
+    if (action) params.append('action', action);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (search) params.append('search', search);
+
+    fetch(window.location.pathname + '?' + params.toString())
       .then(response => response.json())
       .then(logs => {
         if (!logs.length) {
@@ -4402,6 +5646,249 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
         container.innerHTML = '<p style="text-align: center; color: #dc3545;">Failed to load audit logs.</p>';
         console.error('Error loading audit logs:', error);
       });
+  }
+
+  function applyAuditFilters() {
+    loadAuditLogs();
+  }
+
+  function resetAuditFilters() {
+    const ids = ['audit_action', 'audit_date_from', 'audit_date_to', 'audit_search'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    loadAuditLogs();
+  }
+
+  // ===========================
+  // PAYMENTS FUNCTIONS
+  // ===========================
+  function loadPayments() {
+    const tbody = document.getElementById('payments-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">Loading payments...</td></tr>';
+
+    fetch(window.location.pathname + '?fetch=all_payments', { method: 'GET' })
+      .then(response => response.json())
+      .then(data => {
+        if (!data || !data.payments || data.payments.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">No payments found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.payments.map(payment => `
+          <tr style="border-bottom: 1px solid #f0f0f0; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
+            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.block_number || 'N/A'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.lot_number || 'N/A'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.location_name || 'N/A'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.owner_name || '<span style="color: #6c757d; font-style: italic;">Unassigned</span>'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #333;">
+              <span style="background: ${getPaymentTypeColor(payment.payment_type)}; padding: 5px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; color: white; display: inline-block;">
+                ${payment.payment_type || 'N/A'}
+              </span>
+            </td>
+            <td style="padding: 15px; font-size: 14px; color: #333; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.payment_amount ? parseFloat(payment.payment_amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #495057; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
+            <td style="padding: 15px; font-size: 14px; text-align: center;">
+              <select 
+                id="payment-status-${payment.lot_id}" 
+                class="payment-status-select" 
+                style="padding: 6px 12px; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; background: white; font-size: 13px; font-weight: 500; min-width: 110px;" 
+                onchange="updatePaymentStatus(${payment.lot_id}, this.value)">
+                <option value="Available" ${payment.status === 'Available' ? 'selected' : ''}>Available</option>
+                <option value="Reserved" ${payment.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
+                <option value="Sold" ${payment.status === 'Sold' ? 'selected' : ''}>Sold</option>
+                <option value="Paid" ${payment.status === 'Paid' ? 'selected' : ''}>Paid</option>
+              </select>
+            </td>
+          </tr>
+        `).join('');
+      })
+      .catch(error => {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
+        console.error('Error loading payments:', error);
+      });
+  }
+
+  function getPaymentTypeColor(type) {
+    switch(type) {
+      case 'Down Payment': return '#007bff';
+      case 'Cash': return '#28a745';
+      case 'Fully Paid': return '#20c997';
+      default: return '#6c757d';
+    }
+  }
+
+  function getStatusColor(status) {
+    switch(status) {
+      case 'Available': return '#6c757d';
+      case 'Sold': return '#dc3545';
+      case 'Reserved': return '#ffc107';
+      case 'Paid': return '#28a745';
+      default: return '#6c757d';
+    }
+  }
+
+  // Update Payment Status - robust parser for mixed responses
+  function updatePaymentStatus(lotId, newStatus) {
+    const selectElement = document.getElementById(`payment-status-${lotId}`);
+    const previousValue = selectElement ? selectElement.value : newStatus;
+
+    const formData = new FormData();
+    formData.append('action', 'update_lot_status');
+    formData.append('lot_id', lotId);
+    formData.append('status', newStatus);
+
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.text())
+      .then(text => {
+        let res;
+        try {
+          res = JSON.parse(text);
+        } catch (e) {
+          const firstBrace = text.indexOf('{');
+          const lastBrace = text.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            res = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+          } else {
+            throw new Error('Non-JSON response: ' + text.slice(0, 180));
+          }
+        }
+
+        if (res.success) {
+          showMessage('Payment status updated successfully', true);
+          return;
+        }
+
+        if (selectElement) {
+          selectElement.value = previousValue;
+        }
+        alert('Failed to update payment status: ' + (res.error || 'Unknown error'));
+      })
+      .catch(error => {
+        if (selectElement) {
+          selectElement.value = previousValue;
+        }
+        console.error('Status update response error:', error);
+        alert('Failed to update payment status. ' + (error.message || 'Please check console.'));
+      });
+  }
+
+  // ===========================
+  // LOT OWNERS FUNCTIONS
+  // ===========================
+  function loadLotOwners() {
+    const tbody = document.getElementById('lot-owners-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">Loading lot owners...</td></tr>';
+
+    fetch(window.location.pathname + '?fetch=all_lot_owners', { method: 'GET' })
+      .then(response => response.json())
+      .then(data => {
+        if (!data || !data.owners || data.owners.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">No lot owners found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.owners.map(owner => `
+          <tr>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.owner_name || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.email || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.mobile_number || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.location_name || 'N/A'} - Block ${owner.block_number || 'N/A'}, Lot ${owner.lot_number || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">
+              <select id="status-${owner.lot_id}" class="lot-status-select" style="padding: 6px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;" onchange="updateLotPaymentStatus(${owner.lot_id}, this.value)">
+                <option value="Available" ${owner.status === 'Available' ? 'selected' : ''}>Available</option>
+                <option value="Reserved" ${owner.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
+                <option value="Sold" ${owner.status === 'Sold' ? 'selected' : ''}>Sold</option>
+                <option value="Paid" ${owner.status === 'Paid' ? 'selected' : ''}>Paid</option>
+              </select>
+            </td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">
+              <button class="btn-small" onclick="viewOwnerDetails(${owner.user_id})">View Details</button>
+              <button class="btn-small btn-danger" onclick="removeLotOwner(${owner.lot_id})">Remove Owner</button>
+            </td>
+          </tr>
+        `).join('');
+      })
+      .catch(error => {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #dc3545;">Failed to load lot owners.</td></tr>';
+        console.error('Error loading lot owners:', error);
+      });
+  }
+
+  function updateLotPaymentStatus(lotId, newStatus) {
+    const formData = new FormData();
+    formData.append('action', 'update_lot_status');
+    formData.append('lot_id', lotId);
+    formData.append('status', newStatus);
+
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.text())
+      .then(text => {
+        let res;
+        try {
+          res = JSON.parse(text);
+        } catch (e) {
+          const firstBrace = text.indexOf('{');
+          const lastBrace = text.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            res = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+          } else {
+            throw new Error('Non-JSON response: ' + text.slice(0, 180));
+          }
+        }
+
+        if (res.success) {
+          showMessage('Payment status updated successfully', true);
+        } else {
+          alert('Failed to update payment status: ' + (res.error || 'Unknown error'));
+        }
+      })
+      .catch(error => {
+        console.error('Lot owner status response error:', error);
+        alert('Failed to update payment status. ' + (error.message || 'Please check console.'));
+      });
+  }
+
+  function removeLotOwner(lotId) {
+    if (!confirm('Remove the owner from this lot?')) return;
+
+    const formData = new FormData();
+    formData.append('action', 'remove_lot_owner');
+    formData.append('lot_id', lotId);
+
+    fetch(window.location.pathname, { method: 'POST', body: formData })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          showMessage('Owner removed successfully', true);
+          loadPayments();
+          loadLotOwners(); // Reload the list
+        } else {
+          alert('Failed to remove owner: ' + (res.error || 'Unknown error'));
+        }
+      })
+      .catch(error => {
+        alert('Failed to remove owner.');
+        console.error('Error:', error);
+      });
+  }
+
+  function viewOwnerDetails(userId) {
+    // Fetch and display owner details
+    fetch(window.location.pathname + '?fetch=user&id=' + userId)
+      .then(r => r.json())
+      .then(user => {
+        alert('Owner Name: ' + user.first_name + ' ' + user.last_name + '\n' + 
+              'Email: ' + user.email + '\n' + 
+              'Mobile: ' + user.mobile_number + '\n' + 
+              'Address: ' + user.address);
+      })
+      .catch(error => alert('Failed to fetch owner details.'));
   }
 
   // ===========================
@@ -4597,71 +6084,6 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
   }
 
   // ===========================
-  // PAYMENTS & LOT OWNERS
-  // ===========================
-  function updatePaymentStatus(payId, newStatus) {
-    if (!confirm('Set this payment to "' + newStatus + '"?')) return;
-    const formData = new FormData();
-    formData.append('action', 'update_payment_status');
-    formData.append('payment_id', payId);
-    formData.append('new_status', newStatus);
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) {
-          const colors = { Verified: 'background:#dcfce7;color:#166534;', Rejected: 'background:#fee2e2;color:#991b1b;' };
-          const cell = document.getElementById('pay-status-' + payId);
-          if (cell) cell.innerHTML = '<span style="padding:4px 10px;border-radius:12px;font-size:12px;font-weight:600;' + (colors[newStatus]||'') + '">' + newStatus + '</span>';
-          // Replace action buttons with "Done"
-          const row = document.getElementById('pay-row-' + payId);
-          if (row) { const lastTd = row.querySelector('td:last-child'); if (lastTd) lastTd.innerHTML = '<span style="color:#999;font-size:12px;">Done</span>'; }
-        } else {
-          alert('Failed: ' + (data.error || 'Unknown error'));
-        }
-      })
-      .catch(() => alert('Request failed'));
-  }
-
-  function saveLotOwner(lotId) {
-    const sel = document.getElementById('owner-' + lotId);
-    if (!sel) return;
-    const formData = new FormData();
-    formData.append('action', 'assign_lot_owner');
-    formData.append('lot_id', lotId);
-    formData.append('owner_id', sel.value);
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) {
-          alert('Owner updated successfully!');
-        } else {
-          alert('Failed: ' + (data.error || 'Unknown error'));
-        }
-      })
-      .catch(() => alert('Request failed'));
-  }
-
-  function saveLotPaymentType(lotId) {
-    const sel = document.getElementById('paytype-' + lotId);
-    if (!sel) return;
-    const formData = new FormData();
-    formData.append('action', 'update_lot_payment');
-    formData.append('lot_id', lotId);
-    formData.append('payment_type', sel.value);
-    formData.append('payment_amount', 0);
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) {
-          alert('Payment type updated!');
-        } else {
-          alert('Failed: ' + (data.error || 'Unknown error'));
-        }
-      })
-      .catch(() => alert('Request failed'));
-  }
-
-  // ===========================
   // LOGOUT CONFIRMATION
   // ===========================
   function confirmLogout() {
@@ -4704,24 +6126,42 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
   // ANALYTICS
   // ===========================
   function loadAnalyticsData() {
-    loadAnalyticsKPIs();
-    loadTopAgents(1);
-    loadMonthlySalesChart();
+    applyAnalyticsFilters();
   }
 
   function loadAnalyticsKPIs() {
+    applyAnalyticsFilters();
+  }
+
+  function updateSalesRangeLabel(dateFrom, dateTo) {
+    const rangeLabelEl = document.getElementById('kpi-total-sales-range-label');
+    if (!rangeLabelEl) return;
+
+    if (dateFrom && dateTo) {
+      rangeLabelEl.textContent = `Filtered: ${dateFrom} to ${dateTo}`;
+      return;
+    }
+    if (dateFrom) {
+      rangeLabelEl.textContent = `Filtered: from ${dateFrom}`;
+      return;
+    }
+    if (dateTo) {
+      rangeLabelEl.textContent = `Filtered: up to ${dateTo}`;
+      return;
+    }
+    rangeLabelEl.textContent = 'All recorded sales';
+  }
+
+  function renderAnalyticsKpis(data) {
     const totalSalesEl = document.getElementById('kpi-total-sales');
     const totalLotsEl  = document.getElementById('kpi-total-lots');
     const agentsEl     = document.getElementById('kpi-available-agents');
     const pendingEl    = document.getElementById('kpi-pending-documents');
 
-    if (totalSalesEl) {
-      totalSalesEl.textContent =
-        '₱' + (<?php echo isset($dashboard_stats["total_sales"]) ? $dashboard_stats["total_sales"] : 0; ?>).toLocaleString();
-    }
-    if (totalLotsEl)  totalLotsEl.textContent  = '<?php echo $dashboard_stats["lots"]; ?>';
-    if (agentsEl)     agentsEl.textContent     = '<?php echo $dashboard_stats["agents"]; ?>';
-    if (pendingEl)    pendingEl.textContent    = '<?php echo $dashboard_stats["pending_documents"]; ?>';
+    if (totalSalesEl) totalSalesEl.textContent = '₱' + (data.kpis.total_sales || 0).toLocaleString();
+    if (totalLotsEl)  totalLotsEl.textContent  = data.kpis.total_lots || 0;
+    if (agentsEl)     agentsEl.textContent     = data.kpis.available_agents || 0;
+    if (pendingEl)    pendingEl.textContent    = data.kpis.pending_documents || 0;
   }
 
   function loadTopAgents(page = 1) {
@@ -4785,51 +6225,66 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       });
   }
 
-  const monthlySalesData = <?php echo json_encode($monthly_sales); ?>; 
+  let lastMonthlySalesData = [];
 
   function loadMonthlySalesChart() {
-    const canvas = document.getElementById('monthly-sales-chart');
-    if (!canvas) return;
+    updateMonthlySalesChart([]);
+  }
+
+  function formatPesoCompact(value) {
+    const n = Number(value) || 0;
+    return 'PHP ' + new Intl.NumberFormat('en-PH', {
+      notation: 'compact',
+      maximumFractionDigits: 1
+    }).format(n);
+  }
+
+  function formatPesoFull(value) {
+    const n = Number(value) || 0;
+    return 'PHP ' + new Intl.NumberFormat('en-PH', {
+      maximumFractionDigits: 0
+    }).format(n);
+  }
+
+  function setupResponsiveCanvas(canvas) {
+    const wrap = document.getElementById('monthly-sales-chart-wrap') || canvas.parentElement;
+    const cssWidth = Math.max(360, Math.floor((wrap?.clientWidth || 800) - 8));
+    const cssHeight = 320;
+    const dpr = window.devicePixelRatio || 1;
+
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    canvas.width = Math.floor(cssWidth * dpr);
+    canvas.height = Math.floor(cssHeight * dpr);
+
     const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, width: cssWidth, height: cssHeight };
+  }
 
-    const data = monthlySalesData.length ? monthlySalesData : [
-      { month: 'Jan 2024', amount: 150000 },
-      { month: 'Feb 2024', amount: 200000 },
-      { month: 'Mar 2024', amount: 180000 },
-      { month: 'Apr 2024', amount: 250000 },
-      { month: 'May 2024', amount: 300000 },
-      { month: 'Jun 2024', amount: 280000 }
-    ];
+  function updateMonthlySalesTitle(data, dateFrom, dateTo) {
+    const titleEl = document.getElementById('monthly-sales-title');
+    if (!titleEl) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (data && data.monthly_scope === 'last_12_months' && !dateFrom && !dateTo) {
+      titleEl.textContent = 'Monthly Sales Trend (Last 12 Months)';
+      return;
+    }
 
-    const padding = 40;
-    const width = canvas.width - padding * 2;
-    const height = canvas.height - padding * 2;
+    if (dateFrom && dateTo) {
+      titleEl.textContent = `Monthly Sales Trend (${dateFrom} to ${dateTo})`;
+      return;
+    }
+    if (dateFrom) {
+      titleEl.textContent = `Monthly Sales Trend (From ${dateFrom})`;
+      return;
+    }
+    if (dateTo) {
+      titleEl.textContent = `Monthly Sales Trend (Up to ${dateTo})`;
+      return;
+    }
 
-    ctx.strokeStyle = '#ddd';
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    const maxAmount = Math.max(...data.map(item => item.amount), 1);
-    const barWidth = width / data.length / 2;
-    data.forEach((item, index) => {
-      const x = padding + index * 2 * barWidth;
-      const barHeight = (item.amount / maxAmount) * (height - 20);
-      const y = canvas.height - padding - barHeight;
-      const color = index % 2 === 0 ? '#28a745' : '#007bff';
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, barWidth, barHeight);
-
-      ctx.fillStyle = '#333';
-      ctx.font = 'bold 12px Arial';
-      ctx.fillText(item.month, x, canvas.height - padding + 15);
-      ctx.fillText(item.amount.toLocaleString(), x, y - 5);
-    });
+    titleEl.textContent = 'Monthly Sales Trend';
   }
 
   function applyAnalyticsFilters() {
@@ -4843,57 +6298,269 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     if (dateTo) params.append('date_to', dateTo);
     if (locationId) params.append('location_id', locationId);
 
-      fetch(window.location.pathname + '?' + params.toString())
-        .then(response => response.json())
-        .then(data => {
-          const totalSalesEl = document.getElementById('kpi-total-sales');
-          const totalLotsEl  = document.getElementById('kpi-total-lots');
-          const agentsEl     = document.getElementById('kpi-available-agents');
-          if (totalSalesEl) totalSalesEl.textContent = '₱' + (data.kpis.total_sales || 0).toLocaleString();
-          if (totalLotsEl)  totalLotsEl.textContent  = data.kpis.total_lots || 0;
-          if (agentsEl)     agentsEl.textContent     = data.kpis.available_agents || 0;
-          updateMonthlySalesChart(data.monthly_sales);
-          loadTopAgents();
-        });
-    }
+    fetch(window.location.pathname + '?' + params.toString())
+      .then(response => response.json())
+      .then(data => {
+        renderAnalyticsKpis(data);
+        updateSalesRangeLabel(dateFrom, dateTo);
+        updateMonthlySalesTitle(data, dateFrom, dateTo);
+
+        const monthly = Array.isArray(data.monthly_sales) ? data.monthly_sales : [];
+        lastMonthlySalesData = monthly;
+        updateMonthlySalesChart(monthly);
+        loadTopAgents(1);
+      })
+      .catch(err => {
+        alert('Failed to load analytics data.');
+        console.error(err);
+      });
+  }
 
   function updateMonthlySalesChart(monthlySalesData) {
     const canvas = document.getElementById('monthly-sales-chart');
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const tooltip = document.getElementById('monthly-sales-tooltip');
+    const wrap = document.getElementById('monthly-sales-chart-wrap');
+
+    const { ctx, width, height } = setupResponsiveCanvas(canvas);
     const data = monthlySalesData.length ? monthlySalesData : [];
+    if (canvas._animFrame) {
+      cancelAnimationFrame(canvas._animFrame);
+      canvas._animFrame = null;
+    }
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const chart = {
+      left: 70,
+      right: width - 24,
+      top: 20,
+      bottom: height - 52
+    };
+    const plotWidth = Math.max(1, chart.right - chart.left);
+    const plotHeight = Math.max(1, chart.bottom - chart.top);
 
-    const padding = 40;
-    const width = canvas.width - padding * 2;
-    const height = canvas.height - padding * 2;
+    if (!data.length) {
+      canvas._hitPoints = [];
+      canvas._drawStatic = null;
+      canvas._hoverIndex = -1;
+      if (tooltip) tooltip.style.display = 'none';
 
-    ctx.strokeStyle = '#ddd';
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#f7faf7';
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#777';
+      ctx.font = '600 14px Segoe UI, Arial, sans-serif';
+      ctx.fillText('No sales data for selected filters.', chart.left + 8, height / 2);
+      return;
+    }
 
-    const maxAmount = Math.max(...data.map(item => item.amount), 1);
-    const barWidth = data.length ? width / data.length / 2 : 0;
+    const amounts = data.map(item => Number(item.amount) || 0);
+    const maxAmount = Math.max(...amounts, 1);
+    const minAmount = Math.min(...amounts, 0);
+    const range = Math.max(1, maxAmount - minAmount);
 
-    data.forEach((item, index) => {
-      const x = padding + index * 2 * barWidth;
-      const barHeight = (item.amount / maxAmount) * (height - 20);
-      const y = canvas.height - padding - barHeight;
-      const color = index % 2 === 0 ? '#28a745' : '#007bff';
+    const xFor = (i) => {
+      if (data.length === 1) return chart.left + (plotWidth / 2);
+      return chart.left + (i / (data.length - 1)) * plotWidth;
+    };
+    const yFor = (amount, progress) => {
+      const animatedAmount = minAmount + (amount - minAmount) * progress;
+      const ratio = (animatedAmount - minAmount) / range;
+      return chart.bottom - (ratio * plotHeight);
+    };
 
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, barWidth, barHeight);
+    const drawFrame = (progress, hoverIndex = -1) => {
+      ctx.clearRect(0, 0, width, height);
 
-      ctx.fillStyle = '#333';
-      ctx.font = 'bold 12px Arial';
-      ctx.fillText(item.month, x, canvas.height - padding + 15);
-      ctx.fillText(item.amount.toLocaleString(), x, y - 5);
-    });
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
+      bgGrad.addColorStop(0, '#fcfdfc');
+      bgGrad.addColorStop(1, '#f3f8f3');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      const ticks = 4;
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '11px Segoe UI, Arial, sans-serif';
+
+      for (let t = 0; t <= ticks; t++) {
+        const ratio = t / ticks;
+        const y = chart.bottom - (ratio * plotHeight);
+        const value = minAmount + (range * ratio);
+
+        ctx.beginPath();
+        ctx.moveTo(chart.left, y);
+        ctx.lineTo(chart.right, y);
+        ctx.stroke();
+
+        ctx.textAlign = 'right';
+        ctx.fillText(formatPesoCompact(value), chart.left - 10, y + 4);
+      }
+
+      const labelStep = Math.max(1, Math.ceil(data.length / 8));
+      ctx.textAlign = 'center';
+      data.forEach((item, i) => {
+        if (i % labelStep !== 0 && i !== data.length - 1) return;
+        const x = xFor(i);
+        ctx.fillStyle = '#6b7280';
+        ctx.fillText(item.month, x, chart.bottom + 22);
+      });
+
+      const points = data.map((item, i) => ({
+        x: xFor(i),
+        y: yFor(Number(item.amount) || 0, progress),
+        amount: Number(item.amount) || 0,
+        month: item.month
+      }));
+
+      const areaGrad = ctx.createLinearGradient(0, chart.top, 0, chart.bottom);
+      areaGrad.addColorStop(0, 'rgba(34, 139, 78, 0.28)');
+      areaGrad.addColorStop(1, 'rgba(34, 139, 78, 0.04)');
+
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, chart.bottom);
+      points.forEach((p) => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(points[points.length - 1].x, chart.bottom);
+      ctx.closePath();
+      ctx.fillStyle = areaGrad;
+      ctx.fill();
+
+      ctx.beginPath();
+      points.forEach((p, idx) => {
+        if (idx === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.strokeStyle = '#1e7a4a';
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      points.forEach((p, i) => {
+        if (i % labelStep !== 0 && i !== points.length - 1) return;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = '#1e7a4a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+
+      if (hoverIndex >= 0 && points[hoverIndex]) {
+        const hp = points[hoverIndex];
+
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = 'rgba(30,122,74,0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(hp.x, chart.top);
+        ctx.lineTo(hp.x, chart.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.arc(hp.x, hp.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = '#14532d';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      const last = points[points.length - 1];
+      if (last) {
+        const text = formatPesoFull(last.amount);
+        ctx.font = 'bold 12px Segoe UI, Arial, sans-serif';
+        const tw = ctx.measureText(text).width;
+        const bx = Math.min(chart.right - tw - 18, last.x + 8);
+        const by = Math.max(chart.top + 8, last.y - 28);
+        ctx.fillStyle = 'rgba(30,122,74,0.95)';
+        ctx.fillRect(bx, by, tw + 12, 20);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, bx + (tw + 12) / 2, by + 14);
+      }
+
+      if (progress >= 1) {
+        canvas._hitPoints = points;
+        canvas._drawStatic = (hoverIdx) => drawFrame(1, hoverIdx);
+      }
+    };
+
+    const duration = 650;
+    const start = performance.now();
+    const animate = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const p = 1 - Math.pow(1 - t, 3);
+      drawFrame(p, canvas._hoverIndex ?? -1);
+      if (t < 1) {
+        canvas._animFrame = requestAnimationFrame(animate);
+      }
+    };
+
+    if (!canvas._hoverBound) {
+      canvas.addEventListener('mousemove', (ev) => {
+        if (!canvas._hitPoints || !canvas._hitPoints.length || !canvas._drawStatic) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+
+        let nearest = -1;
+        let minDx = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < canvas._hitPoints.length; i++) {
+          const dx = Math.abs(canvas._hitPoints[i].x - x);
+          if (dx < minDx) {
+            minDx = dx;
+            nearest = i;
+          }
+        }
+
+        if (nearest < 0 || minDx > 28) {
+          if (tooltip) tooltip.style.display = 'none';
+          if ((canvas._hoverIndex ?? -1) !== -1) {
+            canvas._hoverIndex = -1;
+            canvas._drawStatic(-1);
+          }
+          return;
+        }
+
+        const point = canvas._hitPoints[nearest];
+        if (tooltip && wrap && point) {
+          tooltip.innerHTML = `<div style="font-weight:600; margin-bottom:2px;">${point.month}</div><div>${formatPesoFull(point.amount)}</div>`;
+          tooltip.style.display = 'block';
+
+          const tipWidth = tooltip.offsetWidth || 110;
+          const left = Math.max(8, Math.min(point.x - (tipWidth / 2), (wrap.clientWidth - tipWidth - 8)));
+          const top = Math.max(8, point.y - 56);
+          tooltip.style.left = `${left}px`;
+          tooltip.style.top = `${top}px`;
+        }
+
+        if ((canvas._hoverIndex ?? -1) !== nearest) {
+          canvas._hoverIndex = nearest;
+          canvas._drawStatic(nearest);
+        }
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        if (tooltip) tooltip.style.display = 'none';
+        if ((canvas._hoverIndex ?? -1) !== -1 && canvas._drawStatic) {
+          canvas._hoverIndex = -1;
+          canvas._drawStatic(-1);
+        }
+      });
+
+      canvas._hoverBound = true;
+    }
+
+    canvas._animFrame = requestAnimationFrame(animate);
   }
+
+  window.addEventListener('resize', () => {
+    if (!lastMonthlySalesData.length) return;
+    updateMonthlySalesChart(lastMonthlySalesData);
+  });
 
   // ===========================
   // MISC HELPERS
@@ -5140,378 +6807,285 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
       .catch(() => alert('Failed to delete lots.'));
   }
 
-  // ===========================
-  // PIN LOCATION MANAGEMENT
-  // ===========================
-  let pinModalData = {
+// --- Mapper Globals ---
+let pzInstance = null;
+let svgMain = null, staticGroup = null, liveGroup = null;
+let pinModalData = {
     lot_id: null,
-    lot: null,
-    canvas: null,
-    ctx: null,
     isDrawingMode: false,
     polygonPoints: [],
-    otherPins: [],
-    hoverPoint: null,
-    isPolygonClosed: false,
-    canvasOffsetX: 0,
-    canvasOffsetY: 0,
     selectedStatus: 'Available'
-  };
+};
 
-  function selectLotStatus(status) {
+function selectLotStatus(status) {
     pinModalData.selectedStatus = status;
     
     // Update button styles
     const buttons = ['Available', 'Reserved', 'Sold'];
     buttons.forEach(btn => {
-      const buttonEl = document.getElementById(`statusBtn_${btn}`);
-      if (!buttonEl) return;
-      
-      if (btn === status) {
-        // Active state
-        buttonEl.style.background = {
-          'Available': '#28a745',
-          'Reserved': '#ffc107',
-          'Sold': '#dc3545'
-        }[btn];
-        buttonEl.style.color = btn === 'Reserved' ? '#333' : 'white';
-      } else {
-        // Inactive state
-        buttonEl.style.background = 'white';
-        buttonEl.style.color = {
-          'Available': '#28a745',
-          'Reserved': '#ffc107',
-          'Sold': '#dc3545'
-        }[btn];
-      }
-    });
-
-    if (pinModalData.canvas && pinModalData.polygonPoints.length > 0) {
-      redrawPolygon();
-    }
-  }
-
-  function openPinModal(lotId, lot) {
-    const modal = document.getElementById('pinModal');
-    if (!modal) return;
-
-    pinModalData.lot_id = lotId;
-    pinModalData.lot = lot;
-    pinModalData.polygonPoints = [];
-    pinModalData.otherPins = [];
-    pinModalData.hoverPoint = null;
-    pinModalData.isPolygonClosed = false;
-    pinModalData.isDrawingMode = false;
-    pinModalData.selectedStatus = lot.status || 'Available';
-
-    // Update header
-    const lotInfo = document.getElementById('pinModalLotInfo');
-    if (lotInfo) {
-      lotInfo.textContent = `Block ${lot.block_number} - Lot ${lot.lot_number}`;
-    }
-
-    // Set the status button to match the lot's current status
-    selectLotStatus(pinModalData.selectedStatus);
-
-    // Fetch blueprint
-    fetch(`${window.location.pathname}?fetch=blueprint&lot_id=${lotId}`)
-      .then(r => r.json())
-      .then(data => {
-        if (!data.success) {
-          alert('Failed to load blueprint');
-          return;
-        }
-
-        const imgElement = document.getElementById('blueprintImage');
-        const canvas = document.getElementById('blueprintCanvas');
-
-        if (!imgElement || !canvas) return;
-
-        // Load image
-        if (data.blueprint) {
-          imgElement.src = data.blueprint;
-          imgElement.onload = function() {
-            setupCanvas();
-
-            const allPins = Array.isArray(data.all_pins) ? data.all_pins : [];
-            const currentPin = allPins.find(p => Number(p.lot_id) === Number(lotId));
-
-            pinModalData.otherPins = allPins
-              .filter(p => Number(p.lot_id) !== Number(lotId))
-              .map(p => ({
-                lot_id: Number(p.lot_id),
-                points: Array.isArray(p.coordinates)
-                  ? p.coordinates.map(pt => ({ x: pt.x, y: pt.y }))
-                  : [],
-                status: p.pin_status || 'Available'
-              }))
-              .filter(p => p.points.length > 0);
-
-            if (currentPin && Array.isArray(currentPin.coordinates) && currentPin.coordinates.length > 0) {
-              pinModalData.polygonPoints = currentPin.coordinates.map(p => ({ x: p.x, y: p.y }));
-              pinModalData.isPolygonClosed = true;
-              pinModalData.selectedStatus = currentPin.pin_status || pinModalData.selectedStatus;
-              selectLotStatus(pinModalData.selectedStatus);
-            } else if (data.pin && data.pin.length > 0) {
-              pinModalData.polygonPoints = data.pin.map(p => ({ x: p.x, y: p.y }));
-              pinModalData.isPolygonClosed = true;
-              if (data.pin_status) {
-                pinModalData.selectedStatus = data.pin_status;
-                selectLotStatus(data.pin_status);
-              }
-            }
-
-            if (pinModalData.otherPins.length > 0 || pinModalData.polygonPoints.length > 0) {
-              canvas.style.display = 'block';
-              redrawPolygon();
-            }
-          };
+        const buttonEl = document.getElementById(`statusBtn_${btn}`);
+        if (!buttonEl) return;
+        if (btn === status) {
+            buttonEl.style.background = { 'Available': '#28a745', 'Reserved': '#ffc107', 'Sold': '#dc3545' }[btn];
+            buttonEl.style.color = btn === 'Reserved' ? '#333' : 'white';
         } else {
-          alert('No blueprint found for this location');
+            buttonEl.style.background = 'white';
+            buttonEl.style.color = { 'Available': '#28a745', 'Reserved': '#ffc107', 'Sold': '#dc3545' }[btn];
         }
-      })
-      .catch(err => {
-        console.error('Error loading blueprint:', err);
-        alert('Error loading blueprint');
-      });
-
-    modal.style.display = 'flex';
-  }
-
-  function setupCanvas() {
-    const img = document.getElementById('blueprintImage');
-    const canvas = document.getElementById('blueprintCanvas');
-    const container = img.parentElement;
-
-    if (!img || !canvas || !container) return;
-
-    canvas.width = img.offsetWidth;
-    canvas.height = img.offsetHeight;
-
-    pinModalData.canvas = canvas;
-    pinModalData.ctx = canvas.getContext('2d');
-    pinModalData.canvasOffsetX = container.offsetLeft;
-    pinModalData.canvasOffsetY = container.offsetTop;
-
-    // Add event listeners (reset first to avoid duplicate bindings)
-    canvas.removeEventListener('mousedown', onCanvasMouseDown);
-    canvas.removeEventListener('mousemove', onCanvasMouseMove);
-    canvas.removeEventListener('mouseup', onCanvasMouseUp);
-    canvas.removeEventListener('dblclick', onCanvasDoubleClick);
-    canvas.addEventListener('mousedown', onCanvasMouseDown);
-    canvas.addEventListener('mousemove', onCanvasMouseMove);
-    canvas.addEventListener('mouseup', onCanvasMouseUp);
-    canvas.addEventListener('dblclick', onCanvasDoubleClick);
-  }
-
-  function toggleDrawingMode() {
-    const btn = document.getElementById('toggleDrawBtn');
-    const canvas = document.getElementById('blueprintCanvas');
-
-    if (!btn || !canvas) return;
-
-    pinModalData.isDrawingMode = !pinModalData.isDrawingMode;
-
-    if (pinModalData.isDrawingMode) {
-      btn.textContent = 'Stop Drawing';
-      btn.style.background = '#dc3545';
-      canvas.style.display = 'block';
-      pinModalData.polygonPoints = [];
-      pinModalData.hoverPoint = null;
-      pinModalData.isPolygonClosed = false;
-      redrawPolygon();
-    } else {
-      btn.textContent = 'Start Drawing Polygon';
-      btn.style.background = '#28a745';
-      pinModalData.hoverPoint = null;
-      redrawPolygon();
-    }
-  }
-
-  function onCanvasMouseDown(e) {
-    if (!pinModalData.isDrawingMode || !pinModalData.canvas) return;
-
-    const rect = pinModalData.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (pinModalData.isPolygonClosed) {
-      pinModalData.polygonPoints = [];
-      pinModalData.isPolygonClosed = false;
-    }
-
-    if (pinModalData.polygonPoints.length >= 3) {
-      const first = pinModalData.polygonPoints[0];
-      const dist = Math.hypot(first.x - x, first.y - y);
-      if (dist <= 10) {
-        pinModalData.isPolygonClosed = true;
-        redrawPolygon();
-        return;
-      }
-    }
-
-    pinModalData.polygonPoints.push({ x, y });
-    redrawPolygon();
-  }
-
-  function getStatusColor(status) {
-    const colors = {
-      'Available': { stroke: '#28a745', fill: 'rgba(40, 167, 69, 0.2)' },
-      'Reserved': { stroke: '#ffc107', fill: 'rgba(255, 193, 7, 0.2)' },
-      'Sold': { stroke: '#dc3545', fill: 'rgba(220, 53, 69, 0.2)' }
-    };
-    return colors[status] || colors['Available'];
-  }
-
-  function onCanvasMouseMove(e) {
-    if (!pinModalData.isDrawingMode || !pinModalData.ctx || !pinModalData.canvas) return;
-
-    const rect = pinModalData.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    pinModalData.hoverPoint = { x, y };
-    redrawPolygon();
-  }
-
-  function onCanvasMouseUp() {}
-
-  function onCanvasDoubleClick(e) {
-    if (!pinModalData.isDrawingMode || pinModalData.polygonPoints.length < 3) return;
-    e.preventDefault();
-    pinModalData.isPolygonClosed = true;
-    redrawPolygon();
-  }
-
-  function redrawPolygon() {
-    if (!pinModalData.canvas || !pinModalData.ctx) return;
-
-    pinModalData.ctx.clearRect(0, 0, pinModalData.canvas.width, pinModalData.canvas.height);
-
-    // Draw all other saved pins on this blueprint
-    pinModalData.otherPins.forEach(pin => {
-      if (!Array.isArray(pin.points) || pin.points.length === 0) return;
-      const colors = getStatusColor(pin.status);
-
-      pinModalData.ctx.fillStyle = colors.fill;
-      pinModalData.ctx.strokeStyle = colors.stroke;
-      pinModalData.ctx.lineWidth = 2;
-
-      pinModalData.ctx.beginPath();
-      pinModalData.ctx.moveTo(pin.points[0].x, pin.points[0].y);
-      for (let i = 1; i < pin.points.length; i++) {
-        pinModalData.ctx.lineTo(pin.points[i].x, pin.points[i].y);
-      }
-      pinModalData.ctx.closePath();
-      pinModalData.ctx.fill();
-      pinModalData.ctx.stroke();
     });
 
     if (pinModalData.polygonPoints.length > 0) {
-      const colors = getStatusColor(pinModalData.selectedStatus);
-      pinModalData.ctx.fillStyle = colors.fill;
-      pinModalData.ctx.strokeStyle = colors.stroke;
-      pinModalData.ctx.lineWidth = 2;
-
-      pinModalData.ctx.beginPath();
-      pinModalData.ctx.moveTo(pinModalData.polygonPoints[0].x, pinModalData.polygonPoints[0].y);
-
-      for (let i = 1; i < pinModalData.polygonPoints.length; i++) {
-        pinModalData.ctx.lineTo(pinModalData.polygonPoints[i].x, pinModalData.polygonPoints[i].y);
-      }
-
-      if (pinModalData.isPolygonClosed) {
-        pinModalData.ctx.closePath();
-        pinModalData.ctx.fill();
-      }
-      pinModalData.ctx.stroke();
-
-      // Vertex markers (for precise corner placement)
-      pinModalData.polygonPoints.forEach(point => {
-        pinModalData.ctx.beginPath();
-        pinModalData.ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-        pinModalData.ctx.fillStyle = '#ffffff';
-        pinModalData.ctx.fill();
-        pinModalData.ctx.strokeStyle = colors.stroke;
-        pinModalData.ctx.lineWidth = 2;
-        pinModalData.ctx.stroke();
-      });
-
-      // Preview segment from last point to cursor while drawing
-      if (pinModalData.isDrawingMode && !pinModalData.isPolygonClosed && pinModalData.hoverPoint) {
-        const lastPoint = pinModalData.polygonPoints[pinModalData.polygonPoints.length - 1];
-        pinModalData.ctx.beginPath();
-        pinModalData.ctx.moveTo(lastPoint.x, lastPoint.y);
-        pinModalData.ctx.lineTo(pinModalData.hoverPoint.x, pinModalData.hoverPoint.y);
-        pinModalData.ctx.strokeStyle = colors.stroke;
-        pinModalData.ctx.lineWidth = 1.5;
-        pinModalData.ctx.setLineDash([4, 4]);
-        pinModalData.ctx.stroke();
-        pinModalData.ctx.setLineDash([]);
-      }
+        drawLivePolygon(pinModalData.polygonPoints.length > 2 && !pinModalData.isDrawingMode);
     }
-  }
+}
 
-  function savePinLocation() {
-    if (!pinModalData.lot_id) {
-      alert('No lot selected');
-      return;
-    }
-
-    if (pinModalData.polygonPoints.length < 3) {
-      alert('Please place at least 3 points to form a lot shape.');
-      return;
-    }
-
-    if (!pinModalData.isPolygonClosed) {
-      pinModalData.isPolygonClosed = true;
-      redrawPolygon();
-    }
-
-    const formData = new FormData();
-    formData.append('action', 'save_pin');
-    formData.append('lot_id', pinModalData.lot_id);
-    formData.append('polygon_coordinates', JSON.stringify(pinModalData.polygonPoints));
-    formData.append('pin_status', pinModalData.selectedStatus);
-
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(res => {
-        if (res.success) {
-          alert('Pin location saved successfully!');
-          closePinModal();
-          // Reload the lots to update the view
-          const locSel = document.getElementById('location_id');
-          loadLots(locSel ? locSel.value : '');
-        } else {
-          alert('Failed to save pin location: ' + (res.message || 'Unknown error'));
+// --- Open Mapper Modal ---
+function openPinModal(lotId, lotData) {
+    pinModalData.lot_id = lotId;
+    document.getElementById('pinModal').style.display = 'flex';
+    
+    fetch(`?fetch=blueprint&lot_id=${lotId}`)
+    .then(r => r.json())
+    .then(data => {
+        const img = document.getElementById('blueprintImage');
+        const wrapper = document.getElementById('blueprint-wrapper');
+        const layer = document.getElementById('draw-layer');
+        const stage = document.getElementById('blueprint-stage');
+        
+        if (!data.blueprint) {
+            alert("No blueprint found for this location. Please upload a blueprint first.");
+            closePinModal();
+            return;
         }
-      })
-      .catch(err => {
-        console.error('Error saving pin:', err);
-        alert('Error saving pin location');
-      });
-  }
 
-  function closePinModal() {
-    const modal = document.getElementById('pinModal');
-    if (modal) {
-      modal.style.display = 'none';
-      // Reset drawing mode
-      const btn = document.getElementById('toggleDrawBtn');
-      if (btn) {
+        img.src = data.blueprint; 
+        layer.innerHTML = ''; 
+
+        // Reset and init Panzoom
+        if(pzInstance) {
+            pzInstance.destroy();
+            pzInstance = null;
+        }
+        wrapper.style.transform = 'scale(1) translate(0px, 0px)'; 
+        
+        // Wait for image to load to apply correct dimensions
+        img.onload = () => {
+            pzInstance = Panzoom(wrapper, { maxScale: 10, minScale: 0.5, step: 0.2, cursor: 'grab' });
+            stage.onwheel = e => { e.preventDefault(); pzInstance.zoomWithWheel(e); };
+            
+            // Setup Native SVG Canvas overlay
+            svgMain = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svgMain.setAttribute('width', '100%');
+            svgMain.setAttribute('height', '100%');
+            svgMain.setAttribute('viewBox', '0 0 100 100'); // Calculates by % 0-100
+            svgMain.setAttribute('preserveAspectRatio', 'none');
+            svgMain.style.position = 'absolute';
+            svgMain.style.top = '0';
+            svgMain.style.left = '0';
+            
+            staticGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            liveGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            svgMain.appendChild(staticGroup);
+            svgMain.appendChild(liveGroup);
+            layer.appendChild(svgMain);
+
+            // Draw existing background pins
+            if(data.all_pins) {
+                data.all_pins.forEach(pin => {
+                    if(pin.coordinates && Array.isArray(pin.coordinates) && pin.lot_id != lotId) {
+                        let poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        poly.setAttribute('points', pin.coordinates.map(pt => `${pt.x},${pt.y}`).join(' '));
+                        
+                        let stat = (pin.pin_status || 'Available').toLowerCase();
+                        poly.setAttribute('fill', stat==='sold' ? 'rgba(220,53,69,0.4)' : (stat==='reserved' ? 'rgba(255,193,7,0.4)' : 'rgba(40,167,69,0.4)'));
+                        poly.setAttribute('stroke', stat==='sold' ? 'red' : (stat==='reserved' ? 'gold' : 'green'));
+                        poly.setAttribute('stroke-width', '0.2');
+                        poly.setAttribute('vector-effect', 'non-scaling-stroke');
+                        staticGroup.appendChild(poly);
+                    }
+                });
+            }
+
+            // Load active lot data
+            pinModalData.polygonPoints = (data.pin && Array.isArray(data.pin)) ? data.pin : [];
+            pinModalData.selectedStatus = data.pin_status || 'Available';
+            
+            const lotInfo = document.getElementById('pinModalLotInfo');
+            if (lotInfo && data.lot) lotInfo.textContent = `Block ${data.lot.block_number} - Lot ${data.lot.lot_number}`;
+
+            selectLotStatus(pinModalData.selectedStatus); 
+            drawLivePolygon(pinModalData.polygonPoints.length > 2);
+            
+            pinModalData.isDrawingMode = false;
+            const btn = document.getElementById('toggleDrawBtn');
+            if (btn) {
+                btn.textContent = 'Start Drawing Polygon';
+                btn.style.background = '#28a745';
+            }
+            layer.style.pointerEvents = 'none'; // Allow panning map on default
+        };
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error loading blueprint data.');
+    });
+}
+
+// --- Toggle Drawing ---
+function toggleDrawingMode() {
+    const btn = document.getElementById('toggleDrawBtn');
+    const layer = document.getElementById('draw-layer');
+    const wrapper = document.getElementById('blueprint-wrapper');
+    
+    pinModalData.isDrawingMode = !pinModalData.isDrawingMode;
+
+    if(pinModalData.isDrawingMode) {
+        if (btn) {
+            btn.textContent = 'Stop / Double Click to Finish';
+            btn.style.background = '#dc3545';
+        }
+        layer.style.pointerEvents = 'auto'; // Block map panning, enable capturing clicks
+        layer.style.cursor = 'crosshair';
+        
+        // Stop Panzoom from capturing drag events
+        if (pzInstance) pzInstance.setOptions({ disablePan: true });
+
+        pinModalData.polygonPoints = [];
+        liveGroup.innerHTML = '';
+        
+        let startX, startY;
+        layer.onpointerdown = e => { 
+            e.stopPropagation();
+            startX = e.clientX; 
+            startY = e.clientY; 
+        };
+        
+        layer.onpointerup = e => {
+            e.stopPropagation();
+            if(!pinModalData.isDrawingMode) return;
+            // Prevent click triggers when dragging slightly
+            if(Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) return; 
+            
+            const rect = layer.getBoundingClientRect();
+            // Store percentages 0-100 for proper scaling
+            pinModalData.polygonPoints.push({
+                x: ((e.clientX - rect.left) / rect.width) * 100,
+                y: ((e.clientY - rect.top) / rect.height) * 100
+            });
+            drawLivePolygon(false);
+        };
+        
+        layer.ondblclick = e => {
+            e.stopPropagation();
+            if(pinModalData.polygonPoints.length > 2) {
+                finishDrawing();
+            }
+        };
+    } else {
+        finishDrawing();
+    }
+}
+
+function finishDrawing() {
+    const btn = document.getElementById('toggleDrawBtn');
+    const layer = document.getElementById('draw-layer');
+    pinModalData.isDrawingMode = false;
+
+    if (btn) {
         btn.textContent = 'Start Drawing Polygon';
         btn.style.background = '#28a745';
-      }
-      const canvas = document.getElementById('blueprintCanvas');
-      if (canvas) canvas.style.display = 'none';
-      pinModalData.isDrawingMode = false;
-      pinModalData.polygonPoints = [];
-      pinModalData.otherPins = [];
-      pinModalData.hoverPoint = null;
-      pinModalData.isPolygonClosed = false;
     }
-  }
+    
+    layer.style.pointerEvents = 'none'; // Re-enable map panning
+    layer.style.cursor = 'default';
+    if (pzInstance) pzInstance.setOptions({ disablePan: false });
+
+    layer.onpointerdown = null; 
+    layer.onpointerup = null; 
+    layer.ondblclick = null;
+
+    if(pinModalData.polygonPoints.length > 2) {
+        drawLivePolygon(true); // Close the polygon
+    } else {
+        liveGroup.innerHTML = ''; // Abort if they didn't draw a valid polygon
+        pinModalData.polygonPoints = [];
+    }
+}
+
+// --- Render the Active Drawing ---
+function drawLivePolygon(closed) {
+    liveGroup.innerHTML = '';
+    if(pinModalData.polygonPoints.length === 0) return;
+
+    const ptsStr = pinModalData.polygonPoints.map(pt => `${pt.x},${pt.y}`).join(' ');
+    const shape = document.createElementNS('http://www.w3.org/2000/svg', closed ? 'polygon' : 'polyline');
+    
+    const status = pinModalData.selectedStatus.toLowerCase();
+    let color = status === 'sold' ? 'rgba(220,53,69,0.6)' : (status === 'reserved' ? 'rgba(255,193,7,0.6)' : 'rgba(40,167,69,0.6)');
+    let stroke = status === 'sold' ? 'red' : (status === 'reserved' ? 'gold' : 'green');
+
+    shape.setAttribute('points', ptsStr);
+    shape.setAttribute('stroke', stroke);
+    shape.setAttribute('stroke-width', closed ? '0.4' : '0.2');
+    shape.setAttribute('vector-effect', 'non-scaling-stroke');
+    shape.setAttribute('fill', closed ? color : 'none');
+    if(!closed) shape.setAttribute('stroke-dasharray', '1,1');
+    liveGroup.appendChild(shape);
+
+    // Render little dots on corners while drawing
+    if(!closed) {
+        pinModalData.polygonPoints.forEach(pt => {
+            let c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            c.setAttribute('cx', pt.x);
+            c.setAttribute('cy', pt.y);
+            c.setAttribute('r', '0.5');
+            c.setAttribute('fill', 'white');
+            c.setAttribute('stroke', stroke);
+            c.setAttribute('stroke-width', '0.2');
+            c.setAttribute('vector-effect', 'non-scaling-stroke');
+            liveGroup.appendChild(c);
+        });
+    }
+}
+
+// --- Save Function ---
+function savePinLocation() {
+    if(pinModalData.polygonPoints.length < 3) { 
+        alert("Please draw a valid shape (at least 3 points) first!"); 
+        return; 
+    }
+    
+    const fd = new FormData();
+    fd.append('action', 'save_pin');
+    fd.append('lot_id', pinModalData.lot_id);
+    fd.append('polygon_coordinates', JSON.stringify(pinModalData.polygonPoints)); 
+    fd.append('pin_status', pinModalData.selectedStatus); 
+    
+    fetch('', {method:'POST', body:fd}).then(r=>r.json()).then(res=>{
+        if(res.success) { 
+            alert("Pin and status saved successfully!"); 
+            closePinModal();
+            // Automatically refresh the lots table data behind the scenes
+            const locId = document.getElementById('location_id').value;
+            if (locId) loadLots(locId);
+        } else { 
+            alert("Database Error: " + res.error); 
+        }
+    }).catch(err => {
+        console.error(err);
+        alert("Request failed. Check console for details.");
+    });
+}
+
+function closePinModal() {
+    document.getElementById('pinModal').style.display = 'none';
+    if(pzInstance) { 
+        pzInstance.reset(); 
+        pzInstance.setOptions({ disablePan: false });
+        pzInstance.destroy(); 
+        pzInstance = null; 
+    }
+}
 
   // ===========================
   // ADD LOCATION FUNCTIONS
@@ -5704,5 +7278,6 @@ if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
     window.location.href = window.location.pathname + '?' + params.toString();
   }
   </script>
-</body>
-</html>
+
+  </body>
+  </html>

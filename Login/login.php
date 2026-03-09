@@ -30,6 +30,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if ($res->num_rows > 0) {
             $row = $res->fetch_assoc();
             if (password_verify($input_pass, $row['password'])) {
+                $_SESSION['admin_id'] = $row['id'];
                 $_SESSION['user'] = $input_user;
                 $_SESSION['role'] = 'admin';
                 $_SESSION['first_name'] = $row['first_name'];

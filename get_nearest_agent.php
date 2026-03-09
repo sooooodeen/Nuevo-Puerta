@@ -52,6 +52,19 @@ if ($lat !== false && $lng !== false && $lat !== null && $lng !== null) {
     $agent = $res->fetch_assoc();
     $stmt->close();
 
+    // if no available agent was returned, try again ignoring availability filter
+    if (!$agent) {
+        $fallbackSql = str_replace("WHERE $availWhere", 'WHERE 1=1', $sql);
+        $stmt2 = $conn->prepare($fallbackSql);
+        if ($stmt2) {
+            $stmt2->bind_param('ddd', $lat, $lng, $lat);
+            $stmt2->execute();
+            $res2 = $stmt2->get_result();
+            $agent = $res2->fetch_assoc();
+            $stmt2->close();
+        }
+    }
+
 } elseif ($location !== '') {
     $sql = "
         SELECT id, first_name, last_name, email, mobile, city, address, profile_picture 
@@ -86,7 +99,7 @@ if ($agent) {
         'distance_km' => isset($agent['distance_km']) ? round($agent['distance_km'], 2) : null
     ]);
 } else {
-    echo json_encode(['error' => 'No available agent found near your location.']);
+    echo json_encode(['error' => 'No agent found near your location.']);
 }
 
 if (isset($conn)) {

@@ -223,11 +223,20 @@ document.getElementById('save-all-sales-btn').addEventListener('click', function
   .then(data => {
     if (data.success) {
       // Show a success message for add or update
-      if (updates.some(u => !u.id)) {
-        showSaleSuccess('New sale added successfully!');
-      } else {
-        showSaleSuccess('Sale updated successfully!');
+      let baseMessage = updates.some(u => !u.id)
+        ? 'New sale added successfully!'
+        : 'Sale updated successfully!';
+
+      if (typeof data.owner_assigned_count === 'number') {
+        if (data.owner_assigned_count > 0) {
+          baseMessage += ` Owner linked for ${data.owner_assigned_count} lot(s).`;
+        }
+        if (data.owner_unassigned_count > 0) {
+          baseMessage += ` ${data.owner_unassigned_count} row(s) were saved but not auto-linked (buyer/lot did not match).`;
+        }
       }
+
+      showSaleSuccess(baseMessage);
       fetchSales(); // This will reload the table and reset editing state
     } else {
       showSaleSuccess('Save failed: ' + (data.error || 'Unknown error'), true);

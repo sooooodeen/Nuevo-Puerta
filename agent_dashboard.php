@@ -95,6 +95,40 @@ $conn->query("
     INDEX idx_viewings_agent (agent_id, preferred_at, status)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ");
+
+// Create user_documents table if it doesn't exist
+$conn->query("
+  CREATE TABLE IF NOT EXISTS user_documents (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    doc_type VARCHAR(100) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    status ENUM('pending_review','under_review','approved','rejected','requires_revision') DEFAULT 'pending_review',
+    progress_notes TEXT,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMP NULL,
+    reviewed_by INT NULL,
+    INDEX idx_user_docs (user_id, status, uploaded_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+");
+
+// Create client_progress table for tracking client progress
+$conn->query("
+  CREATE TABLE IF NOT EXISTS client_progress (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id INT NOT NULL,
+    client_email VARCHAR(150) NOT NULL,
+    client_name VARCHAR(200) NOT NULL,
+    progress_status ENUM('initial_contact','document_collection','property_viewing','offer_preparation','negotiation','closing','completed') DEFAULT 'initial_contact',
+    progress_percentage INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    notes TEXT,
+    next_followup DATE NULL,
+    INDEX idx_client_progress (agent_id, client_email, progress_status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+");
+
 // Removed table creation for messages to avoid conflicts with existing structure
 
 /* ---- POST actions (toggle availability / quick viewing status) ---- */
@@ -221,6 +255,117 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
     }
     echo json_encode(['success' => true]);
+    exit;
+  }
+
+  /* Update document status */
+  if (isset($_POST['update_document_status'])) {
+    $doc_id = (int)$_POST['document_id'];
+    $status = $_POST['status'];
+    $notes = trim($_POST['notes'] ?? '');
+    $allowed_statuses = ['pending_review', 'under_review', 'approved', 'rejected', 'requires_revision'];
+
+    if (in_array($status, $allowed_statuses, true)) {
+      $stmt = $conn->prepare("
+        UPDATE user_documents
+        SET status = ?, progress_notes = ?, reviewed_at = NOW(), reviewed_by = ?
+        WHERE id = ? AND user_id IN (SELECT id FROM user_accounts WHERE agent_id = ?)
+      ");
+      if ($stmt) {
+        $stmt->bind_param('ssiii', $status, $notes, $agentId, $doc_id, $agentId);
+        $stmt->execute();
+        $stmt->close();
+      }
+    }
+    header('Location: agent_dashboard.php#section-documents');
+    exit;
+  }
+
+  /* Update client progress */
+  if (isset($_POST['update_client_progress'])) {
+    $client_email = trim($_POST['client_email']);
+    $progress_status = $_POST['progress_status'];
+    $progress_percentage = (int)$_POST['progress_percentage'];
+    $notes = trim($_POST['notes'] ?? '');
+    $next_followup = !empty($_POST['next_followup']) ? $_POST['next_followup'] : null;
+
+    $allowed_statuses = ['initial_contact', 'document_collection', 'property_viewing', 'offer_preparation', 'negotiation', 'closing', 'completed'];
+
+    if (in_array($progress_status, $allowed_statuses, true) && $progress_percentage >= 0 && $progress_percentage <= 100) {
+      // Check if client progress record exists
+      $stmt = $conn->prepare("SELECT id FROM client_progress WHERE agent_id = ? AND client_email = ?");
+      $stmt->bind_param('is', $agentId, $client_email);
+      $stmt->execute();
+      $result = $stmt->get_result();
+
+      if ($result->num_rows > 0) {
+        // Update existing record
+        $stmt = $conn->prepare("
+          UPDATE client_progress
+          SET progress_status = ?, progress_percentage = ?, notes = ?, next_followup = ?
+          WHERE agent_id = ? AND client_email = ?
+        ");
+        $stmt->bind_param('sissss', $progress_status, $progress_percentage, $notes, $next_followup, $agentId, $client_email);
+      } else {
+        // Insert new record - need client name from viewings or messages
+        $client_name = 'Unknown Client';
+        $name_stmt = $conn->prepare("
+          SELECT CONCAT(client_first_name, ' ', client_last_name) as name
+          FROM viewings
+          WHERE agent_id = ? AND client_email = ?
+          ORDER BY created_at DESC LIMIT 1
+        ");
+        $name_stmt->bind_param('is', $agentId, $client_email);
+        $name_stmt->execute();
+        $name_result = $name_stmt->get_result();
+        if ($name_row = $name_result->fetch_assoc()) {
+          $client_name = $name_row['name'];
+        }
+        $name_stmt->close();
+
+        $stmt = $conn->prepare("
+          INSERT INTO client_progress (agent_id, client_email, client_name, progress_status, progress_percentage, notes, next_followup)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->bind_param('isssiss', $agentId, $client_email, $client_name, $progress_status, $progress_percentage, $notes, $next_followup);
+      }
+      $stmt->execute();
+      $stmt->close();
+    }
+    header('Location: agent_dashboard.php#section-clients');
+    exit;
+  }
+
+  /* Send message to client */
+  if (isset($_POST['send_client_message'])) {
+    $client_email = trim($_POST['client_email']);
+    $subject = trim($_POST['subject'] ?? 'Message from your Agent');
+    $message = trim($_POST['message']);
+
+    if (!empty($client_email) && !empty($message)) {
+      // Get agent info for the message
+      $agent_info = [];
+      $agent_stmt = $conn->prepare("SELECT first_name, last_name, email FROM agent_accounts WHERE id = ?");
+      $agent_stmt->bind_param('i', $agentId);
+      $agent_stmt->execute();
+      $agent_result = $agent_stmt->get_result();
+      if ($agent_row = $agent_result->fetch_assoc()) {
+        $agent_info = $agent_row;
+      }
+      $agent_stmt->close();
+
+      // For now, we'll store the message in the messages table as if from agent to client
+      // In a real implementation, you'd want a separate client_messages table or use email
+      $stmt = $conn->prepare("
+        INSERT INTO messages (agent_id, name, email, phone, message, created_at)
+        VALUES (?, ?, ?, '', ?, NOW())
+      ");
+      $sender_name = ($agent_info['first_name'] ?? 'Agent') . ' ' . ($agent_info['last_name'] ?? '');
+      $stmt->bind_param('isss', $agentId, $sender_name, $client_email, $message);
+      $stmt->execute();
+      $stmt->close();
+    }
+    header('Location: agent_dashboard.php#section-clients');
     exit;
   }
 
@@ -368,10 +513,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     $check = $conn->query("SHOW TABLES LIKE 'user_documents'");
     if ($check && $check->num_rows > 0) {
         $stmt = $conn->prepare("
-            SELECT d.*, u.first_name, u.last_name 
-            FROM user_documents d 
-            LEFT JOIN user_accounts u ON d.user_id = u.id 
-            WHERE u.agent_id = ? 
+            SELECT d.*, u.first_name, u.last_name
+            FROM user_documents d
+            LEFT JOIN user_accounts u ON d.user_id = u.id
+            WHERE u.agent_id = ?
             ORDER BY d.uploaded_at DESC
         ");
         if ($stmt) {
@@ -386,6 +531,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     }
     header('Content-Type: application/json');
     echo json_encode($docs);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'clients') {
+    $clients = [];
+    // Get unique clients from viewings table
+    $stmt = $conn->prepare("
+        SELECT DISTINCT
+            v.client_email,
+            CONCAT(v.client_first_name, ' ', v.client_last_name) as client_name,
+            v.client_phone,
+            MAX(v.created_at) as last_contact,
+            COUNT(v.id) as total_viewings,
+            COALESCE(cp.progress_status, 'initial_contact') as progress_status,
+            COALESCE(cp.progress_percentage, 0) as progress_percentage,
+            cp.notes as progress_notes,
+            cp.next_followup
+        FROM viewings v
+        LEFT JOIN client_progress cp ON cp.agent_id = v.agent_id AND cp.client_email = v.client_email
+        WHERE v.agent_id = ?
+        GROUP BY v.client_email, v.client_first_name, v.client_last_name, v.client_phone
+        ORDER BY last_contact DESC
+    ");
+    if ($stmt) {
+        $stmt->bind_param('i', $agentId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+          $clients[] = $row;
+        }
+        $stmt->close();
+    }
+    header('Content-Type: application/json');
+    echo json_encode($clients);
     exit;
   }
 }
@@ -1915,32 +2094,48 @@ function loadAgentDocuments() {
         return;
       }
       container.innerHTML = `
-        <table class="min-w-full border rounded text-sm">
-          <thead>
-            <tr class="bg-gray-50 text-gray-700">
-              <th class="py-2 px-4 text-left">User</th>
-              <th class="py-2 px-4 text-left">Type</th>
-              <th class="py-2 px-4 text-left">File</th>
-              <th class="py-2 px-4 text-left">Date</th>
-              <th class="py-2 px-4 text-left">Status</th>
-              <th class="py-2 px-4 text-left">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${docs.map(doc => `
-              <tr>
-                <td class="py-2 px-4 border">${(doc.first_name || '') + ' ' + (doc.last_name || '')}</td>
-                <td class="py-2 px-4 border">${doc.doc_type}</td>
-                <td class="py-2 px-4 border"><a href="${doc.file_path}" target="_blank">${doc.file_name}</a></td>
-                <td class="py-2 px-4 border">${doc.uploaded_at}</td>
-                <td class="py-2 px-4 border">${doc.status}</td>
-                <td class="py-2 px-4 border">
-                  <a href="${doc.file_path}" target="_blank" class="px-2 py-1 text-xs bg-blue-700 text-white rounded">View</a>
-                </td>
+        <div class="overflow-x-auto">
+          <table class="min-w-full border rounded text-sm">
+            <thead>
+              <tr class="bg-gray-50 text-gray-700">
+                <th class="py-2 px-4 text-left">Client</th>
+                <th class="py-2 px-4 text-left">Document Type</th>
+                <th class="py-2 px-4 text-left">File</th>
+                <th class="py-2 px-4 text-left">Status</th>
+                <th class="py-2 px-4 text-left">Uploaded</th>
+                <th class="py-2 px-4 text-left">Actions</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${docs.map(doc => {
+                const statusColors = {
+                  'pending_review': 'bg-yellow-100 text-yellow-800',
+                  'under_review': 'bg-blue-100 text-blue-800',
+                  'approved': 'bg-green-100 text-green-800',
+                  'rejected': 'bg-red-100 text-red-800',
+                  'requires_revision': 'bg-orange-100 text-orange-800'
+                };
+                const statusColor = statusColors[doc.status] || 'bg-gray-100 text-gray-800';
+                return `
+                  <tr>
+                    <td class="py-2 px-4 border">${(doc.first_name || '') + ' ' + (doc.last_name || '')}</td>
+                    <td class="py-2 px-4 border">${doc.doc_type}</td>
+                    <td class="py-2 px-4 border">
+                      <a href="${doc.file_path}" target="_blank" class="text-blue-600 hover:text-blue-800 underline">${doc.file_name}</a>
+                    </td>
+                    <td class="py-2 px-4 border">
+                      <span class="px-2 py-1 rounded-full text-xs font-medium ${statusColor}">${doc.status.replace('_', ' ')}</span>
+                    </td>
+                    <td class="py-2 px-4 border">${new Date(doc.uploaded_at).toLocaleDateString()}</td>
+                    <td class="py-2 px-4 border">
+                      <button onclick="updateDocumentStatus(${doc.id}, '${doc.status}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Update Status</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
       `;
     })
     .catch(() => {

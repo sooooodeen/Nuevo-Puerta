@@ -127,6 +127,7 @@ $cityRes = $conn->query("
   SELECT DISTINCT
     CASE
       WHEN city IS NOT NULL AND city <> '' THEN city
+      WHEN address LIKE '%, %' THEN TRIM(SUBSTRING_INDEX(address, ',', -1))
       ELSE address
     END AS city_name
   FROM agent_accounts
@@ -201,10 +202,15 @@ if ($q !== '') {
 
 /* City */
 if ($city !== '') {
-  $sql .= " AND (aa.city = ? OR aa.address LIKE ?)";
+  $sql .= " AND (
+    aa.city = ?
+    OR aa.address LIKE ?
+    OR (aa.address LIKE '%, %' AND TRIM(SUBSTRING_INDEX(aa.address, ',', -1)) = ?)
+  )";
   $params[] = $city;
   $params[] = "%{$city}%";
-  $types   .= 'ss';
+  $params[] = $city;
+  $types   .= 'sss';
 }
 
 /* Available only */
@@ -576,7 +582,7 @@ select, .chk {
         <?php endforeach; ?>
       </select>
       <label class="chk" style="display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" name="available" value="1" <?php if($available) echo 'checked';?>> Available only
+        <input type="checkbox" name="available" value="1" <?php if($available) echo 'checked';?>> Show only available agents
       </label>
       <input type="hidden" name="clat" id="clat" value="<?php echo $clat!==null?h($clat):'';?>">
       <input type="hidden" name="clng" id="clng" value="<?php echo $clng!==null?h($clng):'';?>">
