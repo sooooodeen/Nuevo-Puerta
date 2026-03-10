@@ -13,7 +13,7 @@
         --navH: 88px; }
     *{ box-sizing:border-box; }
     html,body{ margin:0; padding:0; }
-    body{ font-family:Arial, sans-serif; font-size:18px; line-height:1.6; background:var(--bg); color:var(--ink); }
+    body{ font-family:Arial, sans-serif; font-size:18px; line-height:1.6; background:var(--bg); color:var(--ink); overflow-y: scroll; }
 
     /* ==== NAVBAR ==== */
     nav{
@@ -21,7 +21,7 @@
       background:var(--green);
       padding:10px 20px;
       display:flex; align-items:center; justify-content:space-between;
-      position:fixed; inset:0 0 auto 0; z-index:1000;
+      position:sticky; top:0; z-index:1000;
       box-shadow:0 4px 6px rgba(0,0,0,.1);
     }
     .nav-left,.nav-right{ list-style:none; display:flex; gap:40px; margin:0; padding:0; align-items:center; }

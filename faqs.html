@@ -35,7 +35,8 @@ body {
     background-color: var(--bg); 
     color: var(--ink);
     /* FIX: Add padding-top to ensure content starts below the fixed 80px header */
-    padding-top: var(--navH); 
+    padding-top: var(--navH);
+    overflow-y: scroll;
 }
 
 /* ---------------------------------- */
@@ -47,7 +48,9 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 40px; 
+    padding: 0 40px;
+    position: sticky;
+    top: 0; 
     height: var(--navH); 
     /* FIX: Properties for the fixed header */
     position: fixed; 

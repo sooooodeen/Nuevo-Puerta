@@ -255,6 +255,8 @@ $stmt->close();
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 :root { --green:#2d4e1e; --ink:#222; --muted:#6b7280; --bg:#e3e2e2; --navH: 88px; }
 *{ box-sizing:border-box; }
@@ -264,6 +266,7 @@ body{
   font-size:16px; line-height:1.6;
   background:var(--bg); color:var(--ink);
   text-align:center;
+  overflow-y: scroll;
 }
 
 /* NAVBAR */
@@ -272,7 +275,7 @@ nav{
   background:var(--green);
   padding:10px 20px;
   display:flex; align-items:center; justify-content:space-between;
-  position:fixed; inset:0 0 auto 0; z-index:1000;
+  position:sticky; top:0; z-index:1000;
   box-shadow:0 4px 6px rgba(0,0,0,.1);
 }
 .nav-left,.nav-right{
@@ -442,16 +445,20 @@ select, .chk {
   display:none; position:fixed; inset:0;
   background:rgba(0,0,0,.6);
   align-items:center; justify-content:center; z-index:2000;
+  overflow-y: auto;
+  padding: 20px;
 }
 .modal-content{
-  background:#fff; padding:16px; border-radius:12px;
-  width:100%; max-width:480px; text-align:left; position:relative;
+  background:#fff; padding:20px; border-radius:12px;
+  width:100%; max-width:600px; text-align:left; position:relative;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal h2{ margin-top:0; }
-.modal label{ display:block; margin-top:10px; font-size:14px; color:#333; }
+.modal label{ display:block; margin-top:10px; font-size:14px; color:#333; font-weight: 500; }
 .modal input, .modal textarea{
   width:100%; padding:10px; border:1px solid #ccc;
-  border-radius:6px; margin-top:4px;
+  border-radius:6px; margin-top:4px; font-family: inherit;
 }
 .modal button{
   margin-top:16px; padding:10px 14px;
@@ -536,6 +543,48 @@ select, .chk {
 .nav-links li.active a::after{
   content:''; position:absolute; bottom:-5px; left:0;
   width:100%; height:3px; background:#f4d03f; border-radius:2px;
+}
+
+/* Map Container */
+.map-container {
+  width: 100%;
+  height: 300px;
+  border-radius: 8px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 2px solid #ddd;
+  background: #f0f0f0;
+  display: block;
+}
+
+#locationMap {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.location-info {
+  margin-top: 8px;
+  padding: 10px;
+  background: #e8f5e9;
+  border-left: 4px solid #4caf50;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.geo-loader {
+  display: none;
+  font-size: 12px;
+  color: #1976d2;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.geo-loader.active {
+  display: block;
 }
 </style>
 </head>
@@ -664,8 +713,13 @@ select, .chk {
           <input type="text" id="client_phone" name="client_phone" class="form-control">
         </div>
         <div style="flex:1;">
-          <label for="location">Location</label>
-          <input type="text" id="location" name="location" class="form-control" required>
+          <label for="location">Location/Address</label>
+          <div style="position: relative;">
+            <input type="text" id="location" name="location" class="form-control" placeholder="Click button to auto-fill" required>
+            <div class="geo-loader" id="geoLoader"><i class="fas fa-spinner fa-spin"></i> Getting location...</div>
+          </div>
+          <button type="button" class="btn secondary" id="getLocationBtn" onclick="getClientLocation()" style="margin-top: 6px; font-size: 12px; padding: 8px 14px; min-width: auto; background: #2d7d2d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s;">📍 Get My Location</button>
+          <div class="location-info" id="geoInfo" style="display:none;"></div>
         </div>
       </div>
       <div style="display: flex; gap: 12px; margin-top: 12px;">
@@ -678,45 +732,237 @@ select, .chk {
           <input type="text" id="lot_number" name="lot_number" class="form-control" required>
         </div>
       </div>
+
+      <label style="margin-top: 12px; display: block;"><strong>Your Location Map</strong></label>
+      <div class="map-container">
+        <div id="locationMap"></div>
+      </div>
       <label for="preferred_datetime" style="margin-top:12px;display:block;">Preferred Date/Time</label>
       <input type="datetime-local" id="preferred_datetime" name="preferred_datetime" class="form-control" required>
       <label for="notes" style="margin-top:12px;display:block;">Additional Notes (optional)</label>
       <textarea id="notes" name="notes" class="form-control"></textarea>
 
-      <div class="form-actions" style="margin-top:10px;">
-        <button type="submit" class="btn primary">Submit</button>
+      <div class="form-actions" style="margin-top: 16px; display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" onclick="closeModal()" class="btn secondary" style="background: #666; color: white; padding: 10px 20px; border-radius: 6px; cursor: pointer; border: none; font-weight: 600;">Cancel</button>
+        <button type="submit" class="btn primary" style="background: #2d4e1e; color: white; padding: 10px 20px; border-radius: 6px; cursor: pointer; border: none; font-weight: 600;">Submit Request</button>
       </div>
     </form>
   </div>
 </div>
 
 <script>
-// Geolocation on filter (if you add a button with id="geoBtn")
-document.getElementById('geoBtn')?.addEventListener('click', ()=>{
-  if(!navigator.geolocation){alert('Geolocation not supported');return;}
-  navigator.geolocation.getCurrentPosition(pos=>{
-    document.getElementById('clat').value=pos.coords.latitude.toFixed(6);
-    document.getElementById('clng').value=pos.coords.longitude.toFixed(6);
-    document.getElementById('filterForm').submit();
-  },()=>alert('Unable to get your location.'),{enableHighAccuracy:true,timeout:8000});
-});
+// Global map variable
+let locationMap = null;
+let currentMarker = null;
+
+// Reverse geocode coordinates to address using Nominatim (free service)
+async function reverseGeocode(lat, lng) {
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, {
+      headers: {
+        'User-Agent': 'Nuevo-Puerta-RealEstate/1.0'
+      }
+    });
+    
+    if (!response.ok) throw new Error('Geocoding API error');
+    
+    const data = await response.json();
+    
+    // Try to construct a readable address
+    if (data.address) {
+      const addr = data.address;
+      const parts = [];
+      
+      // Add road/street
+      if (addr.road) parts.push(addr.road);
+      if (addr.house_number) parts.push(addr.house_number);
+      
+      // Add city/town
+      if (addr.city) parts.push(addr.city);
+      else if (addr.town) parts.push(addr.town);
+      else if (addr.county) parts.push(addr.county);
+      
+      const address = parts.join(', ');
+      return address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
+    
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  } catch (err) {
+    console.error('Reverse geocoding error:', err);
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
+}
+
+// Initialize or update the map
+function initializeMap(lat, lng) {
+  // Wait for the map container to be visible in the DOM
+  const mapContainer = document.getElementById('locationMap');
+  if (!mapContainer) {
+    console.warn('Map container not found. Retrying...');
+    setTimeout(() => initializeMap(lat, lng), 500);
+    return;
+  }
+
+  try {
+    if (!locationMap) {
+      // Ensure container has proper dimensions
+      mapContainer.style.width = '100%';
+      mapContainer.style.height = '280px';
+      
+      locationMap = L.map('locationMap').setView([lat, lng], 16);
+      
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(locationMap);
+      
+      // Trigger map resize
+      setTimeout(() => {
+        if (locationMap) locationMap.invalidateSize();
+      }, 100);
+    } else {
+      locationMap.setView([lat, lng], 16);
+      locationMap.invalidateSize();
+    }
+
+    // Remove old marker if exists
+    if (currentMarker) {
+      locationMap.removeLayer(currentMarker);
+    }
+
+    // Add new marker with custom styling
+    currentMarker = L.marker([lat, lng], {
+      icon: L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+      })
+    }).addTo(locationMap).bindPopup(
+      '<div style="text-align:center;"><strong>Your Location</strong><br>Lat: ' + lat.toFixed(6) + '<br>Lng: ' + lng.toFixed(6) + '</div>'
+    ).openPopup();
+    
+    console.log('Map initialized successfully at:', lat, lng);
+  } catch (err) {
+    console.error('Error initializing map:', err);
+  }
+}
+
+// Get client's current location
+async function getClientLocation() {
+  const geoLoader = document.getElementById('geoLoader');
+  const geoInfo = document.getElementById('geoInfo');
+  const locationField = document.getElementById('location');
+  const getBtn = document.getElementById('getLocationBtn');
+
+  if (!geoLoader || !geoInfo || !locationField || !getBtn) {
+    console.error('Required form elements not found');
+    alert('Form elements missing. Please try again.');
+    return;
+  }
+
+  geoLoader.classList.add('active');
+  getBtn.disabled = true;
+
+  if (!navigator.geolocation) {
+    alert('Geolocation is not supported by your browser');
+    geoLoader.classList.remove('active');
+    getBtn.disabled = false;
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      try {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const accuracy = Math.round(position.coords.accuracy);
+
+        console.log('Geolocation success:', lat, lng, accuracy);
+
+        // Store in hidden fields
+        document.getElementById('client_lat').value = lat.toFixed(6);
+        document.getElementById('client_lng').value = lng.toFixed(6);
+
+        // Show accuracy info
+        geoInfo.innerHTML = `✓ Accuracy: ${accuracy}m | Lat: ${lat.toFixed(6)} | Lng: ${lng.toFixed(6)}`;
+        geoInfo.style.display = 'block';
+
+        // Reverse geocode to get address
+        console.log('Starting reverse geocoding...');
+        const address = await reverseGeocode(lat, lng);
+        console.log('Reverse geocoding result:', address);
+        
+        locationField.value = address;
+        locationField.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Initialize map
+        console.log('Initializing map...');
+        initializeMap(lat, lng);
+
+        geoLoader.classList.remove('active');
+        getBtn.disabled = false;
+        
+        console.log('Location capture complete');
+      } catch (err) {
+        console.error('Error in geolocation success callback:', err);
+        geoLoader.classList.remove('active');
+        getBtn.disabled = false;
+        alert('Error processing location data');
+      }
+    },
+    (error) => {
+      geoLoader.classList.remove('active');
+      getBtn.disabled = false;
+
+      let errorMsg = 'Unable to get your location. ';
+      if (error.code === 1) errorMsg += 'Permission denied. Please enable location access in your browser settings.';
+      else if (error.code === 2) errorMsg += 'Position unavailable. Try again or use another device.';
+      else if (error.code === 3) errorMsg += 'Request timeout. Please try again.';
+
+      console.error('Geolocation error:', error);
+      alert(errorMsg);
+      geoInfo.innerHTML = `⚠ ${errorMsg}`;
+      geoInfo.style.display = 'block';
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
+    }
+  );
+}
 
 /* Modal functions */
-function openModal(agentId){
-  document.getElementById('modal_agent_id').value=agentId;
-  if(navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(pos=>{
-      document.getElementById('client_lat').value=pos.coords.latitude.toFixed(6);
-      document.getElementById('client_lng').value=pos.coords.longitude.toFixed(6);
-    });
+function openModal(agentId) {
+  const modal = document.getElementById('viewingModal');
+  if (!modal) {
+    console.error('Modal element not found');
+    return;
   }
-  document.getElementById('viewingModal').style.display='flex';
+
+  document.getElementById('modal_agent_id').value = agentId;
+  modal.style.display = 'flex';
+
+  // Auto-get location when modal opens, with delay to ensure DOM is ready
+  setTimeout(() => {
+    const locationField = document.getElementById('location');
+    if (locationField && !locationField.value) {
+      console.log('Modal opened, auto-fetching location...');
+      getClientLocation();
+    }
+  }, 300);
 }
-function closeModal(){
-  document.getElementById('viewingModal').style.display='none';
+
+function closeModal() {
+  document.getElementById('viewingModal').style.display = 'none';
 }
-window.onclick=function(e){
-  if(e.target==document.getElementById('viewingModal')) closeModal();
+
+window.onclick = function(e) {
+  const modal = document.getElementById('viewingModal');
+  if (e.target == modal) closeModal();
 }
 </script>
 </body>

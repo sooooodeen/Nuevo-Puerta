@@ -123,6 +123,7 @@ $sales_result = $sales_stmt->get_result();
             box-sizing: border-box;
             background-color: #f8f8f8;
             text-align: center;
+            overflow-y: scroll;
         }
         nav {
             background: #2d4e1e;
@@ -131,8 +132,7 @@ $sales_result = $sales_stmt->get_result();
             align-items: center;
             justify-content: space-between;
             height: 70px;
-            position: fixed;
-            width: 100%;
+            position: sticky;
             top: 0;
             z-index: 1000;
         }
