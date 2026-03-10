@@ -597,24 +597,11 @@ if ($stmt = $conn->prepare("SELECT first_name, last_name$availSelect FROM agent_
   $stmt->close();
 }
 
-if ($stmt = $conn->prepare("SELECT COUNT(*) c FROM sales WHERE agent_id=?")) {
-  $stmt->bind_param('i', $agentId);
-  $stmt->execute();
-  $r = $stmt->get_result();
-  if ($row = $r->fetch_assoc()) $kpis['total_sales'] = (int)$row['c'];
-  $stmt->close();
-}
+$r = $conn->query("SELECT COUNT(*) c FROM sales");
+if ($r && $row = $r->fetch_assoc()) $kpis['total_sales'] = (int)$row['c'];
 
-if ($stmt = $conn->prepare("
-  SELECT COUNT(*) c FROM sales
-  WHERE agent_id=? AND YEAR(created_at)=YEAR(CURDATE()) AND MONTH(created_at)=MONTH(CURDATE())
-")) {
-  $stmt->bind_param('i', $agentId);
-  $stmt->execute();
-  $r = $stmt->get_result();
-  if ($row = $r->fetch_assoc()) $kpis['month_sales'] = (int)$row['c'];
-  $stmt->close();
-}
+$r = $conn->query("SELECT COUNT(*) c FROM sales WHERE YEAR(created_at)=YEAR(CURDATE()) AND MONTH(created_at)=MONTH(CURDATE())");
+if ($r && $row = $r->fetch_assoc()) $kpis['month_sales'] = (int)$row['c'];
 
 if ($stmt = $conn->prepare("
   SELECT COUNT(*) c FROM viewings
