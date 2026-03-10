@@ -634,7 +634,7 @@ $avatarSrc = !empty($user['photo']) ? $user['photo'] : 'assets/Default_photo.jpg
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 <style>
 :root { --green:#14532d; --light-green:#e6f4ea; --white:#ffffff; --bg:#f8f9fa; --text:#333; --muted:#666; --red:#dc3545; }
-body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:var(--text); overflow-x: hidden; }
+body { font-family:'Poppins', sans-serif; background:var(--bg); margin:0; color:var(--text); overflow-x: hidden; overflow-y: scroll; }
 .dashboard-wrapper { display:flex; min-height:100vh; }
 
 /* --- Sidebar --- */
