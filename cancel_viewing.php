@@ -77,43 +77,43 @@ if ($ok && $affected > 0) {
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/PHPMailer.php';
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/SMTP.php';
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/Exception.php';
-        use PHPMailer\PHPMailer\PHPMailer;
-        use PHPMailer\PHPMailer\Exception;
+            use PHPMailer\PHPMailer\PHPMailer;
+            use PHPMailer\PHPMailer\Exception;
 
-        $mail = new PHPMailer(true);
-        try {
-            // SMTP config (change these for production)
-            $mail->isSMTP();
-            $mail->Host = 'smtp.gmail.com';
-            $mail->SMTPAuth = true;
-            $mail->Username = 'carlomallari01471@gmail.com'; // <-- Set your real Gmail address here
-            $mail->Password = 'rsmv pipf ijxf phha'; // <-- Your app password
-            $mail->SMTPSecure = 'tls';
-            $mail->Port = 587;
+            $mail = new PHPMailer(true);
+            try {
+                // SMTP config (change these for production)
+                $mail->isSMTP();
+                $mail->Host = 'smtp.gmail.com';
+                $mail->SMTPAuth = true;
+                $mail->Username = 'carlomallari01471@gmail.com'; // <-- Set your real Gmail address here
+                $mail->Password = 'rsmv pipf ijxf phha'; // <-- Your app password
+                $mail->SMTPSecure = 'tls';
+                $mail->Port = 587;
 
-            $mail->setFrom('carlomallari01471@gmail.com', 'Nuevo Puerta'); // <-- Set your real Gmail address here
-            $mail->addReplyTo('carlomallari01471@gmail.com', 'Nuevo Puerta');
-            $mail->addAddress($client_email, $client_name);
+                $mail->setFrom('carlomallari01471@gmail.com', 'Nuevo Puerta'); // <-- Set your real Gmail address here
+                $mail->addReplyTo('carlomallari01471@gmail.com', 'Nuevo Puerta');
+                $mail->addAddress($client_email, $client_name);
 
-            $mail->isHTML(false);
-            $mail->Subject = 'Your Viewing Has Been Cancelled';
-            $body = "Dear $client_name,\n\nWe regret to inform you that your scheduled property viewing has been cancelled.";
-            if ($cancellation_reason) {
-                $body .= "\n\nReason: $cancellation_reason";
+                $mail->isHTML(false);
+                $mail->Subject = 'Your Viewing Has Been Cancelled';
+                $body = "Dear $client_name,\n\nWe regret to inform you that your scheduled property viewing has been cancelled.";
+                if ($cancellation_reason) {
+                    $body .= "\n\nReason: $cancellation_reason";
+                }
+                $body .= "\n\nViewing Details:\nDate & Time: $preferred_at\n$location_details\n\nIf you have any questions, please contact us.\n\nThank you.";
+                $mail->Body = $body;
+                $mail->send();
+            } catch (Exception $e) {
+                // Log or handle email errors
+                error_log('PHPMailer error: ' . $mail->ErrorInfo);
+                // Optionally, return error in response (for debugging, remove in production)
+                echo json_encode(['success'=>false,'message'=>'Viewing cancelled, but email failed to send.','error'=>$mail->ErrorInfo]);
+                exit;
             }
-            $body .= "\n\nViewing Details:\nDate & Time: $preferred_at\n$location_details\n\nIf you have any questions, please contact us.\n\nThank you.";
-            $mail->Body = $body;
-            $mail->send();
-        } catch (Exception $e) {
-            // Log or handle email errors
-            error_log('PHPMailer error: ' . $mail->ErrorInfo);
-            // Optionally, return error in response (for debugging, remove in production)
-            echo json_encode(['success'=>false,'message'=>'Viewing cancelled, but email failed to send.','error'=>$mail->ErrorInfo]);
-            exit;
         }
-    }
-    echo json_encode(['success'=>true,'message'=>'Viewing cancelled.']);
-} else {
+        echo json_encode(['success'=>true,'message'=>'Viewing cancelled.']);
+    } else {
     // either already cancelled/done or update failed
     echo json_encode(['success'=>false,'message'=>'Unable to cancel (maybe already cancelled/done).']);
 }
