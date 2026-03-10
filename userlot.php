@@ -95,6 +95,7 @@ body {
     box-sizing: border-box;
     background-color: #f8f8f8;
     color: #333;
+    overflow-y: scroll;
 }
 
 /* ---------------------------------- */
@@ -110,6 +111,8 @@ body {
     height: 80px; 
     box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
     z-index: 1000;
+    position: sticky;
+    top: 0;
 }
 .nav-left {
     display: flex;
@@ -646,11 +649,13 @@ body {
   background-color: #d4edda;
   color: #155724;
   border: 1px solid #c3e6cb;
+  display: block !important;
 }
 .location-error {
   background-color: #f8d7da;
   color: #721c24;
   border: 1px solid #f5c6cb;
+  display: block !important;
 }
 
 /* Active nav */
@@ -813,6 +818,7 @@ body {
 
             <div style="margin-top:10px;display:flex;gap:10px;">
               <button type="button" onclick="getCurrentLocationUser()" class="btn-location btn-submit" style="padding:6px 12px;">Get Current Location</button>
+              <button type="button" onclick="enableMapPinMode()" class="btn-location" style="padding:6px 12px;background:#e6e6e6;color:#23613b;border:none;border-radius:6px;cursor:pointer;">Pin on Map</button>
               <button type="button" onclick="clearLocationUser()" class="btn-location btn-cancel" style="padding:6px 12px;">Clear Location</button>
             </div>
 
@@ -1204,7 +1210,7 @@ function openViewingModal(lot) {
 
   document.getElementById('viewingModal').style.display = 'block';
   document.getElementById('viewingForm').reset();
-
+  
   document.getElementById('location_id').value = currentLot ? currentLot.location_id : '';
   document.getElementById('lot_id').value = currentLot ? currentLot.id : '';
 
@@ -1221,44 +1227,104 @@ function openViewingModal(lot) {
   setTimeout(() => {
     const mapDiv = document.getElementById('user-select-map');
     if (!mapDiv) return;
+    
     // Remove previous map instance if exists
+    if (window.userLocationMap && window.userLocationMap.map) {
+      window.userLocationMap.map.remove();
+    }
     if (mapDiv._leaflet_id) {
       mapDiv._leaflet_id = null;
       mapDiv.innerHTML = '';
     }
+    
     const map = L.map('user-select-map').setView([13.41, 122.56], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
+    
     let marker = null;
-    map.on('click', function(e) {
+    
+    map.on('click', async function(e) {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
       document.getElementById('user_lat').value = lat;
       document.getElementById('user_lng').value = lng;
-      if (marker) {
-        marker.setLatLng(e.latlng);
-      } else {
-        marker = L.marker(e.latlng, {draggable:true}).addTo(map);
-        marker.on('dragend', function(ev) {
-          const pos = ev.target.getLatLng();
-          document.getElementById('user_lat').value = pos.lat;
-          document.getElementById('user_lng').value = pos.lng;
-        });
+      
+      // Reverse geocode the clicked location
+      const address = await reverseGeocodeUser(lat, lng);
+      document.getElementById('user_location').value = address;
+
+      updateLocationStatus(`Pinned location selected from map | Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
+      
+      // Always remove existing marker first so there is only one visible pin.
+      if (marker && map.hasLayer(marker)) {
+        map.removeLayer(marker);
+      }
+      if (window.userLocationMap && window.userLocationMap.marker && map.hasLayer(window.userLocationMap.marker)) {
+        map.removeLayer(window.userLocationMap.marker);
+      }
+
+      marker = L.marker(e.latlng, {
+        draggable:true,
+        icon: L.icon({
+          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41]
+        })
+      }).addTo(map);
+      marker.bindPopup(`<strong>Selected Location</strong><br>Lat: ${lat.toFixed(6)}<br>Lng: ${lng.toFixed(6)}`).openPopup();
+      marker.on('dragend', async function(ev) {
+        const pos = ev.target.getLatLng();
+        document.getElementById('user_lat').value = pos.lat;
+        document.getElementById('user_lng').value = pos.lng;
+        const dragAddress = await reverseGeocodeUser(pos.lat, pos.lng);
+        document.getElementById('user_location').value = dragAddress;
+        marker.setPopupContent(`<strong>Selected Location</strong><br>Lat: ${pos.lat.toFixed(6)}<br>Lng: ${pos.lng.toFixed(6)}`);
+        updateLocationStatus(`Pinned location updated by dragging marker | Lat: ${pos.lat.toFixed(6)}, Lng: ${pos.lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
+      });
+
+      // Keep global marker reference synchronized to avoid duplicate markers.
+      if (window.userLocationMap) {
+        window.userLocationMap.marker = marker;
       }
     });
+    
     // If lat/lng already set, show marker
     const lat = document.getElementById('user_lat').value;
     const lng = document.getElementById('user_lng').value;
     if (lat && lng) {
-      marker = L.marker([lat, lng], {draggable:true}).addTo(map);
+      marker = L.marker([lat, lng], {
+        draggable:true,
+        icon: L.icon({
+          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41]
+        })
+      }).addTo(map);
       map.setView([lat, lng], 14);
-      marker.on('dragend', function(ev) {
+      marker.on('dragend', async function(ev) {
         const pos = ev.target.getLatLng();
         document.getElementById('user_lat').value = pos.lat;
         document.getElementById('user_lng').value = pos.lng;
+        const dragAddress = await reverseGeocodeUser(pos.lat, pos.lng);
+        document.getElementById('user_location').value = dragAddress;
+        marker.setPopupContent(`<strong>Selected Location</strong><br>Lat: ${pos.lat.toFixed(6)}<br>Lng: ${pos.lng.toFixed(6)}`);
+        updateLocationStatus(`Pinned location updated by dragging marker | Lat: ${pos.lat.toFixed(6)}, Lng: ${pos.lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
       });
+
+      if (window.userLocationMap) {
+        window.userLocationMap.marker = marker;
+      }
     }
+    
+    // Store map and marker globally for access by other functions
+    window.userLocationMap = { map, marker };
   }, 300);
 }
 
@@ -1267,48 +1333,239 @@ function closeViewingModal() {
   currentLot = null;
 }
 
-/* Geolocation helpers used by the buttons in your HTML */
-function getCurrentLocationUser() {
+function updateLocationStatus(message, type = 'success', autoHideMs = 0) {
   const statusDiv = document.getElementById('user-location-status');
+  if (!statusDiv) return;
+
   statusDiv.style.display = 'block';
-  statusDiv.className = 'location-status';
-  statusDiv.textContent = 'Getting location...';
+  statusDiv.className = type === 'error' ? 'location-status location-error' : 'location-status location-success';
+  statusDiv.textContent = message;
+
+  if (autoHideMs > 0) {
+    setTimeout(() => {
+      statusDiv.style.display = 'none';
+    }, autoHideMs);
+  }
+}
+
+function getStatusTimeSuffix() {
+  return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function enableMapPinMode() {
+  const mapDiv = document.getElementById('user-select-map');
+
+  updateLocationStatus(`Pin mode enabled: click anywhere on the map to set your location. (${getStatusTimeSuffix()})`, 'success');
+
+  if (mapDiv) {
+    mapDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+/* Geolocation helpers used by the buttons in your HTML */
+async function getCurrentLocationUser() {
+  const locationField = document.getElementById('user_location');
+
+  updateLocationStatus(`Getting your location... (${getStatusTimeSuffix()})`, 'success');
 
   if (!navigator.geolocation) {
-    statusDiv.className = 'location-status location-error';
-    statusDiv.textContent = 'Geolocation is not supported by this browser.';
+    updateLocationStatus('Geolocation is not supported by this browser.', 'error');
     return;
   }
 
   navigator.geolocation.getCurrentPosition(
-    pos => {
-      document.getElementById('user_lat').value = pos.coords.latitude;
-      document.getElementById('user_lng').value = pos.coords.longitude;
-      statusDiv.className = 'location-status location-success';
-      statusDiv.textContent = 'Location captured successfully!';
-      setTimeout(() => statusDiv.style.display = 'none', 3000);
+    async (pos) => {
+      try {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const accuracy = Math.round(pos.coords.accuracy);
 
-      const agentDiv = document.getElementById('suggestedAgent');
-      if (agentDiv) {
-        agentDiv.innerHTML = '';
-        agentDiv.style.display = 'none';
-        delete agentDiv.dataset.agentId;
+        // Store coordinates
+        document.getElementById('user_lat').value = lat;
+        document.getElementById('user_lng').value = lng;
+
+        // Show updated status every time location changes.
+        updateLocationStatus(`✓ Location captured! (Accuracy: ${accuracy}m) | Updated: ${getStatusTimeSuffix()}`, 'success');
+
+        // Reverse geocode to get address
+        console.log('Reverse geocoding for:', lat, lng);
+        const address = await reverseGeocodeUser(lat, lng);
+        console.log('Address result:', address);
+        
+        locationField.value = address;
+        locationField.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Trigger map update after a short delay to show marker
+        setTimeout(() => {
+          updateUserMapMarker(lat, lng);
+        }, 100);
+
+        // Reset agent suggestions
+        const agentDiv = document.getElementById('suggestedAgent');
+        if (agentDiv) {
+          agentDiv.innerHTML = '';
+          agentDiv.style.display = 'none';
+          delete agentDiv.dataset.agentId;
+        }
+        if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
+        if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
+      } catch (err) {
+        console.error('Error processing location:', err);
+        updateLocationStatus('Error processing location data', 'error');
       }
-      if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
-      if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
     },
     err => {
-      statusDiv.className = 'location-status location-error';
-      statusDiv.textContent = 'Error: ' + err.message;
+      let errorMsg = 'Error getting location: ';
+      if (err.code === 1) errorMsg += 'Permission denied. Please enable location access.';
+      else if (err.code === 2) errorMsg += 'Position unavailable.';
+      else if (err.code === 3) errorMsg += 'Request timeout.';
+      else errorMsg += err.message;
+      
+      console.error('Geolocation error:', err);
+      updateLocationStatus(errorMsg, 'error');
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
     }
   );
+}
+
+// Reverse geocode using Nominatim - Extract detailed address
+async function reverseGeocodeUser(lat, lng) {
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+      headers: {
+        'User-Agent': 'Nuevo-Puerta-RealEstate/1.0'
+      }
+    });
+    
+    if (!response.ok) throw new Error('Geocoding API error');
+    
+    const data = await response.json();
+    
+    // Use the full display_name as base, it has the complete formatted address
+    if (data.display_name) {
+      // Clean up the display name by removing the country code at the end if present
+      let fullAddress = data.display_name;
+      
+      // Remove country code suffix (e.g., ", Philippines")
+      const parts = fullAddress.split(',');
+      if (parts.length > 1) {
+        // Keep all but the last part (which is usually the country)
+        fullAddress = parts.slice(0, -1).join(',').trim();
+      }
+      
+      // Additional parsing for even more specificity
+      if (data.address) {
+        const addr = data.address;
+        const detailedParts = [];
+        
+        // Try to build a more specific address
+        if (addr.house_number || addr.road) {
+          if (addr.house_number) detailedParts.push(addr.house_number);
+          if (addr.road) detailedParts.push(addr.road);
+        }
+        
+        if (addr.suburb || addr.neighbourhood || addr.village || addr.hamlet) {
+          detailedParts.push(addr.suburb || addr.neighbourhood || addr.village || addr.hamlet);
+        }
+        
+        if (addr.city || addr.town || addr.municipality) {
+          detailedParts.push(addr.city || addr.town || addr.municipality);
+        }
+        
+        if (addr.county || addr.state || addr.province) {
+          detailedParts.push(addr.county || addr.state || addr.province);
+        }
+        
+        if (addr.postcode) {
+          detailedParts.push(addr.postcode);
+        }
+        
+        if (detailedParts.length > 0) {
+          return detailedParts.join(', ');
+        }
+      }
+      
+      return fullAddress;
+    }
+    
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  } catch (err) {
+    console.error('Reverse geocoding error:', err);
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
+}
+
+// Update map with user's current location marker
+function updateUserMapMarker(lat, lng) {
+  const mapDiv = document.getElementById('user-select-map');
+  if (!mapDiv) return;
+
+  try {
+    // Check if map already exists
+    const mapInstance = window.userLocationMap;
+    
+    if (mapInstance && mapInstance.map) {
+      // Update existing map view and marker
+      mapInstance.map.setView([lat, lng], 16);
+      mapInstance.map.eachLayer((layer) => {
+        if (layer instanceof L.Marker) {
+          mapInstance.map.removeLayer(layer);
+        }
+      });
+      if (mapInstance.marker) {
+        mapInstance.map.removeLayer(mapInstance.marker);
+      }
+      mapInstance.marker = L.marker([lat, lng], {
+        draggable: true,
+        icon: L.icon({
+          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41]
+        })
+      }).addTo(mapInstance.map);
+      
+      mapInstance.marker.on('dragend', function(ev) {
+        const pos = ev.target.getLatLng();
+        document.getElementById('user_lat').value = pos.lat;
+        document.getElementById('user_lng').value = pos.lng;
+      });
+      
+      mapInstance.marker.bindPopup(`<strong>Your Location</strong><br>Lat: ${lat.toFixed(6)}<br>Lng: ${lng.toFixed(6)}`).openPopup();
+      mapInstance.map.invalidateSize();
+    }
+  } catch (err) {
+    console.error('Error updating map marker:', err);
+  }
 }
 
 function clearLocationUser() {
   document.getElementById('user_lat').value = '';
   document.getElementById('user_lng').value = '';
+  document.getElementById('user_location').value = '';
+
+  // Remove existing pin from map when clearing location.
+  if (window.userLocationMap && window.userLocationMap.map && window.userLocationMap.marker) {
+    window.userLocationMap.map.removeLayer(window.userLocationMap.marker);
+    window.userLocationMap.marker = null;
+  }
+  if (window.userLocationMap && window.userLocationMap.map) {
+    window.userLocationMap.map.eachLayer((layer) => {
+      if (layer instanceof L.Marker) {
+        window.userLocationMap.map.removeLayer(layer);
+      }
+    });
+  }
+
   const statusDiv = document.getElementById('user-location-status');
   statusDiv.style.display = 'none';
+  updateLocationStatus(`Location cleared. You can type address, get current location, or pin on map. (${getStatusTimeSuffix()})`, 'success', 2200);
 
   const agentDiv = document.getElementById('suggestedAgent');
   if (agentDiv) {
@@ -1321,7 +1578,60 @@ function clearLocationUser() {
 }
 
 /* -------------------- GET NEAREST AGENT -------------------- */
+let manualAgentCache = [];
+
+function setPickButtonState(isPicked) {
+  const pickBtn = document.getElementById('pickSuggestedAgentBtn');
+  if (!pickBtn) return;
+
+  if (isPicked) {
+    pickBtn.textContent = 'Picked ✓';
+    pickBtn.style.background = '#14532d';
+    pickBtn.style.boxShadow = '0 0 0 2px rgba(20,83,45,0.2)';
+  } else {
+    pickBtn.textContent = 'Pick This Agent';
+    pickBtn.style.background = '#23613b';
+    pickBtn.style.boxShadow = 'none';
+  }
+}
+
+function renderSelectedAgentCard(agent, tagText) {
+  const tag = tagText ? `<div style="margin-bottom:6px;font-size:12px;font-weight:700;color:#23613b;">${tagText}</div>` : '';
+  return `
+    <div class="agent-card">
+      ${tag}
+      <div class="agent-card-photo">
+        <img src="${agent.photo}" alt="Agent Photo">
+      </div>
+      <div class="agent-card-info">
+        <div class="agent-card-name">${agent.name}</div>
+        <div class="agent-card-contact">${agent.email}<br>${agent.mobile || ''}</div>
+        <div class="agent-card-location">${agent.city || ''}${agent.address ? ', ' + agent.address : ''}</div>
+      </div>
+    </div>`;
+}
+
+function setActiveAgent(agent, tagText) {
+  const agentDiv = document.getElementById('suggestedAgent');
+  if (!agentDiv || !agent || !agent.id) return;
+
+  agentDiv.innerHTML = renderSelectedAgentCard(agent, tagText);
+  agentDiv.dataset.agentId = String(agent.id);
+  agentDiv.style.display = 'block';
+
+  const actions = document.getElementById('agentActions');
+  if (actions) actions.style.display = 'block';
+
+  // Automatically load slots for the selected/nearest agent.
+  loadAgentSlots(agent.id);
+}
+
 document.getElementById('getAgentBtn').onclick = function () {
+  const getAgentBtn = document.getElementById('getAgentBtn');
+  const statusDiv = document.getElementById('user-location-status');
+  const chooseOtherBtn = document.getElementById('chooseOtherAgentBtn');
+  const MIN_LOOKUP_LOADING_MS = 1800;
+  const lookupStart = Date.now();
   const location = document.getElementById('user_location').value.trim();
   const lat = document.getElementById('user_lat').value.trim();
   const lng = document.getElementById('user_lng').value.trim();
@@ -1336,44 +1646,88 @@ document.getElementById('getAgentBtn').onclick = function () {
   if (lat) params.append('lat', lat);
   if (lng) params.append('lng', lng);
 
+  // Loading effect similar to "Get Current Location"
+  let loadingTick = 0;
+  let loadingInterval = null;
+  if (statusDiv) {
+    statusDiv.style.display = 'block';
+    statusDiv.className = 'location-status';
+    statusDiv.textContent = 'Finding nearest agent...';
+    loadingInterval = setInterval(() => {
+      loadingTick = (loadingTick + 1) % 4;
+      const dots = '.'.repeat(loadingTick);
+      statusDiv.textContent = `Finding nearest agent${dots}`;
+    }, 300);
+  }
+  if (getAgentBtn) {
+    getAgentBtn.disabled = true;
+    getAgentBtn.textContent = 'Getting Agent...';
+  }
+
+  function finishLookupUI(afterFinish) {
+    const elapsed = Date.now() - lookupStart;
+    const waitMore = Math.max(0, MIN_LOOKUP_LOADING_MS - elapsed);
+    setTimeout(() => {
+      if (loadingInterval) clearInterval(loadingInterval);
+      if (getAgentBtn) {
+        getAgentBtn.disabled = false;
+        getAgentBtn.textContent = 'Get Agent';
+      }
+      afterFinish();
+    }, waitMore);
+  }
+
   fetch('get_nearest_agent.php?' + params.toString())
     .then(res => res.json())
     .then((data) => {
       const agentDiv = document.getElementById('suggestedAgent');
       if (!agentDiv) return;
 
-      if (data && data.id) {
-        agentDiv.innerHTML = `
-          <div class="agent-card">
-            <div class="agent-card-photo">
-              <img src="${data.photo}" alt="Agent Photo">
-            </div>
-            <div class="agent-card-info">
-              <div class="agent-card-name">${data.name}</div>
-              <div class="agent-card-contact">${data.email}<br>${data.mobile}</div>
-              <div class="agent-card-location">${data.city}${data.address ? ', ' + data.address : ''}</div>
-            </div>
-          </div>`;
-        agentDiv.dataset.agentId = data.id;
-        agentDiv.style.display = 'block';
-        document.getElementById('agentActions').style.display = 'block';
-        document.getElementById('otherAgentSelect').style.display = 'none';
-      } else {
-        agentDiv.innerHTML = '<div class="agent-card agent-card-empty">No agent found near your location.</div>';
-        agentDiv.style.display = 'block';
-        delete agentDiv.dataset.agentId;
-        document.getElementById('agentActions').style.display = 'none';
-        document.getElementById('otherAgentSelect').style.display = 'none';
-      }
+      finishLookupUI(() => {
+        if (data && data.id) {
+          setActiveAgent(data, 'Nearest Agent (Auto-Selected)');
+          setPickButtonState(false);
+          document.getElementById('otherAgentSelect').style.display = 'none';
+          const manual = document.getElementById('manualAgentSelect');
+          if (manual) manual.value = '';
+          if (chooseOtherBtn) chooseOtherBtn.style.display = 'inline-block';
+          if (statusDiv) {
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'location-status location-success';
+            statusDiv.textContent = 'Nearest agent found and auto-selected.';
+            setTimeout(() => { statusDiv.style.display = 'none'; }, 2500);
+          }
+        } else {
+          agentDiv.innerHTML = '<div class="agent-card agent-card-empty">No agent found near your location.</div>';
+          agentDiv.style.display = 'block';
+          delete agentDiv.dataset.agentId;
+          setPickButtonState(false);
+          document.getElementById('agentActions').style.display = 'none';
+          document.getElementById('otherAgentSelect').style.display = 'none';
+          if (statusDiv) {
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'location-status location-error';
+            statusDiv.textContent = 'No nearby agent found.';
+          }
+        }
+      });
     })
     .catch(() => {
       const agentDiv = document.getElementById('suggestedAgent');
       if (!agentDiv) return;
-      agentDiv.textContent = 'Could not find agent (network error).';
-      agentDiv.style.display = 'block';
-      delete agentDiv.dataset.agentId;
-      document.getElementById('agentActions').style.display = 'none';
-      document.getElementById('otherAgentSelect').style.display = 'none';
+      finishLookupUI(() => {
+        agentDiv.textContent = 'Could not find agent (network error).';
+        agentDiv.style.display = 'block';
+        delete agentDiv.dataset.agentId;
+        setPickButtonState(false);
+        document.getElementById('agentActions').style.display = 'none';
+        document.getElementById('otherAgentSelect').style.display = 'none';
+        if (statusDiv) {
+          statusDiv.style.display = 'block';
+          statusDiv.className = 'location-status location-error';
+          statusDiv.textContent = 'Could not get nearest agent. Please try again.';
+        }
+      });
     });
 };
 
@@ -1475,42 +1829,27 @@ function loadAgentSlots(agentId) {
 }
 window.loadAgentSlots = loadAgentSlots;
 
-
-// Delegated event handler for Pick This Agent (works even if button is recreated)
-document.addEventListener('click', function(e) {
-  if (e.target && e.target.id === 'pickSuggestedAgentBtn') {
-    const agentDiv = document.getElementById('suggestedAgent');
-    if (agentDiv && agentDiv.dataset.agentId) {
-      loadAgentSlots(agentDiv.dataset.agentId);
-      document.getElementById('manualAgentSelect').value = '';
-      document.getElementById('otherAgentSelect').style.display = 'none';
-    }
-  }
-});
-
-document.getElementById('manualAgentSelect').onchange = function() {
-  const agentDiv = document.getElementById('suggestedAgent');
-  if (!agentDiv) return;
-  if (this.value) {
-    agentDiv.dataset.agentId = this.value;
-    loadAgentSlots(this.value);
-  } else {
-    delete agentDiv.dataset.agentId;
-    const select = document.getElementById('agentTimeSlot');
-    select.innerHTML = '<option value="">Please pick an agent first</option>';
-    select.disabled = true;
-  }
-};
-
 /* Manual agent list */
 function fetchAllAgentsForSelect() {
-  fetch('get_all_agents.php')
+  const lat = document.getElementById('user_lat').value.trim();
+  const lng = document.getElementById('user_lng').value.trim();
+  const params = new URLSearchParams();
+  if (lat && lng) {
+    params.append('lat', lat);
+    params.append('lng', lng);
+  }
+
+  const query = params.toString();
+  fetch('get_all_agents.php' + (query ? ('?' + query) : ''))
     .then(res => res.json())
     .then(list => {
+      manualAgentCache = Array.isArray(list) ? list : [];
       const select = document.getElementById('manualAgentSelect');
       select.innerHTML = '<option value="">Select an agent</option>';
-      list.forEach(agent => {
-        select.innerHTML += `<option value="${agent.id}">${agent.name} (${agent.email})</option>`;
+      manualAgentCache.forEach(agent => {
+        const dist = (typeof agent.distance_km === 'number') ? ` - ${agent.distance_km} km` : '';
+        const avail = Number(agent.is_available) === 0 ? ' [Unavailable]' : '';
+        select.innerHTML += `<option value="${agent.id}">${agent.name}${dist}${avail}</option>`;
       });
     });
 }
@@ -1518,12 +1857,16 @@ function fetchAllAgentsForSelect() {
 document.getElementById('pickSuggestedAgentBtn').onclick = function() {
   const agentDiv = document.getElementById('suggestedAgent');
   if (agentDiv && agentDiv.dataset.agentId) {
+    loadAgentSlots(agentDiv.dataset.agentId);
+    setPickButtonState(true);
     document.getElementById('manualAgentSelect').value = '';
     document.getElementById('otherAgentSelect').style.display = 'none';
+    document.getElementById('chooseOtherAgentBtn').style.display = 'inline-block';
   }
 };
 
 document.getElementById('chooseOtherAgentBtn').onclick = function() {
+  setPickButtonState(false);
   fetchAllAgentsForSelect();
   document.getElementById('otherAgentSelect').style.display = 'block';
 };
@@ -1532,9 +1875,30 @@ document.getElementById('manualAgentSelect').onchange = function() {
   const agentDiv = document.getElementById('suggestedAgent');
   if (!agentDiv) return;
   if (this.value) {
-    agentDiv.dataset.agentId = this.value;
+    const selectedId = Number(this.value);
+    const picked = manualAgentCache.find(a => Number(a.id) === selectedId);
+    if (picked) {
+      // Replace the currently suggested agent card with the newly chosen agent.
+      setActiveAgent(picked, 'Manually Selected Agent');
+      setPickButtonState(false);
+      document.getElementById('otherAgentSelect').style.display = 'none';
+    } else {
+      agentDiv.dataset.agentId = this.value;
+      loadAgentSlots(this.value);
+      setPickButtonState(false);
+    }
   } else {
     delete agentDiv.dataset.agentId;
+    agentDiv.innerHTML = '';
+    agentDiv.style.display = 'none';
+    setPickButtonState(false);
+    document.getElementById('agentActions').style.display = 'none';
+    document.getElementById('otherAgentSelect').style.display = 'none';
+    this.value = '';
+    
+    const slotSelect = document.getElementById('agentTimeSlot');
+    slotSelect.innerHTML = '<option value="">Please pick an agent first</option>';
+    slotSelect.disabled = true;
   }
 };
 
