@@ -1,5 +1,7 @@
 <?php
+session_start();
 require 'db_connection.php';
+$agentId = (int)($_SESSION['agent_id'] ?? 0);
 
 function resolveUserId(mysqli $conn, string $buyer): ?int {
     $buyer = trim($buyer);
@@ -141,12 +143,12 @@ foreach ($data['sales'] as $sale) {
         $stmt->close();
         $ownerAssignments[] = assignOwnerFromSale($conn, $property, $buyer);
     } else {
-        $stmt = $conn->prepare("INSERT INTO sales (property, buyer, sale_price, sale_date) VALUES (?, ?, ?, ?)");
+        $stmt = $conn->prepare("INSERT INTO sales (agent_id, property, buyer, sale_price, sale_date) VALUES (?, ?, ?, ?, ?)");
         if (!$stmt) {
             echo json_encode(['success' => false, 'error' => $conn->error]);
             exit;
         }
-        $stmt->bind_param("ssds", $property, $buyer, $sale_price, $sale_date);
+        $stmt->bind_param("issds", $agentId, $property, $buyer, $sale_price, $sale_date);
         if (!$stmt->execute()) {
             echo json_encode(['success' => false, 'error' => $stmt->error]);
             exit;

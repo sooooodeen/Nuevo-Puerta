@@ -363,7 +363,11 @@ $reservedLots = 0;
 
 if (hasTable($conn,'lots') && hasColumn($conn,'lots','owner_id')) {
     $cols = "id, block_number, lot_number, lot_size, lot_price";
-    if (hasColumn($conn,'lots','agent_id')) $cols .= ", agent_id";
+    if (hasColumn($conn,'lots','payment_type'))    $cols .= ", payment_type";
+    if (hasColumn($conn,'lots','status'))         $cols .= ", status";
+    if (hasColumn($conn,'lots','agent_id'))      $cols .= ", agent_id";
+    if (hasColumn($conn,'lots','payment_amount')) $cols .= ", payment_amount";
+    if (hasColumn($conn,'lots','payment_deadline')) $cols .= ", payment_deadline";
     
     $stmt = prepOrDie($conn, "SELECT $cols FROM lots WHERE owner_id = ?");
     $stmt->bind_param("i", $user_id);
@@ -419,20 +423,10 @@ if (hasTable($conn,'viewings')) {
 
 /* ---------------- 4. CALCULATE OUTSTANDING BALANCE ---------------- */
 $outstandingBalance = 0.0;
-if (!empty($listings) && hasTable($conn,'payments') && hasColumn($conn,'payments','amount_paid')) {
-    foreach ($listings as $lot) {
-        $l_id = (int)$lot['id'];
-        $price = (float)($lot['lot_price'] ?? 0);
-        
-        $stmt = prepOrDie($conn, "SELECT SUM(amount_paid) as paid FROM payments WHERE user_id=? AND lot_id=?");
-        $stmt->bind_param("ii", $user_id, $l_id);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $paid = (float)($row['paid'] ?? 0);
-        $stmt->close();
-        
-        $outstandingBalance += max(0, $price - $paid);
-    }
+foreach ($listings as $lot) {
+    $price = (float)($lot['lot_price'] ?? 0);
+    $paid  = (float)($lot['payment_amount'] ?? 0);
+    $outstandingBalance += max(0, $price - $paid);
 }
 
 /* ---------------- 5. DASHBOARD ADD-ONS: AGENT MESSAGING + DOC PROGRESS + PAYMENT DEADLINE ---------------- */
@@ -522,34 +516,8 @@ if (hasTable($conn, 'user_documents') && hasColumn($conn, 'user_documents', 'use
 }
 
 $totalAmountPaid = 0.0;
-if (hasTable($conn, 'payments') && hasColumn($conn, 'payments', 'user_id') && hasColumn($conn, 'payments', 'amount_paid')) {
-    if (hasColumn($conn, 'payments', 'status')) {
-        $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid
-                                 FROM payments
-                                 WHERE user_id = ? AND LOWER(status) IN ('paid', 'approved', 'completed')");
-        $stmt->bind_param('i', $user_id);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $totalAmountPaid = (float)($row['total_paid'] ?? 0);
-        $stmt->close();
-
-        // Fallback in case status values are not normalized yet
-        if ($totalAmountPaid <= 0) {
-            $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM payments WHERE user_id = ?");
-            $stmt->bind_param('i', $user_id);
-            $stmt->execute();
-            $row = $stmt->get_result()->fetch_assoc();
-            $totalAmountPaid = (float)($row['total_paid'] ?? 0);
-            $stmt->close();
-        }
-    } else {
-        $stmt = prepOrDie($conn, "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM payments WHERE user_id = ?");
-        $stmt->bind_param('i', $user_id);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $totalAmountPaid = (float)($row['total_paid'] ?? 0);
-        $stmt->close();
-    }
+foreach ($listings as $lot) {
+    $totalAmountPaid += (float)($lot['payment_amount'] ?? 0);
 }
 
 $paymentReminder = [
@@ -558,49 +526,72 @@ $paymentReminder = [
     'days_left' => null,
     'overdue' => false
 ];
+$downPaymentDeadlines = [];
 
-if (hasTable($conn, 'payments') && hasColumn($conn, 'payments', 'user_id')) {
-    $deadlineColumn = null;
-    foreach (['due_date', 'deadline', 'next_due_date'] as $col) {
-        if (hasColumn($conn, 'payments', $col)) {
-            $deadlineColumn = $col;
-            break;
+if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'payment_deadline')) {
+    $nextDeadline = null;
+
+    foreach ($listings as $lot) {
+        $deadlineRaw = trim((string)($lot['payment_deadline'] ?? ''));
+        $paymentType = trim((string)($lot['payment_type'] ?? ''));
+        if ($deadlineRaw === '') {
+            continue;
+        }
+
+        if ($paymentType !== 'Down Payment') {
+            continue;
+        }
+
+        try {
+            $candidate = new DateTime($deadlineRaw);
+        } catch (Exception $e) {
+            continue;
+        }
+
+        $today = new DateTime('today');
+        $daysLeftEach = (int)$today->diff($candidate)->format('%r%a');
+        if ($daysLeftEach < 0) {
+            $deadlineText = 'Overdue by ' . abs($daysLeftEach) . ' day(s)';
+        } elseif ($daysLeftEach === 0) {
+            $deadlineText = 'Due today';
+        } else {
+            $deadlineText = 'Due in ' . $daysLeftEach . ' day(s)';
+        }
+
+        $downPaymentDeadlines[] = [
+            'lot_id' => (int)($lot['id'] ?? 0),
+            'sort_date' => $candidate->format('Y-m-d'),
+            'lot_label' => 'Block ' . ($lot['block_number'] ?? 'N/A') . ', Lot ' . ($lot['lot_number'] ?? 'N/A'),
+            'date' => $candidate->format('M d, Y'),
+            'status_text' => $deadlineText,
+            'days_left' => $daysLeftEach
+        ];
+
+        if ($nextDeadline === null || $candidate < $nextDeadline) {
+            $nextDeadline = $candidate;
         }
     }
 
-    if ($deadlineColumn !== null) {
-        $statusFilter = '';
-        if (hasColumn($conn, 'payments', 'status')) {
-            $statusFilter = " AND LOWER(status) NOT IN ('paid', 'approved', 'completed')";
-        }
+    if (!empty($downPaymentDeadlines)) {
+        usort($downPaymentDeadlines, static function ($a, $b) {
+            return strcmp($a['sort_date'], $b['sort_date']);
+        });
+    }
 
-        $sql = "SELECT $deadlineColumn AS due_at
-                FROM payments
-                WHERE user_id = ? AND $deadlineColumn IS NOT NULL $statusFilter
-                ORDER BY $deadlineColumn ASC
-                LIMIT 1";
-        $stmt = prepOrDie($conn, $sql);
-        $stmt->bind_param('i', $user_id);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+    if ($nextDeadline !== null) {
+        $today = new DateTime('today');
+        $daysLeft = (int)$today->diff($nextDeadline)->format('%r%a');
 
-        if (!empty($row['due_at'])) {
-            $dueDate = new DateTime($row['due_at']);
-            $today = new DateTime('today');
-            $daysLeft = (int)$today->diff($dueDate)->format('%r%a');
+        $paymentReminder['date'] = $nextDeadline->format('M d, Y');
+        $paymentReminder['days_left'] = $daysLeft;
+        $paymentReminder['overdue'] = $daysLeft < 0;
 
-            $paymentReminder['date'] = $dueDate->format('M d, Y');
-            $paymentReminder['days_left'] = $daysLeft;
-            $paymentReminder['overdue'] = $daysLeft < 0;
-
-            if ($daysLeft < 0) {
-                $paymentReminder['text'] = 'Overdue by ' . abs($daysLeft) . ' day(s)';
-            } elseif ($daysLeft === 0) {
-                $paymentReminder['text'] = 'Due today';
-            } else {
-                $paymentReminder['text'] = 'Due in ' . $daysLeft . ' day(s)';
-            }
+        if ($daysLeft < 0) {
+            $paymentReminder['text'] = 'Overdue by ' . abs($daysLeft) . ' day(s)';
+        } elseif ($daysLeft === 0) {
+            $paymentReminder['text'] = 'Due today';
+        } else {
+            $paymentReminder['text'] = 'Due in ' . $daysLeft . ' day(s)';
         }
     }
 }
@@ -691,12 +682,30 @@ h2 { font-size:32px; font-weight:700; color:var(--green); margin-bottom:8px; let
 .subtitle { color:var(--muted); margin-bottom:30px; display:block; font-size:15px; }
 
 /* --- Cards --- */
-.card-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:20px; margin-bottom:30px; }
-.stat-card { background:var(--white); padding:22px; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.06); display:flex; align-items:center; gap:16px; border:1px solid #f0f0f0; transition:all 0.3s ease; }
+.card-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:30px; }
+.stat-card { background:var(--white); padding:16px 18px; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.06); display:flex; align-items:center; gap:12px; border:1px solid #f0f0f0; transition:all 0.3s ease; overflow:hidden; }
 .stat-card:hover { transform:translateY(-2px); box-shadow:0 4px 16px rgba(0,0,0,0.1); }
-.stat-icon { width:56px; height:56px; background:var(--light-green); border-radius:11px; display:flex; align-items:center; justify-content:center; color:var(--green); font-size:24px; flex-shrink:0; }
-.stat-info h3 { margin:0; font-size:28px; font-weight:700; color:var(--text); line-height:1; letter-spacing:-0.5px; }
-.stat-info span { font-size:13px; color:var(--muted); margin-top:4px; display:block; }
+.stat-icon { width:48px; height:48px; background:var(--light-green); border-radius:11px; display:flex; align-items:center; justify-content:center; color:var(--green); font-size:22px; flex-shrink:0; }
+.stat-info { min-width:0; flex:1; overflow:hidden; }
+.stat-info h3 { margin:0; font-size:16px; font-weight:700; color:var(--text); line-height:1.3; letter-spacing:-0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stat-info span { font-size:12px; color:var(--muted); margin-top:3px; display:block; white-space:nowrap; }
+.stat-card.stat-card-reminder { align-items:flex-start; }
+.stat-card.stat-card-reminder .stat-info { overflow:visible; }
+.stat-card.stat-card-reminder .stat-icon { margin-top:2px; }
+.stat-card.stat-card-reminder .stat-info h3 {
+    font-size:18px;
+    line-height:1.15;
+    white-space:normal;
+    overflow:visible;
+    text-overflow:clip;
+}
+.stat-card.stat-card-reminder .stat-info span {
+    white-space:normal;
+    line-height:1.35;
+}
+.deadline-list { margin:8px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:6px; }
+.deadline-item { font-size:12px; color:var(--muted); line-height:1.35; }
+.deadline-item strong { color:var(--text); font-weight:600; }
 
 /* --- Tables & Lists --- */
 .content-box { background:var(--white); border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); padding:28px; border:1px solid #f0f0f0; margin-bottom:30px; }
@@ -873,11 +882,22 @@ tbody tr:hover { background:#f9fbfd; }
                         <span>Total Amount Paid</span>
                     </div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card stat-card-reminder">
                     <div class="stat-icon" style="background:#fff7ed; color:#c2410c;"><i class="fa fa-hourglass-half"></i></div>
                     <div class="stat-info">
-                        <h3 style="font-size:20px;"><?php echo h($paymentReminder['text']); ?></h3>
-                        <span>Payment Deadline Reminder<?php echo !empty($paymentReminder['date']) ? ' - ' . h($paymentReminder['date']) : ''; ?></span>
+                        <h3><?php echo h($paymentReminder['text']); ?></h3>
+                        <span>Payment Deadline Reminder</span>
+                        <?php if (!empty($downPaymentDeadlines)): ?>
+                        <ul class="deadline-list">
+                            <?php foreach ($downPaymentDeadlines as $deadline): ?>
+                            <li class="deadline-item">
+                                <strong><?php echo h($deadline['lot_label']); ?></strong>
+                                : <?php echo h($deadline['date']); ?>
+                                (<?php echo h($deadline['status_text']); ?>)
+                            </li>
+                            <?php endforeach; ?>
+                        </ul>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>

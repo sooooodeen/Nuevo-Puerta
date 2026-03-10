@@ -83,6 +83,7 @@
   // Add payment columns to lots table for Manage Lots payment tracking
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_type VARCHAR(30) DEFAULT 'Fully Paid'");
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_amount DECIMAL(12,2) DEFAULT NULL");
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_deadline DATE DEFAULT NULL");
 
   // =============================================
   // FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
@@ -223,6 +224,7 @@
           l.lot_price,
           l.payment_type,
           l.payment_amount,
+          l.payment_deadline,
           l.status,
           ll.location_name,
           CONCAT(u.first_name, ' ', u.last_name) AS owner_name,
@@ -247,6 +249,7 @@
                   'lot_price'        => $row['lot_price'],
                   'payment_type'     => $row['payment_type'],
                   'payment_amount'   => $row['payment_amount'],
+                  'payment_deadline' => $row['payment_deadline'],
                   'status'           => $row['status'],
                   'location_name'    => $row['location_name'],
                   'owner_name'       => $row['owner_name'],
@@ -392,7 +395,9 @@
       $status       = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
         $payment_type = isset($_POST['payment_type']) ? mysqli_real_escape_string($conn, $_POST['payment_type']) : 'Fully Paid';
         $payment_amount_raw = isset($_POST['payment_amount']) ? trim($_POST['payment_amount']) : '';
+        $payment_deadline_raw = isset($_POST['payment_deadline']) ? trim($_POST['payment_deadline']) : '';
         $payment_amount = 'NULL';
+        $payment_deadline = 'NULL';
 
           if (!in_array($payment_type, ['Down Payment', 'Fully Paid', 'Not Applicable'], true)) {
           header('Content-Type: application/json');
@@ -400,10 +405,21 @@
           exit;
         }
 
+          if ($payment_type === 'Down Payment' && $payment_deadline_raw !== '') {
+            $deadlineObj = DateTime::createFromFormat('Y-m-d', $payment_deadline_raw);
+            if (!$deadlineObj || $deadlineObj->format('Y-m-d') !== $payment_deadline_raw) {
+              header('Content-Type: application/json');
+              echo json_encode(['success' => false, 'error' => 'Please enter a valid payment deadline']);
+              exit;
+            }
+            $payment_deadline = "'" . mysqli_real_escape_string($conn, $payment_deadline_raw) . "'";
+          }
+
           if ($status === 'Available') {
             // Available lots should not have payment details yet.
             $payment_type = 'Not Applicable';
             $payment_amount = 'NULL';
+            $payment_deadline = 'NULL';
           } elseif ($payment_type === 'Not Applicable') {
             header('Content-Type: application/json');
             echo json_encode(['success' => false, 'error' => 'Select Down Payment or Fully Paid for non-available lots']);
@@ -415,6 +431,8 @@
             exit;
           }
           $payment_amount = (float)$payment_amount_raw;
+        } else {
+          $payment_deadline = 'NULL';
         }
 
       if (!empty($_POST['lot_id'])) {
@@ -427,7 +445,8 @@
                           location_id  = '$location_id',
                   status       = '$status',
                   payment_type = '$payment_type',
-                  payment_amount = $payment_amount
+                          payment_amount = $payment_amount,
+                          payment_deadline = $payment_deadline
                           WHERE id = $lot_id";
 
           $success = mysqli_query($conn, $updateQuery);
@@ -438,8 +457,8 @@
           }
           $msg     = $success ? 'Lot updated successfully' : mysqli_error($conn);
       } else {
-          $insertQuery = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status, payment_type, payment_amount)
-                  VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status', '$payment_type', $payment_amount)";
+          $insertQuery = "INSERT INTO lots (block_number, lot_number, lot_size, lot_price, location_id, status, payment_type, payment_amount, payment_deadline)
+            VALUES ('$block_number', '$lot_number', '$lot_size', '$lot_price', '$location_id', '$status', '$payment_type', $payment_amount, $payment_deadline)";
           $success = mysqli_query($conn, $insertQuery);
           $msg     = $success ? 'Lot added successfully' : mysqli_error($conn);
       }
@@ -679,7 +698,11 @@
             exit;
         }
         
-        $updateQuery = "UPDATE lots SET status = '$status' WHERE id = $lot_id";
+        if ($status === 'Available') {
+          $updateQuery = "UPDATE lots SET status = '$status', payment_type = 'Not Applicable', payment_amount = NULL, payment_deadline = NULL WHERE id = $lot_id";
+        } else {
+          $updateQuery = "UPDATE lots SET status = '$status' WHERE id = $lot_id";
+        }
         $success = mysqli_query($conn, $updateQuery);
         
         if ($success) {
@@ -4127,7 +4150,14 @@
           <option value="Fully Paid">Fully Paid</option>
           <option value="Down Payment">Down Payment</option>
         </select>
-        <input type="number" id="payment_amount" step="0.01" min="0" placeholder="Down payment amount" style="display:none; margin-top:6px; width:100%;">
+        <div id="payment_amount_wrap" style="display:none; margin-top:6px;">
+          <div style="font-size:13px; margin-bottom:4px; color:#2d482d;">Down Payment Amount</div>
+          <input type="number" id="payment_amount" step="0.01" min="0" placeholder="Down payment amount" style="width:100%;">
+        </div>
+        <div id="payment_deadline_wrap" style="display:none; margin-top:6px;">
+          <div style="font-size:13px; margin-bottom:4px; color:#2d482d;">Payment Deadline</div>
+          <input type="date" id="payment_deadline" style="width:100%;">
+        </div>
       </td>
 
       <td>
@@ -4740,13 +4770,14 @@
                 <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Owner</th>
                 <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Type</th>
                 <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Amount</th>
+                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Deadline</th>
                 <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Price</th>
                 <th style="padding: 15px; text-align: center; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Status</th>
               </tr>
             </thead>
             <tbody id="payments-tbody">
               <tr>
-                <td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">Loading payments...</td>
+                <td colspan="9" style="text-align: center; padding: 30px; color: #6c757d;">Loading payments...</td>
               </tr>
             </tbody>
           </table>
@@ -5299,7 +5330,9 @@
     const locationId = document.getElementById('location_id').value;
     const paymentType = document.getElementById('payment_type').value;
     const paymentAmountInput = document.getElementById('payment_amount');
+    const paymentDeadlineInput = document.getElementById('payment_deadline');
     const paymentAmount = paymentAmountInput ? paymentAmountInput.value : '';
+    const paymentDeadline = paymentDeadlineInput ? paymentDeadlineInput.value : '';
     
     const data = {};
     let isValid = true;
@@ -5333,6 +5366,7 @@
     } else {
       formData.append('payment_amount', '');
     }
+    formData.append('payment_deadline', data.status === 'Available' ? '' : paymentDeadline);
 
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(response => response.json())
@@ -5443,16 +5477,23 @@
     if (status) status.value = 'Available';
     const paymentType = document.getElementById('payment_type');
     if (paymentType) paymentType.value = 'Not Applicable';
+    const paymentDeadline = document.getElementById('payment_deadline');
+    if (paymentDeadline) paymentDeadline.value = '';
     togglePaymentFieldsByStatus('Available');
   }
 
   function togglePaymentFieldsByStatus(status) {
     const paymentTypeSelect = document.getElementById('payment_type');
+    const paymentDeadlineInput = document.getElementById('payment_deadline');
     if (!paymentTypeSelect) return;
 
     if (status === 'Available') {
       paymentTypeSelect.value = 'Not Applicable';
       paymentTypeSelect.disabled = true;
+      if (paymentDeadlineInput) {
+        paymentDeadlineInput.style.display = 'none';
+        paymentDeadlineInput.value = '';
+      }
       toggleDownPaymentField('Not Applicable');
       return;
     }
@@ -5466,44 +5507,72 @@
 
   function toggleDownPaymentField(paymentType) {
     const paymentAmountInput = document.getElementById('payment_amount');
+    const paymentDeadlineInput = document.getElementById('payment_deadline');
+    const paymentAmountWrap = document.getElementById('payment_amount_wrap');
+    const paymentDeadlineWrap = document.getElementById('payment_deadline_wrap');
     if (!paymentAmountInput) return;
 
     if (paymentType === 'Down Payment') {
-      paymentAmountInput.style.display = 'block';
+      if (paymentAmountWrap) paymentAmountWrap.style.display = 'block';
       paymentAmountInput.required = true;
+      if (paymentDeadlineInput) {
+        if (paymentDeadlineWrap) paymentDeadlineWrap.style.display = 'block';
+      }
     } else {
-      paymentAmountInput.style.display = 'none';
+      if (paymentAmountWrap) paymentAmountWrap.style.display = 'none';
       paymentAmountInput.required = false;
       paymentAmountInput.value = '';
+      if (paymentDeadlineInput) {
+        if (paymentDeadlineWrap) paymentDeadlineWrap.style.display = 'none';
+        paymentDeadlineInput.value = '';
+      }
     }
   }
 
   function toggleEditDownPaymentField(paymentType) {
     const paymentAmountInput = document.getElementById('edit_payment_amount');
+    const paymentDeadlineInput = document.getElementById('edit_payment_deadline');
+    const paymentAmountGroup = document.getElementById('edit_payment_amount_group');
+    const paymentDeadlineGroup = document.getElementById('edit_payment_deadline_group');
     if (!paymentAmountInput) return;
 
     if (paymentType === 'Down Payment') {
-      paymentAmountInput.style.display = 'block';
+      if (paymentAmountGroup) paymentAmountGroup.style.display = 'block';
       paymentAmountInput.required = true;
+      if (paymentDeadlineInput) {
+        if (paymentDeadlineGroup) paymentDeadlineGroup.style.display = 'block';
+      }
     } else {
-      paymentAmountInput.style.display = 'none';
+      if (paymentAmountGroup) paymentAmountGroup.style.display = 'none';
       paymentAmountInput.required = false;
       paymentAmountInput.value = '';
+      if (paymentDeadlineInput) {
+        if (paymentDeadlineGroup) paymentDeadlineGroup.style.display = 'none';
+        paymentDeadlineInput.value = '';
+      }
     }
   }
 
   function toggleEditPaymentFieldsByStatus(status) {
     const paymentTypeSelect = document.getElementById('edit_payment_type');
+    const paymentDeadlineInput = document.getElementById('edit_payment_deadline');
     if (!paymentTypeSelect) return;
 
     if (status === 'Available') {
       paymentTypeSelect.value = 'Not Applicable';
       paymentTypeSelect.disabled = true;
+      if (paymentDeadlineInput) {
+        paymentDeadlineInput.style.display = 'none';
+        paymentDeadlineInput.value = '';
+      }
       toggleEditDownPaymentField('Not Applicable');
       return;
     }
 
     paymentTypeSelect.disabled = false;
+    if (paymentDeadlineInput) {
+      paymentDeadlineInput.style.display = 'block';
+    }
     if (paymentTypeSelect.value === 'Not Applicable') {
       paymentTypeSelect.value = 'Fully Paid';
     }
@@ -5828,7 +5897,7 @@
       .then(response => response.json())
       .then(data => {
         if (!data || !data.payments || data.payments.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">No payments found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #6c757d;">No payments found.</td></tr>';
           return;
         }
 
@@ -5844,6 +5913,7 @@
               </span>
             </td>
             <td style="padding: 15px; font-size: 14px; color: #333; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.payment_amount ? parseFloat(payment.payment_amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
+            <td style="padding: 15px; font-size: 14px; color: #333; white-space: nowrap;">${payment.payment_type === 'Down Payment' && payment.payment_deadline ? new Date(payment.payment_deadline + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '<span style="color: #6c757d;">-</span>'}</td>
             <td style="padding: 15px; font-size: 14px; color: #495057; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
             <td style="padding: 15px; font-size: 14px; text-align: center; min-width: 220px; white-space: nowrap;">
               <select 
@@ -5861,7 +5931,7 @@
         `).join('');
       })
       .catch(error => {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
         console.error('Error loading payments:', error);
       });
   }
@@ -7047,9 +7117,13 @@
           <option value="Down Payment" ${(lot.payment_type || 'Fully Paid') === 'Down Payment' ? 'selected' : ''}>Down Payment</option>
         </select>
       </div>
-      <div class="form-group">
+      <div class="form-group" id="edit_payment_amount_group">
         <label>Down Payment Amount</label>
         <input type="number" step="0.01" min="0" name="payment_amount" id="edit_payment_amount" value="${lot.payment_amount || ''}" placeholder="Enter down payment amount">
+      </div>
+      <div class="form-group" id="edit_payment_deadline_group">
+        <label>Payment Deadline</label>
+        <input type="date" name="payment_deadline" id="edit_payment_deadline" value="${lot.payment_deadline || ''}">
       </div>
       <div class="form-group">
         <label>Location ID</label>
