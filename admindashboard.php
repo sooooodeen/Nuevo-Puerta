@@ -266,10 +266,13 @@
   // =============================================
   if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
       isset($_GET['fetch']) && $_GET['fetch'] === 'all_lot_owners') {
+      $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : 0;
+      $locationWhere = $location_id > 0 ? " AND l.location_id = $location_id " : '';
       
       $sql = "
         SELECT 
           l.id AS lot_id,
+          l.location_id,
           l.block_number,
           l.lot_number,
           l.status,
@@ -282,6 +285,7 @@
         LEFT JOIN lot_locations ll ON l.location_id = ll.id
         LEFT JOIN user_accounts u ON l.owner_id = u.id
         WHERE l.owner_id IS NOT NULL
+        $locationWhere
         ORDER BY ll.location_name ASC, l.block_number ASC, l.lot_number ASC
       ";
       
@@ -292,6 +296,7 @@
           while ($row = mysqli_fetch_assoc($result)) {
               $owners[] = [
                   'lot_id'          => (int)$row['lot_id'],
+                  'location_id'     => (int)$row['location_id'],
                   'user_id'         => (int)$row['user_id'],
                   'block_number'    => $row['block_number'],
                   'lot_number'      => $row['lot_number'],
@@ -308,6 +313,68 @@
       echo json_encode(['success' => true, 'owners' => $owners]);
       exit;
   }
+
+      // =====================================================
+      // OWNER REGISTRATION HELPERS (AJAX GET)
+      // =====================================================
+      if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'owner_users') {
+        $sql = "
+        SELECT id, first_name, middle_name, last_name, email, mobile_number
+        FROM user_accounts
+        ORDER BY first_name ASC, last_name ASC
+        ";
+        $result = mysqli_query($conn, $sql);
+        $users = [];
+
+        if ($result) {
+          while ($row = mysqli_fetch_assoc($result)) {
+            $fullName = trim(($row['first_name'] ?? '') . ' ' . ($row['middle_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+            $users[] = [
+              'id' => (int)$row['id'],
+              'name' => preg_replace('/\s+/', ' ', $fullName),
+              'email' => $row['email'] ?? '',
+              'mobile_number' => $row['mobile_number'] ?? ''
+            ];
+          }
+        }
+
+        header('Content-Type: application/json');
+        echo json_encode(['success' => true, 'users' => $users]);
+        exit;
+      }
+
+      if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'owner_assignable_lots') {
+        $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : 0;
+        $whereLocation = $location_id > 0 ? " AND l.location_id = $location_id " : '';
+
+        $sql = "
+        SELECT l.id, l.block_number, l.lot_number, l.status, l.location_id, ll.location_name
+        FROM lots l
+        LEFT JOIN lot_locations ll ON l.location_id = ll.id
+        WHERE l.owner_id IS NULL
+        $whereLocation
+        ORDER BY ll.location_name ASC, l.block_number ASC, l.lot_number ASC
+        ";
+        $result = mysqli_query($conn, $sql);
+        $lots = [];
+
+        if ($result) {
+          while ($row = mysqli_fetch_assoc($result)) {
+            $lots[] = [
+              'id' => (int)$row['id'],
+              'block_number' => $row['block_number'],
+              'lot_number' => $row['lot_number'],
+              'status' => $row['status'],
+              'location_id' => (int)$row['location_id'],
+              'location_name' => $row['location_name']
+            ];
+          }
+        }
+
+        header('Content-Type: application/json');
+        echo json_encode(['success' => true, 'lots' => $lots]);
+        exit;
+      }
 
   // =============================================
   // LOTS CRUD (AJAX: POST action=save/delete/bulk_delete)
@@ -643,6 +710,49 @@
         echo json_encode(['success' => (bool)$success]);
         exit;
     }
+
+      // =====================================================
+      // REGISTER LOT OWNER (AJAX: POST action=register_lot_owner)
+      // =====================================================
+      if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'register_lot_owner') {
+        header('Content-Type: application/json');
+
+        $lot_id = intval($_POST['lot_id'] ?? 0);
+        $user_id = intval($_POST['user_id'] ?? 0);
+
+        if (!$lot_id || !$user_id) {
+          echo json_encode(['success' => false, 'error' => 'Please select both lot and owner.']);
+          exit;
+        }
+
+        $lotCheck = mysqli_query($conn, "SELECT id, owner_id FROM lots WHERE id = $lot_id LIMIT 1");
+        $lotRow = $lotCheck ? mysqli_fetch_assoc($lotCheck) : null;
+        if (!$lotRow) {
+          echo json_encode(['success' => false, 'error' => 'Selected lot does not exist.']);
+          exit;
+        }
+        if (!empty($lotRow['owner_id'])) {
+          echo json_encode(['success' => false, 'error' => 'This lot already has an owner.']);
+          exit;
+        }
+
+        $userCheck = mysqli_query($conn, "SELECT id FROM user_accounts WHERE id = $user_id LIMIT 1");
+        $userRow = $userCheck ? mysqli_fetch_assoc($userCheck) : null;
+        if (!$userRow) {
+          echo json_encode(['success' => false, 'error' => 'Selected owner account does not exist.']);
+          exit;
+        }
+
+        $updateQuery = "UPDATE lots SET owner_id = $user_id WHERE id = $lot_id";
+        $success = mysqli_query($conn, $updateQuery);
+
+        echo json_encode([
+          'success' => (bool)$success,
+          'message' => $success ? 'Lot owner registered successfully.' : mysqli_error($conn)
+        ]);
+        exit;
+      }
 
     // =====================================================
   // SINGLE ACCOUNT FETCH FOR EDIT MODAL (JSON, GET)
@@ -4649,6 +4759,14 @@
             <h2>Lot Owners</h2>
             <small>Manage lot owners and their payment status</small>
           </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <label for="lot-owner-location-filter" style="font-size:13px; color:#495057; font-weight:600;">Filter by Location</label>
+            <select id="lot-owner-location-filter" style="padding:8px 10px; border:1px solid #ced4da; border-radius:6px; min-width:190px;">
+              <option value="">All Locations</option>
+            </select>
+            <button type="button" id="refresh-lot-owners-btn" class="btn-small" style="padding:8px 12px;">Apply</button>
+            <button type="button" id="register-lot-owner-btn" class="btn-small" style="padding:8px 12px; background:#3e5f3e; color:#fff; border:none; border-radius:6px; cursor:pointer;">Register Lot Owner</button>
+          </div>
         </div>
 
         <div class="table-section">
@@ -4670,6 +4788,41 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="registerLotOwnerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:#fff; width:95%; max-width:560px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <h3 style="margin:0; color:#2d4e1e;">Register Lot Owner</h3>
+            <button type="button" id="close-register-lot-owner-modal" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+          </div>
+
+          <div style="display:grid; gap:10px;">
+            <div>
+              <label style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Location Bought</label>
+              <select id="register-owner-location" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+                <option value="">All Locations</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Select Lot</label>
+              <select id="register-owner-lot" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+                <option value="">Select lot</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Select Owner Account</label>
+              <select id="register-owner-user" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+                <option value="">Select owner account</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+            <button type="button" id="cancel-register-lot-owner" class="btn-small" style="padding:8px 12px;">Cancel</button>
+            <button type="button" id="submit-register-lot-owner" class="btn-small" style="padding:8px 12px; background:#3e5f3e; color:#fff; border:none; border-radius:6px; cursor:pointer;">Register</button>
+          </div>
         </div>
       </div>
 
@@ -4734,6 +4887,7 @@
       } else if (targetId === 'section-payments') {
         loadPayments();
       } else if (targetId === 'section-lot-owners') {
+        loadLotOwnerLocationOptions();
         loadLotOwners();
       }
     }
@@ -5691,11 +5845,11 @@
             </td>
             <td style="padding: 15px; font-size: 14px; color: #333; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.payment_amount ? parseFloat(payment.payment_amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
             <td style="padding: 15px; font-size: 14px; color: #495057; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
-            <td style="padding: 15px; font-size: 14px; text-align: center;">
+            <td style="padding: 15px; font-size: 14px; text-align: center; min-width: 220px; white-space: nowrap;">
               <select 
                 id="payment-status-${payment.lot_id}" 
                 class="payment-status-select" 
-                style="padding: 6px 12px; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; background: white; font-size: 13px; font-weight: 500; min-width: 110px;" 
+                style="padding: 6px 34px 6px 12px; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; background: white; font-size: 13px; font-weight: 500; width: 200px; min-width: 200px; max-width: 200px; box-sizing: border-box;" 
                 onchange="updatePaymentStatus(${payment.lot_id}, this.value)">
                 <option value="Available" ${payment.status === 'Available' ? 'selected' : ''}>Available</option>
                 <option value="Reserved" ${payment.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
@@ -5779,13 +5933,42 @@
   // ===========================
   // LOT OWNERS FUNCTIONS
   // ===========================
+  function loadLotOwnerLocationOptions() {
+    fetch(window.location.pathname + '?fetch=locations', { method: 'GET' })
+      .then(r => r.json())
+      .then(locations => {
+        const filterSelect = document.getElementById('lot-owner-location-filter');
+        const modalSelect = document.getElementById('register-owner-location');
+        if (!filterSelect || !modalSelect) return;
+
+        const currentFilter = filterSelect.value || '';
+        const currentModal = modalSelect.value || '';
+
+        const optionsHtml = ['<option value="">All Locations</option>']
+          .concat((locations || []).map(loc => `<option value="${loc.id}">${loc.location_name}</option>`))
+          .join('');
+
+        filterSelect.innerHTML = optionsHtml;
+        modalSelect.innerHTML = optionsHtml;
+
+        filterSelect.value = currentFilter;
+        modalSelect.value = currentModal;
+      })
+      .catch(err => console.error('Failed to load location options:', err));
+  }
+
   function loadLotOwners() {
     const tbody = document.getElementById('lot-owners-tbody');
     if (!tbody) return;
 
     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">Loading lot owners...</td></tr>';
 
-    fetch(window.location.pathname + '?fetch=all_lot_owners', { method: 'GET' })
+    const selectedLocation = document.getElementById('lot-owner-location-filter')?.value || '';
+    const params = new URLSearchParams();
+    params.append('fetch', 'all_lot_owners');
+    if (selectedLocation) params.append('location_id', selectedLocation);
+
+    fetch(window.location.pathname + '?' + params.toString(), { method: 'GET' })
       .then(response => response.json())
       .then(data => {
         if (!data || !data.owners || data.owners.length === 0) {
@@ -5800,7 +5983,7 @@
             <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.mobile_number || 'N/A'}</td>
             <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${owner.location_name || 'N/A'} - Block ${owner.block_number || 'N/A'}, Lot ${owner.lot_number || 'N/A'}</td>
             <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">
-              <select id="status-${owner.lot_id}" class="lot-status-select" style="padding: 6px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;" onchange="updateLotPaymentStatus(${owner.lot_id}, this.value)">
+              <select id="status-${owner.lot_id}" class="lot-status-select" style="padding: 6px 30px 6px 10px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; width: 170px; min-width: 170px; max-width: 170px; box-sizing: border-box;" onchange="updateLotPaymentStatus(${owner.lot_id}, this.value)">
                 <option value="Available" ${owner.status === 'Available' ? 'selected' : ''}>Available</option>
                 <option value="Reserved" ${owner.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
                 <option value="Sold" ${owner.status === 'Sold' ? 'selected' : ''}>Sold</option>
@@ -5817,6 +6000,95 @@
       .catch(error => {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #dc3545;">Failed to load lot owners.</td></tr>';
         console.error('Error loading lot owners:', error);
+      });
+  }
+
+  function loadOwnerAccountsForRegistration() {
+    const ownerSelect = document.getElementById('register-owner-user');
+    if (!ownerSelect) return;
+    ownerSelect.innerHTML = '<option value="">Loading owner accounts...</option>';
+
+    fetch(window.location.pathname + '?fetch=owner_users', { method: 'GET' })
+      .then(r => r.json())
+      .then(data => {
+        const users = data?.users || [];
+        ownerSelect.innerHTML = '<option value="">Select owner account</option>';
+        users.forEach(u => {
+          ownerSelect.innerHTML += `<option value="${u.id}">${u.name} (${u.email || 'No email'})</option>`;
+        });
+      })
+      .catch(() => {
+        ownerSelect.innerHTML = '<option value="">Failed to load owner accounts</option>';
+      });
+  }
+
+  function loadAssignableLotsForRegistration(locationId = '') {
+    const lotSelect = document.getElementById('register-owner-lot');
+    if (!lotSelect) return;
+
+    lotSelect.innerHTML = '<option value="">Loading lots...</option>';
+    const params = new URLSearchParams();
+    params.append('fetch', 'owner_assignable_lots');
+    if (locationId) params.append('location_id', locationId);
+
+    fetch(window.location.pathname + '?' + params.toString(), { method: 'GET' })
+      .then(r => r.json())
+      .then(data => {
+        const lots = data?.lots || [];
+        lotSelect.innerHTML = '<option value="">Select lot</option>';
+        lots.forEach(lot => {
+          lotSelect.innerHTML += `<option value="${lot.id}">${lot.location_name || 'N/A'} - Block ${lot.block_number}, Lot ${lot.lot_number}</option>`;
+        });
+      })
+      .catch(() => {
+        lotSelect.innerHTML = '<option value="">Failed to load lots</option>';
+      });
+  }
+
+  function openRegisterLotOwnerModal() {
+    const modal = document.getElementById('registerLotOwnerModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+
+    loadLotOwnerLocationOptions();
+    loadOwnerAccountsForRegistration();
+    loadAssignableLotsForRegistration('');
+  }
+
+  function closeRegisterLotOwnerModal() {
+    const modal = document.getElementById('registerLotOwnerModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function submitRegisterLotOwner() {
+    const lotId = document.getElementById('register-owner-lot')?.value || '';
+    const userId = document.getElementById('register-owner-user')?.value || '';
+
+    if (!lotId || !userId) {
+      alert('Please select both lot and owner account.');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('action', 'register_lot_owner');
+    fd.append('lot_id', lotId);
+    fd.append('user_id', userId);
+
+    fetch(window.location.pathname, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          showMessage('Lot owner registered successfully.', true);
+          closeRegisterLotOwnerModal();
+          loadLotOwners();
+          loadPayments();
+        } else {
+          alert('Failed to register lot owner: ' + (res.error || res.message || 'Unknown error'));
+        }
+      })
+      .catch(err => {
+        console.error('Register lot owner error:', err);
+        alert('Failed to register lot owner.');
       });
   }
 
@@ -5890,6 +6162,22 @@
       })
       .catch(error => alert('Failed to fetch owner details.'));
   }
+
+  // Lot owner page controls
+  document.getElementById('refresh-lot-owners-btn')?.addEventListener('click', loadLotOwners);
+  document.getElementById('lot-owner-location-filter')?.addEventListener('change', loadLotOwners);
+  document.getElementById('register-lot-owner-btn')?.addEventListener('click', openRegisterLotOwnerModal);
+  document.getElementById('close-register-lot-owner-modal')?.addEventListener('click', closeRegisterLotOwnerModal);
+  document.getElementById('cancel-register-lot-owner')?.addEventListener('click', closeRegisterLotOwnerModal);
+  document.getElementById('submit-register-lot-owner')?.addEventListener('click', submitRegisterLotOwner);
+  document.getElementById('register-owner-location')?.addEventListener('change', function() {
+    loadAssignableLotsForRegistration(this.value || '');
+  });
+
+  window.addEventListener('click', function(e) {
+    const modal = document.getElementById('registerLotOwnerModal');
+    if (modal && e.target === modal) closeRegisterLotOwnerModal();
+  });
 
   // ===========================
   // ACCOUNT MANAGEMENT
