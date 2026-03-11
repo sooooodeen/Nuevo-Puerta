@@ -7,58 +7,448 @@
   $password = "";
   $dbname = "nuevopuerta";
 
-  $conn = mysqli_connect($servername, $username, $password, $dbname);
-
-  if (!$conn) {
-      http_response_code(500);
-      echo json_encode(['success' => false, 'error' => 'Database connection failed']);
-      exit;
+  $conn = new mysqli($servername, $username, $password, $dbname);
+  if ($conn->connect_error) {
+      die("Connection Failed: " . $conn->connect_error);
   }
+  $conn->set_charset('utf8mb4');
 
-    function tableExists($conn, $table) {
-      $tableEsc = mysqli_real_escape_string($conn, $table);
-      $sql = "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableEsc'";
-      $res = mysqli_query($conn, $sql);
-      if (!$res) return false;
-      $row = mysqli_fetch_assoc($res);
-      return ((int)($row['c'] ?? 0)) > 0;
+    function tableExists($conn, $tableName): bool {
+      $tableName = trim((string)$tableName);
+      if ($tableName === '') {
+        return false;
+      }
+
+      $escapedTable = mysqli_real_escape_string($conn, $tableName);
+      $result = mysqli_query($conn, "SHOW TABLES LIKE '{$escapedTable}'");
+      return $result instanceof mysqli_result && mysqli_num_rows($result) > 0;
     }
 
-    function columnExists($conn, $table, $column) {
-      $tableEsc = mysqli_real_escape_string($conn, $table);
-      $colEsc = mysqli_real_escape_string($conn, $column);
-      $sql = "SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableEsc' AND COLUMN_NAME = '$colEsc'";
-      $res = mysqli_query($conn, $sql);
-      if (!$res) return false;
-      $row = mysqli_fetch_assoc($res);
-      return ((int)($row['c'] ?? 0)) > 0;
+    function columnExists($conn, $tableName, $columnName): bool {
+      $tableName = trim((string)$tableName);
+      $columnName = trim((string)$columnName);
+      if ($tableName === '' || $columnName === '') {
+        return false;
+      }
+
+      if (!tableExists($conn, $tableName)) {
+        return false;
+      }
+
+      $escapedTable = mysqli_real_escape_string($conn, $tableName);
+      $escapedColumn = mysqli_real_escape_string($conn, $columnName);
+      $result = mysqli_query($conn, "SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
+      return $result instanceof mysqli_result && mysqli_num_rows($result) > 0;
     }
 
-    function getPendingDocumentsCount($conn) {
-      if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
-        $q = "SELECT COUNT(*) AS total FROM documents WHERE status = 'pending'";
-        $res = mysqli_query($conn, $q);
-        if ($res) {
-          $row = mysqli_fetch_assoc($res);
-          return (int)($row['total'] ?? 0);
+    function normalizeLotStatus($status) {
+      $status = trim((string)$status);
+      if ($status === 'Installments') {
+        return 'Installment';
+      }
+      if ($status === 'Sold') {
+        return 'Paid';
+      }
+      if ($status === '') {
+        return 'Available';
+      }
+      return $status;
+    }
+
+    function deriveLotWorkflowStage($status, $paymentType) {
+      $normalizedStatus = normalizeLotStatus($status);
+      $paymentType = trim((string)$paymentType);
+
+      if ($normalizedStatus === 'Available') {
+        return 'Available';
+      }
+
+      if ($normalizedStatus === 'Paid') {
+        return 'Paid';
+      }
+
+      if ($normalizedStatus === 'Installment') {
+        return 'Installments';
+      }
+
+      if ($normalizedStatus === 'Reserved' && $paymentType === 'Down Payment') {
+        return 'Installments';
+      }
+
+      if ($normalizedStatus === 'Reserved') {
+        return 'Reserved';
+      }
+
+      return $normalizedStatus;
+    }
+
+    function calculateNextMonthlyDueDate(int $dueDay, ?string $referenceDate = null): ?string {
+      if ($dueDay < 1 || $dueDay > 31) {
+        return null;
+      }
+
+      try {
+        $base = $referenceDate ? new DateTime($referenceDate) : new DateTime('today');
+      } catch (Exception $e) {
+        $base = new DateTime('today');
+      }
+
+      $candidate = new DateTime($base->format('Y-m-01'));
+      $daysInMonth = (int)$candidate->format('t');
+      $candidate->setDate((int)$candidate->format('Y'), (int)$candidate->format('m'), min($dueDay, $daysInMonth));
+
+      if ($candidate < $base) {
+        $candidate->modify('first day of next month');
+        $daysInMonth = (int)$candidate->format('t');
+        $candidate->setDate((int)$candidate->format('Y'), (int)$candidate->format('m'), min($dueDay, $daysInMonth));
+      }
+
+      return $candidate->format('Y-m-d');
+    }
+
+    function registerJsonFatalHandler() {
+      register_shutdown_function(function () {
+        $error = error_get_last();
+        if (!$error) {
+          return;
+        }
+
+        $fatalTypes = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+        if (!in_array($error['type'], $fatalTypes, true)) {
+          return;
+        }
+
+        if (ob_get_length()) {
+          ob_end_clean();
+        }
+        if (!headers_sent()) {
+          header('Content-Type: application/json');
+        }
+        echo json_encode([
+          'success' => false,
+          'error' => 'Fatal PHP error: ' . ($error['message'] ?? 'Unknown error')
+        ]);
+      });
+    }
+
+    function parseSaleLotContext(?string $property, $lotNoRaw = null): array {
+      $property = trim((string)$property);
+      $lotNoRaw = trim((string)$lotNoRaw);
+
+      $lotNumber = null;
+      $blockNumber = null;
+
+      if ($property !== '') {
+        if (preg_match('/lot\s*(\d+)\s*[-,]?\s*block\s*(\d+)/i', $property, $m)) {
+          $lotNumber = (int)$m[1];
+          $blockNumber = (int)$m[2];
+        } elseif (preg_match('/block\s*(\d+)\s*[-,]?\s*lot\s*(\d+)/i', $property, $m)) {
+          $blockNumber = (int)$m[1];
+          $lotNumber = (int)$m[2];
         }
       }
 
-      if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
-        $q = "SELECT COUNT(*) AS total FROM user_documents WHERE status IN ('pending_review', 'under_review')";
-        $res = mysqli_query($conn, $q);
-        if ($res) {
-          $row = mysqli_fetch_assoc($res);
-          return (int)($row['total'] ?? 0);
+      if ($lotNumber === null && $lotNoRaw !== '' && preg_match('/\d+/', $lotNoRaw, $m)) {
+        $lotNumber = (int)$m[0];
+      }
+
+      return [
+        'lot_number' => $lotNumber,
+        'block_number' => $blockNumber,
+        'lot_no_text' => $lotNoRaw
+      ];
+    }
+
+    function resolveFallbackAgentIdForSale($conn, ?string $property, $lotNoRaw, array &$cache): ?int {
+      $ctx = parseSaleLotContext($property, $lotNoRaw);
+      $lotNumber = $ctx['lot_number'];
+      $blockNumber = $ctx['block_number'];
+      $lotNoText = $ctx['lot_no_text'];
+
+      $cacheKey = ($blockNumber ?? 'x') . ':' . ($lotNumber ?? 'x') . ':' . ($lotNoText !== '' ? $lotNoText : 'x');
+      if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+      }
+
+      $resolvedAgentId = null;
+      $lotId = null;
+
+      if ($lotNumber !== null && $blockNumber !== null) {
+        $lotStmt = $conn->prepare("SELECT id FROM lots WHERE block_number = ? AND lot_number = ? ORDER BY id DESC LIMIT 1");
+        if ($lotStmt) {
+          $lotStmt->bind_param('ii', $blockNumber, $lotNumber);
+          $lotStmt->execute();
+          $lotRes = $lotStmt->get_result();
+          if ($lotRes && ($lotRow = $lotRes->fetch_assoc())) {
+            $lotId = (int)$lotRow['id'];
+          }
+          $lotStmt->close();
         }
       }
 
-      return 0;
+      if ($lotId !== null) {
+        $viewingStmt = $conn->prepare("SELECT agent_id FROM viewings WHERE lot_id = ? AND agent_id > 0 ORDER BY id DESC LIMIT 1");
+        if ($viewingStmt) {
+          $viewingStmt->bind_param('i', $lotId);
+          $viewingStmt->execute();
+          $viewingRes = $viewingStmt->get_result();
+          if ($viewingRes && ($viewingRow = $viewingRes->fetch_assoc())) {
+            $resolvedAgentId = (int)$viewingRow['agent_id'];
+          }
+          $viewingStmt->close();
+        }
+      }
+
+      if ($resolvedAgentId === null && $lotNoText !== '') {
+        $viewingByLotNoStmt = $conn->prepare("SELECT agent_id FROM viewings WHERE lot_no = ? AND agent_id > 0 ORDER BY id DESC LIMIT 1");
+        if ($viewingByLotNoStmt) {
+          $viewingByLotNoStmt->bind_param('s', $lotNoText);
+          $viewingByLotNoStmt->execute();
+          $viewingByLotNoRes = $viewingByLotNoStmt->get_result();
+          if ($viewingByLotNoRes && ($viewingByLotNoRow = $viewingByLotNoRes->fetch_assoc())) {
+            $resolvedAgentId = (int)$viewingByLotNoRow['agent_id'];
+          }
+          $viewingByLotNoStmt->close();
+        }
+      }
+
+      if ($resolvedAgentId === null && $lotNumber !== null) {
+        $lotNumberText = (string)$lotNumber;
+        $viewingByParsedLotNoStmt = $conn->prepare("SELECT agent_id FROM viewings WHERE lot_no = ? AND agent_id > 0 ORDER BY id DESC LIMIT 1");
+        if ($viewingByParsedLotNoStmt) {
+          $viewingByParsedLotNoStmt->bind_param('s', $lotNumberText);
+          $viewingByParsedLotNoStmt->execute();
+          $viewingByParsedLotNoRes = $viewingByParsedLotNoStmt->get_result();
+          if ($viewingByParsedLotNoRes && ($viewingByParsedLotNoRow = $viewingByParsedLotNoRes->fetch_assoc())) {
+            $resolvedAgentId = (int)$viewingByParsedLotNoRow['agent_id'];
+          }
+          $viewingByParsedLotNoStmt->close();
+        }
+      }
+
+      $cache[$cacheKey] = $resolvedAgentId;
+      return $resolvedAgentId;
     }
 
-    $salesAmountCol = columnExists($conn, 'sales', 'amount')
+    function buildTopAgentsLeaderboard($conn, ?string $dateFrom, ?string $dateTo, ?int $locationId, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprWithAlias): array {
+      $agents = [];
+      $agentRows = [];
+
+      $agentRes = mysqli_query($conn, "SELECT id, first_name, last_name, email FROM agent_accounts");
+      if ($agentRes) {
+        while ($row = mysqli_fetch_assoc($agentRes)) {
+          $agentId = (int)$row['id'];
+          $agentRows[$agentId] = $row;
+          $agents[$agentId] = [
+            'id' => $agentId,
+            'name' => trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')),
+            'email' => (string)($row['email'] ?? ''),
+            'sales_count' => 0,
+            'total_amount' => 0.0,
+            'avg_deal_size' => 0.0,
+          ];
+        }
+      }
+
+      $amountExpr = $salesAmountExprWithAlias ? "IFNULL($salesAmountExprWithAlias, 0)" : '0';
+      $salesQuery = "SELECT s.id, s.agent_id, s.property, s.lot_no, $amountExpr AS sale_amount FROM sales s WHERE 1";
+      if ($salesDateCol && $dateFrom) {
+        $salesQuery .= " AND s.$salesDateCol >= '" . mysqli_real_escape_string($conn, $dateFrom) . " 00:00:00'";
+      }
+      if ($salesDateCol && $dateTo) {
+        $salesQuery .= " AND s.$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $dateTo) . "', INTERVAL 1 DAY)";
+      }
+      if ($salesLocationCol && $locationId) {
+        $salesQuery .= " AND s.$salesLocationCol = " . (int)$locationId;
+      }
+
+      $fallbackCache = [];
+      $salesRes = mysqli_query($conn, $salesQuery);
+      if ($salesRes) {
+        while ($sale = mysqli_fetch_assoc($salesRes)) {
+          $agentId = (int)($sale['agent_id'] ?? 0);
+          if ($agentId <= 0) {
+            $fallback = resolveFallbackAgentIdForSale($conn, $sale['property'] ?? '', $sale['lot_no'] ?? '', $fallbackCache);
+            $agentId = $fallback ? (int)$fallback : 0;
+          }
+
+          if ($agentId <= 0 || !isset($agents[$agentId])) {
+            continue;
+          }
+
+          $amount = (float)($sale['sale_amount'] ?? 0);
+          $agents[$agentId]['sales_count'] += 1;
+          $agents[$agentId]['total_amount'] += $amount;
+        }
+      }
+
+      $ranked = [];
+      foreach ($agents as $agent) {
+        if ($agent['sales_count'] <= 0) {
+          continue;
+        }
+        $agent['avg_deal_size'] = $agent['sales_count'] > 0
+          ? round($agent['total_amount'] / $agent['sales_count'], 2)
+          : 0.0;
+        $ranked[] = $agent;
+      }
+
+      usort($ranked, function ($a, $b) {
+        $countCmp = ((int)$b['sales_count']) <=> ((int)$a['sales_count']);
+        if ($countCmp !== 0) return $countCmp;
+        $amountCmp = ((float)$b['total_amount']) <=> ((float)$a['total_amount']);
+        if ($amountCmp !== 0) return $amountCmp;
+        return strcmp((string)$a['name'], (string)$b['name']);
+      });
+
+      return array_slice($ranked, 0, 10);
+    }
+
+    function insertRecipientNotification($conn, $recipientType, $recipientId, $title, $message, $type = 'info') {
+      if (!tableExists($conn, 'notifications')) {
+        return false;
+      }
+
+      $candidateColumns = ['recipient_type', 'recipient_id', 'title', 'message', 'type', 'is_read', 'created_at'];
+      $columns = [];
+      foreach ($candidateColumns as $col) {
+        if (columnExists($conn, 'notifications', $col)) {
+          $columns[] = $col;
+        }
+      }
+
+      // Minimum viable notification fields.
+      if (!in_array('title', $columns, true) || !in_array('message', $columns, true)) {
+        return false;
+      }
+
+      $recipientTypeEsc = mysqli_real_escape_string($conn, (string)$recipientType);
+      $titleEsc = mysqli_real_escape_string($conn, (string)$title);
+      $messageEsc = mysqli_real_escape_string($conn, (string)$message);
+      $typeEsc = mysqli_real_escape_string($conn, (string)$type);
+      $recipientIdInt = (int)$recipientId;
+
+      $valuesSql = [];
+      foreach ($columns as $col) {
+        if ($col === 'recipient_type') {
+          $valuesSql[] = "'$recipientTypeEsc'";
+        } elseif ($col === 'recipient_id') {
+          $valuesSql[] = (string)$recipientIdInt;
+        } elseif ($col === 'title') {
+          $valuesSql[] = "'$titleEsc'";
+        } elseif ($col === 'message') {
+          $valuesSql[] = "'$messageEsc'";
+        } elseif ($col === 'type') {
+          $valuesSql[] = "'$typeEsc'";
+        } elseif ($col === 'is_read') {
+          $valuesSql[] = '0';
+        } elseif ($col === 'created_at') {
+          $valuesSql[] = 'NOW()';
+        }
+      }
+
+      $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $valuesSql) . ")";
+      return (bool)mysqli_query($conn, $sql);
+    }
+
+    function insertUserNotificationFeed($conn, $userId, $title, $message, $type = 'info') {
+      $userId = (int)$userId;
+      if ($userId <= 0) return false;
+
+      $createSql = "CREATE TABLE IF NOT EXISTS user_notifications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        title VARCHAR(180) NOT NULL,
+        message TEXT NOT NULL,
+        type VARCHAR(30) DEFAULT 'info',
+        is_read TINYINT(1) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_notifications_user (user_id, created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+      mysqli_query($conn, $createSql);
+
+      $titleEsc = mysqli_real_escape_string($conn, (string)$title);
+      $messageEsc = mysqli_real_escape_string($conn, (string)$message);
+      $typeEsc = mysqli_real_escape_string($conn, (string)$type);
+
+      $insertSql = "INSERT INTO user_notifications (user_id, title, message, type, is_read, created_at)
+                    VALUES ($userId, '$titleEsc', '$messageEsc', '$typeEsc', 0, NOW())";
+      return (bool)mysqli_query($conn, $insertSql);
+    }
+
+    function sendSmsViaGateway($phoneRaw, $message, &$errorMessage = '') {
+      $apiUrl = trim((string)getenv('SMS_API_URL'));
+      $apiKey = trim((string)getenv('SMS_API_KEY'));
+      $sender = trim((string)getenv('SMS_SENDER'));
+
+      if ($apiUrl === '') {
+        $errorMessage = 'SMS_API_URL not configured';
+        return false;
+      }
+
+      $phone = preg_replace('/\s+/', '', (string)$phoneRaw);
+      if ($phone === '') {
+        $errorMessage = 'Missing recipient mobile number';
+        return false;
+      }
+
+      $payload = json_encode([
+        'to' => $phone,
+        'message' => (string)$message,
+        'sender' => $sender !== '' ? $sender : 'Nuevo Puerta'
+      ]);
+
+      if ($payload === false) {
+        $errorMessage = 'Failed to encode SMS payload';
+        return false;
+      }
+
+      $headers = [
+        'Content-Type: application/json',
+        'Accept: application/json'
+      ];
+      if ($apiKey !== '') {
+        $headers[] = 'Authorization: Bearer ' . $apiKey;
+      }
+
+      if (function_exists('curl_init')) {
+        $ch = curl_init($apiUrl);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        $resp = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+
+        if ($resp === false || $httpCode < 200 || $httpCode >= 300) {
+          $errorMessage = $curlErr !== '' ? $curlErr : ('SMS gateway HTTP ' . $httpCode);
+          return false;
+        }
+        return true;
+      }
+
+      $errorMessage = 'cURL extension is not enabled';
+      return false;
+    }
+
+    $salesHasAmountCol = columnExists($conn, 'sales', 'amount');
+    $salesHasSalePriceCol = columnExists($conn, 'sales', 'sale_price');
+    $salesAmountCol = $salesHasAmountCol
       ? 'amount'
-      : (columnExists($conn, 'sales', 'sale_price') ? 'sale_price' : null);
+      : ($salesHasSalePriceCol ? 'sale_price' : null);
+    $salesAmountExprRoot = $salesHasAmountCol && $salesHasSalePriceCol
+      ? 'CASE WHEN amount IS NOT NULL AND amount > 0 THEN amount WHEN sale_price IS NOT NULL AND sale_price > 0 THEN sale_price ELSE COALESCE(amount, sale_price, 0) END'
+      : ($salesHasAmountCol
+          ? 'COALESCE(amount, 0)'
+          : ($salesHasSalePriceCol ? 'COALESCE(sale_price, 0)' : null));
+    $salesAmountExprWithAlias = $salesHasAmountCol && $salesHasSalePriceCol
+      ? 'CASE WHEN s.amount IS NOT NULL AND s.amount > 0 THEN s.amount WHEN s.sale_price IS NOT NULL AND s.sale_price > 0 THEN s.sale_price ELSE COALESCE(s.amount, s.sale_price, 0) END'
+      : ($salesHasAmountCol
+          ? 'COALESCE(s.amount, 0)'
+          : ($salesHasSalePriceCol ? 'COALESCE(s.sale_price, 0)' : null));
     $salesDateCol = columnExists($conn, 'sales', 'sale_date')
       ? 'sale_date'
       : (columnExists($conn, 'sales', 'created_at') ? 'created_at' : null);
@@ -83,7 +473,37 @@
   // Add payment columns to lots table for Manage Lots payment tracking
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_type VARCHAR(30) DEFAULT 'Fully Paid'");
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_amount DECIMAL(12,2) DEFAULT NULL");
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS down_payment_amount DECIMAL(12,2) DEFAULT NULL");
   mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_deadline DATE DEFAULT NULL");
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_term_years INT DEFAULT NULL");
+  mysqli_query($conn, "ALTER TABLE lots ADD COLUMN IF NOT EXISTS payment_due_day TINYINT DEFAULT NULL");
+
+  // Payment ledger for installment history and due tracking.
+  mysqli_query($conn, "CREATE TABLE IF NOT EXISTS lot_payment_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lot_id INT NOT NULL,
+    user_id INT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    payment_date DATE NOT NULL,
+    payment_method VARCHAR(40) DEFAULT 'Cash',
+    remarks VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_lot_payment_lot (lot_id),
+    INDEX idx_lot_payment_user (user_id),
+    CONSTRAINT fk_lot_payment_lot FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+  // Turnover tracking once fully paid.
+  mysqli_query($conn, "CREATE TABLE IF NOT EXISTS lot_turnovers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lot_id INT NOT NULL UNIQUE,
+    turnover_date DATE NOT NULL,
+    title_released TINYINT(1) DEFAULT 0,
+    remarks VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_lot_turnover_lot FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
   // =============================================
   // FETCH SINGLE USER (AJAX: ?fetch=user&id=..)
@@ -159,50 +579,15 @@
       $date_to     = $_GET['date_to']     ?? null;
       $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
 
-      $where = [];
-      if ($salesDateCol && $date_from)   $where[] = "s.$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-      if ($salesDateCol && $date_to)     $where[] = "s.$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-      if ($salesLocationCol && $location_id) $where[] = "s.$salesLocationCol = $location_id";
-
-      $whereSQL = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-
-      $amountExpr = $salesAmountCol ? "IFNULL(SUM(s.$salesAmountCol), 0)" : "0";
-      $avgExpr = $salesAmountCol
-          ? "IFNULL(ROUND(SUM(s.$salesAmountCol)/NULLIF(COUNT(s.id),0), 2), 0)"
-          : "0";
-
-      $sql = "
-        SELECT 
-          a.id,
-          a.first_name,
-          a.last_name,
-          a.email,
-          COUNT(s.id) AS sales_count,
-          $amountExpr AS total_amount,
-          $avgExpr AS avg_deal_size
-        FROM agent_accounts a
-        LEFT JOIN sales s ON a.id = s.agent_id
-        $whereSQL
-        GROUP BY a.id
-        ORDER BY total_amount DESC, sales_count DESC
-        LIMIT 10
-      ";
-
-      $result = mysqli_query($conn, $sql);
-      $agents = [];
-
-      if ($result) {
-          while ($row = mysqli_fetch_assoc($result)) {
-              $agents[] = [
-                  'id'            => (int)$row['id'],
-                  'name'          => $row['first_name'] . ' ' . $row['last_name'],
-                  'email'         => $row['email'],
-                  'sales_count'   => (int)$row['sales_count'],
-                  'total_amount'  => (float)$row['total_amount'],
-                  'avg_deal_size'=> (float)$row['avg_deal_size'],
-              ];
-          }
-      }
+      $agents = buildTopAgentsLeaderboard(
+        $conn,
+        $date_from,
+        $date_to,
+        $location_id,
+        $salesDateCol,
+        $salesLocationCol,
+        $salesAmountExprWithAlias
+      );
 
       header('Content-Type: application/json');
       echo json_encode($agents);
@@ -224,13 +609,30 @@
           l.lot_price,
           l.payment_type,
           l.payment_amount,
+          l.down_payment_amount,
           l.payment_deadline,
+          l.payment_term_years,
+          l.payment_due_day,
           l.status,
+          IFNULL(tx.total_paid, 0) AS total_paid,
+          GREATEST(IFNULL(l.lot_price, 0) - IFNULL(tx.total_paid, 0), 0) AS balance_due,
+          tx.last_payment_date,
+          IFNULL(tx.paid_months_count, 0) AS paid_months_count,
+          t.turnover_date,
+          t.title_released,
+          t.remarks AS turnover_remarks,
           ll.location_name,
           CONCAT(u.first_name, ' ', u.last_name) AS owner_name,
           u.email,
           u.mobile_number
         FROM lots l
+        LEFT JOIN (
+          SELECT lot_id, IFNULL(SUM(amount),0) AS total_paid, MAX(payment_date) AS last_payment_date,
+                 COUNT(DISTINCT DATE_FORMAT(payment_date,'%Y-%m')) AS paid_months_count
+          FROM lot_payment_transactions
+          GROUP BY lot_id
+        ) tx ON tx.lot_id = l.id
+        LEFT JOIN lot_turnovers t ON t.lot_id = l.id
         LEFT JOIN lot_locations ll ON l.location_id = ll.id
         LEFT JOIN user_accounts u ON l.owner_id = u.id
         ORDER BY ll.location_name ASC, l.block_number ASC, l.lot_number ASC
@@ -241,6 +643,7 @@
       
       if ($result) {
           while ($row = mysqli_fetch_assoc($result)) {
+            $normalizedStatus = normalizeLotStatus($row['status'] ?? 'Available');
               $payments[] = [
                   'lot_id'           => (int)$row['lot_id'],
                   'owner_id'         => $row['owner_id'] !== null ? (int)$row['owner_id'] : null,
@@ -249,8 +652,19 @@
                   'lot_price'        => $row['lot_price'],
                   'payment_type'     => $row['payment_type'],
                   'payment_amount'   => $row['payment_amount'],
+                  'down_payment_amount' => $row['down_payment_amount'],
                   'payment_deadline' => $row['payment_deadline'],
-                  'status'           => $row['status'],
+                  'payment_term_years' => $row['payment_term_years'],
+                  'payment_due_day'  => $row['payment_due_day'],
+                    'total_paid'       => $row['total_paid'],
+                    'balance_due'      => $row['balance_due'],
+                    'last_payment_date'=> $row['last_payment_date'],
+                    'paid_months_count'=> (int)$row['paid_months_count'],
+                    'turnover_date'    => $row['turnover_date'],
+                    'title_released'   => $row['title_released'],
+                    'turnover_remarks' => $row['turnover_remarks'],
+              'status'           => $normalizedStatus,
+              'workflow_stage'   => deriveLotWorkflowStage($normalizedStatus, $row['payment_type'] ?? ''),
                   'location_name'    => $row['location_name'],
                   'owner_name'       => $row['owner_name'],
                   'email'            => $row['email'],
@@ -261,6 +675,72 @@
       
       header('Content-Type: application/json');
       echo json_encode(['success' => true, 'payments' => $payments]);
+      exit;
+  }
+
+  // =============================================
+  // PAYMENT HISTORY BY LOT (AJAX: ?fetch=payment_transactions&lot_id=..)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'payment_transactions') {
+      header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+      header('Pragma: no-cache');
+      header('Expires: 0');
+      $lot_id = intval($_GET['lot_id'] ?? 0);
+      if (!$lot_id) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      $txQuery = "
+        SELECT t.id, t.amount, t.payment_date, t.payment_method, t.remarks,
+               CONCAT(u.first_name, ' ', u.last_name) AS paid_by
+        FROM lot_payment_transactions t
+        LEFT JOIN user_accounts u ON u.id = t.user_id
+        WHERE t.lot_id = $lot_id
+        ORDER BY t.payment_date ASC, t.id ASC";
+      $txResult = mysqli_query($conn, $txQuery);
+      $transactions = [];
+      if ($txResult) {
+        while ($row = mysqli_fetch_assoc($txResult)) {
+          $transactions[] = $row;
+        }
+      }
+
+      // Safety sort: ensure oldest records are always returned first.
+      usort($transactions, function ($a, $b) {
+        $da = strtotime((string)($a['payment_date'] ?? '')) ?: 0;
+        $db = strtotime((string)($b['payment_date'] ?? '')) ?: 0;
+        if ($da === $db) {
+          return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+        }
+        return $da <=> $db;
+      });
+
+      header('Content-Type: application/json');
+      echo json_encode(['success' => true, 'transactions' => $transactions]);
+      exit;
+  }
+
+  // =============================================
+  // TURNOVER INFO (AJAX: ?fetch=turnover_info&lot_id=..)
+  // =============================================
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' &&
+      isset($_GET['fetch']) && $_GET['fetch'] === 'turnover_info') {
+      $lot_id = intval($_GET['lot_id'] ?? 0);
+      if (!$lot_id) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      $turnoverQuery = "SELECT lot_id, turnover_date, title_released, remarks, updated_at FROM lot_turnovers WHERE lot_id = $lot_id LIMIT 1";
+      $turnoverResult = mysqli_query($conn, $turnoverQuery);
+      $turnover = $turnoverResult ? mysqli_fetch_assoc($turnoverResult) : null;
+
+      header('Content-Type: application/json');
+      echo json_encode(['success' => true, 'turnover' => $turnover]);
       exit;
   }
 
@@ -297,13 +777,14 @@
       
       if ($result) {
           while ($row = mysqli_fetch_assoc($result)) {
+            $normalizedStatus = normalizeLotStatus($row['status'] ?? 'Available');
               $owners[] = [
                   'lot_id'          => (int)$row['lot_id'],
                   'location_id'     => (int)$row['location_id'],
                   'user_id'         => (int)$row['user_id'],
                   'block_number'    => $row['block_number'],
                   'lot_number'      => $row['lot_number'],
-                  'status'          => $row['status'],
+              'status'          => $normalizedStatus,
                   'location_name'   => $row['location_name'],
                   'owner_name'      => $row['owner_name'],
                   'email'           => $row['email'],
@@ -392,8 +873,8 @@
       $lot_size     = mysqli_real_escape_string($conn, $_POST['lot_size']);
       $lot_price    = mysqli_real_escape_string($conn, $_POST['lot_price']);
       $location_id  = mysqli_real_escape_string($conn, $_POST['location_id']);
-      $status       = isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available';
-        $payment_type = isset($_POST['payment_type']) ? mysqli_real_escape_string($conn, $_POST['payment_type']) : 'Fully Paid';
+      $status       = normalizeLotStatus(isset($_POST['status']) ? mysqli_real_escape_string($conn, $_POST['status']) : 'Available');
+        $payment_type = isset($_POST['payment_type']) ? mysqli_real_escape_string($conn, $_POST['payment_type']) : 'Not Applicable';
         $payment_amount_raw = isset($_POST['payment_amount']) ? trim($_POST['payment_amount']) : '';
         $payment_deadline_raw = isset($_POST['payment_deadline']) ? trim($_POST['payment_deadline']) : '';
         $payment_amount = 'NULL';
@@ -416,24 +897,25 @@
           }
 
           if ($status === 'Available') {
-            // Available lots should not have payment details yet.
             $payment_type = 'Not Applicable';
             $payment_amount = 'NULL';
             $payment_deadline = 'NULL';
-          } elseif ($payment_type === 'Not Applicable') {
-            header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'error' => 'Select Down Payment or Fully Paid for non-available lots']);
-            exit;
+          } elseif ($status === 'Paid') {
+            $payment_type = 'Fully Paid';
+            $payment_amount = is_numeric($lot_price) ? (float)$lot_price : 'NULL';
+            $payment_deadline = 'NULL';
           } elseif ($payment_type === 'Down Payment') {
-          if ($payment_amount_raw === '' || !is_numeric($payment_amount_raw) || (float)$payment_amount_raw <= 0) {
-            header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'error' => 'Please enter a valid down payment amount']);
-            exit;
+            if ($payment_amount_raw === '' || !is_numeric($payment_amount_raw) || (float)$payment_amount_raw <= 0) {
+              header('Content-Type: application/json');
+              echo json_encode(['success' => false, 'error' => 'Please enter a valid down payment amount']);
+              exit;
+            }
+            $payment_amount = (float)$payment_amount_raw;
+          } else {
+            $payment_type = 'Not Applicable';
+            $payment_amount = 'NULL';
+            $payment_deadline = 'NULL';
           }
-          $payment_amount = (float)$payment_amount_raw;
-        } else {
-          $payment_deadline = 'NULL';
-        }
 
       if (!empty($_POST['lot_id'])) {
           $lot_id = intval($_POST['lot_id']);
@@ -632,54 +1114,76 @@
 
 
     // POST: Save new location
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && 
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
       isset($_POST['action']) && $_POST['action'] === 'save_location') {
-      $location_name = mysqli_real_escape_string($conn, $_POST['location_name'] ?? '');
+      header('Content-Type: application/json');
+
+      $location_name = trim((string)($_POST['location_name'] ?? ''));
       $latitude = floatval($_POST['latitude'] ?? 0);
       $longitude = floatval($_POST['longitude'] ?? 0);
-      
-      if (!$location_name || $latitude == 0 || $longitude == 0) {
-        header('Content-Type: application/json');
+
+      if ($location_name === '' || $latitude == 0.0 || $longitude == 0.0) {
         echo json_encode(['success' => false, 'error' => 'Missing location name or coordinates']);
         exit;
       }
-      
-      // Insert into lot_locations table
-      $insertQuery = "INSERT INTO lot_locations (location_name, latitude, longitude) VALUES ('$location_name', $latitude, $longitude)";
-      $success = mysqli_query($conn, $insertQuery);
-      
-      header('Content-Type: application/json');
-      if ($success) {
-        $location_id = mysqli_insert_id($conn);
 
-        // Handle optional blueprint upload
-        if (isset($_FILES['blueprint']) && $_FILES['blueprint']['error'] === UPLOAD_ERR_OK) {
-          $allowed = ['jpg','jpeg','png','gif'];
-          $ext = strtolower(pathinfo($_FILES['blueprint']['name'], PATHINFO_EXTENSION));
-          if (in_array($ext, $allowed)) {
-            $uploadDir = 'blueprints/';
-            if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
-            $newName = uniqid() . '.' . $ext;
-            if (move_uploaded_file($_FILES['blueprint']['tmp_name'], $uploadDir . $newName)) {
-              $stmt = $conn->prepare("INSERT INTO blueprints (location_id, filename, uploaded_at) VALUES (?, ?, NOW())");
-              $stmt->bind_param('is', $location_id, $newName);
-              $stmt->execute();
-              $stmt->close();
-            }
-          }
-        }
+      $insertLocationStmt = $conn->prepare("INSERT INTO lot_locations (location_name, latitude, longitude) VALUES (?, ?, ?)");
+      if (!$insertLocationStmt) {
+        echo json_encode(['success' => false, 'error' => 'Failed to prepare location insert: ' . $conn->error]);
+        exit;
+      }
 
-        echo json_encode([
-          'success' => true,
-          'message' => 'Location saved successfully',
-          'location_id' => $location_id
-        ]);
-      } else {
+      $insertLocationStmt->bind_param('sdd', $location_name, $latitude, $longitude);
+      $success = $insertLocationStmt->execute();
+      $insertLocationStmt->close();
+
+      if (!$success) {
         echo json_encode([
           'success' => false,
           'error' => mysqli_error($conn)
         ]);
+        exit;
       }
+
+      $location_id = mysqli_insert_id($conn);
+      $warning = '';
+
+      // Handle optional blueprint upload without breaking location creation.
+      if (isset($_FILES['blueprint']) && $_FILES['blueprint']['error'] === UPLOAD_ERR_OK) {
+        $allowed = ['jpg', 'jpeg', 'png', 'gif'];
+        $ext = strtolower(pathinfo($_FILES['blueprint']['name'], PATHINFO_EXTENSION));
+
+        if (in_array($ext, $allowed, true)) {
+          $uploadDir = 'blueprints/';
+          if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
+          }
+
+          $newName = uniqid('bp_', true) . '.' . $ext;
+          if (move_uploaded_file($_FILES['blueprint']['tmp_name'], $uploadDir . $newName)) {
+            $stmt = $conn->prepare("INSERT INTO blueprints (location_id, filename, uploaded_at) VALUES (?, ?, NOW())");
+            if ($stmt) {
+              $stmt->bind_param('is', $location_id, $newName);
+              if (!$stmt->execute()) {
+                $warning = ' Blueprint was uploaded but not linked in database.';
+              }
+              $stmt->close();
+            } else {
+              $warning = ' Blueprint was uploaded but blueprints table insert is unavailable.';
+            }
+          } else {
+            $warning = ' Blueprint upload failed, but location was created.';
+          }
+        } else {
+          $warning = ' Blueprint file type is not supported.';
+        }
+      }
+
+      echo json_encode([
+        'success' => true,
+        'message' => 'Location saved successfully.' . $warning,
+        'location_id' => $location_id
+      ]);
       exit;
     }
 
@@ -691,26 +1195,382 @@
         header('Content-Type: application/json');
         
         $lot_id = intval($_POST['lot_id'] ?? 0);
-        $status = mysqli_real_escape_string($conn, $_POST['status'] ?? '');
+        $status = trim((string)($_POST['status'] ?? ''));
         
-        if (!$lot_id || !in_array($status, ['Available', 'Reserved', 'Sold', 'Paid'], true)) {
+        if (!$lot_id || !in_array($status, ['Available', 'Reserved', 'Reservation', 'Installment', 'Installments', 'Sold', 'Paid'], true)) {
             echo json_encode(['success' => false, 'error' => 'Invalid lot ID or status']);
             exit;
         }
-        
-        if ($status === 'Available') {
-          $updateQuery = "UPDATE lots SET status = '$status', payment_type = 'Not Applicable', payment_amount = NULL, payment_deadline = NULL WHERE id = $lot_id";
+
+        if ($status === 'Reservation') {
+          $status = 'Reserved';
+        }
+
+        if ($status === 'Sold') {
+          $status = 'Paid';
+        }
+
+        if ($status === 'Installments' || $status === 'Installment') {
+          $updateQuery = "UPDATE lots SET status = 'Installment', payment_type = 'Down Payment' WHERE id = $lot_id";
+          $pinStatus = 'Installment';
+        } elseif ($status === 'Available') {
+          $updateQuery = "UPDATE lots SET status = 'Available', payment_type = 'Not Applicable', payment_amount = NULL, payment_deadline = NULL WHERE id = $lot_id";
+          $pinStatus = 'Available';
+        } elseif ($status === 'Paid') {
+          $updateQuery = "UPDATE lots SET status = 'Paid', payment_type = 'Fully Paid', payment_deadline = NULL, payment_amount = COALESCE(payment_amount, lot_price) WHERE id = $lot_id";
+          $pinStatus = 'Paid';
         } else {
-          $updateQuery = "UPDATE lots SET status = '$status' WHERE id = $lot_id";
+          $updateQuery = "UPDATE lots SET status = 'Reserved', payment_type = 'Not Applicable', payment_amount = NULL, payment_deadline = NULL WHERE id = $lot_id";
+          $pinStatus = 'Reserved';
         }
         $success = mysqli_query($conn, $updateQuery);
         
         if ($success) {
+            mysqli_query($conn, "UPDATE pin_locations SET pin_status = '" . mysqli_real_escape_string($conn, $pinStatus) . "' WHERE lot_id = $lot_id");
             echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
         } else {
             echo json_encode(['success' => false, 'error' => 'Database update failed: ' . mysqli_error($conn)]);
         }
         exit;
+    }
+
+    // =====================================================
+    // UPDATE INSTALLMENT PLAN (AJAX: POST action=update_installment_plan)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'update_installment_plan') {
+      header('Content-Type: application/json');
+
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $downPaymentRaw = trim((string)($_POST['down_payment_amount'] ?? ''));
+      $deadlineRaw = trim((string)($_POST['payment_deadline'] ?? ''));
+      $termYears = intval($_POST['payment_term_years'] ?? 0);
+      $dueDay = intval($_POST['payment_due_day'] ?? 0);
+
+      if (!$lot_id) {
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      if ($termYears <= 0 || $termYears > 50) {
+        echo json_encode(['success' => false, 'error' => 'Please provide a valid payment term in years.']);
+        exit;
+      }
+
+      if ($dueDay < 1 || $dueDay > 31) {
+        echo json_encode(['success' => false, 'error' => 'Please provide a valid due day in a month (1-31).']);
+        exit;
+      }
+
+      $downPaymentAmount = null;
+      if ($downPaymentRaw !== '') {
+        if (!is_numeric($downPaymentRaw) || (float)$downPaymentRaw < 0) {
+          echo json_encode(['success' => false, 'error' => 'Please provide a valid down payment amount.']);
+          exit;
+        }
+        $downPaymentAmount = (float)$downPaymentRaw;
+      }
+
+      $deadlineSql = 'NULL';
+      if ($deadlineRaw !== '') {
+        $deadlineObj = DateTime::createFromFormat('Y-m-d', $deadlineRaw);
+        if (!$deadlineObj || $deadlineObj->format('Y-m-d') !== $deadlineRaw) {
+          echo json_encode(['success' => false, 'error' => 'Please provide a valid payment deadline.']);
+          exit;
+        }
+        $deadlineSql = "'" . mysqli_real_escape_string($conn, $deadlineRaw) . "'";
+      } else {
+        $computedDeadline = calculateNextMonthlyDueDate($dueDay);
+        if ($computedDeadline !== null) {
+          $deadlineRaw = $computedDeadline;
+          $deadlineSql = "'" . mysqli_real_escape_string($conn, $computedDeadline) . "'";
+        }
+      }
+
+      $lotCheckRes = mysqli_query($conn, "SELECT status, lot_price FROM lots WHERE id = $lot_id LIMIT 1");
+      $lotCheck = $lotCheckRes ? mysqli_fetch_assoc($lotCheckRes) : null;
+      if (!$lotCheck) {
+        echo json_encode(['success' => false, 'error' => 'Lot not found.']);
+        exit;
+      }
+
+      $currentStatus = normalizeLotStatus($lotCheck['status'] ?? 'Available');
+      if ($currentStatus === 'Paid') {
+        echo json_encode(['success' => false, 'error' => 'Cannot set installment plan for a fully paid lot.']);
+        exit;
+      }
+
+      $lotPrice = (float)($lotCheck['lot_price'] ?? 0);
+      if ($lotPrice <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Lot price must be greater than zero before creating an installment plan.']);
+        exit;
+      }
+
+      if ($downPaymentAmount !== null && $downPaymentAmount >= $lotPrice) {
+        echo json_encode(['success' => false, 'error' => 'Down payment must be less than the lot price.']);
+        exit;
+      }
+
+      $remainingBalance = $lotPrice - (float)($downPaymentAmount ?? 0);
+      $termMonths = $termYears * 12;
+      if ($remainingBalance <= 0 || $termMonths <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid remaining balance or payment term.']);
+        exit;
+      }
+
+      $amount = round($remainingBalance / $termMonths, 2);
+      if ($amount <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Calculated monthly installment is invalid.']);
+        exit;
+      }
+
+      $downPaymentSql = $downPaymentAmount !== null ? (string)$downPaymentAmount : 'NULL';
+
+      $updateSql = "UPDATE lots
+                    SET payment_type = 'Down Payment',
+                        payment_amount = $amount,
+                        down_payment_amount = $downPaymentSql,
+                        payment_deadline = $deadlineSql,
+                        payment_term_years = $termYears,
+                        payment_due_day = $dueDay,
+                        status = 'Installment'
+                    WHERE id = $lot_id";
+
+      $ok = mysqli_query($conn, $updateSql);
+      if (!$ok) {
+        echo json_encode(['success' => false, 'error' => 'Failed to update installment plan: ' . mysqli_error($conn)]);
+        exit;
+      }
+
+      mysqli_query($conn, "UPDATE pin_locations SET pin_status = 'Installment' WHERE lot_id = $lot_id AND pin_status <> 'Paid'");
+
+      echo json_encode([
+        'success' => true,
+        'message' => 'Installment plan updated successfully.',
+        'payment_amount' => $amount,
+        'down_payment_amount' => $downPaymentAmount,
+        'remaining_balance' => $remainingBalance,
+        'payment_deadline' => $deadlineRaw !== '' ? $deadlineRaw : null,
+        'payment_term_years' => $termYears,
+        'payment_due_day' => $dueDay
+      ]);
+      exit;
+    }
+
+    // =====================================================
+    // RECORD PAYMENT TRANSACTION (AJAX: POST action=add_payment_transaction)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'add_payment_transaction') {
+      header('Content-Type: application/json');
+
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $amountRaw = trim((string)($_POST['amount'] ?? ''));
+      $payment_date = trim((string)($_POST['payment_date'] ?? ''));
+      $payment_method = mysqli_real_escape_string($conn, trim((string)($_POST['payment_method'] ?? 'Cash')));
+      $remarks = mysqli_real_escape_string($conn, trim((string)($_POST['remarks'] ?? '')));
+
+      if (!$lot_id || $amountRaw === '' || !is_numeric($amountRaw) || (float)$amountRaw <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid lot or amount']);
+        exit;
+      }
+
+      if ($payment_date === '') {
+        $payment_date = date('Y-m-d');
+      }
+
+      $lotQuery = "SELECT id, owner_id, lot_price, payment_due_day, payment_type, payment_amount FROM lots WHERE id = $lot_id LIMIT 1";
+      $lotResult = mysqli_query($conn, $lotQuery);
+      $lot = $lotResult ? mysqli_fetch_assoc($lotResult) : null;
+      if (!$lot) {
+        echo json_encode(['success' => false, 'error' => 'Lot not found']);
+        exit;
+      }
+
+      $ownerId = $lot['owner_id'] !== null ? (int)$lot['owner_id'] : null;
+      $amount = (float)$amountRaw;
+      $userValue = $ownerId ? (string)$ownerId : 'NULL';
+
+      $insertTx = "
+        INSERT INTO lot_payment_transactions (lot_id, user_id, amount, payment_date, payment_method, remarks)
+        VALUES ($lot_id, $userValue, $amount, '" . mysqli_real_escape_string($conn, $payment_date) . "', '$payment_method', '" . $remarks . "')";
+      $ok = mysqli_query($conn, $insertTx);
+      if (!$ok) {
+        echo json_encode(['success' => false, 'error' => 'Failed to save payment: ' . mysqli_error($conn)]);
+        exit;
+      }
+
+      $sumQuery = "SELECT IFNULL(SUM(amount),0) AS total_paid FROM lot_payment_transactions WHERE lot_id = $lot_id";
+      $sumResult = mysqli_query($conn, $sumQuery);
+      $sumRow = $sumResult ? mysqli_fetch_assoc($sumResult) : ['total_paid' => 0];
+      $totalPaid = (float)($sumRow['total_paid'] ?? 0);
+      $lotPrice = (float)($lot['lot_price'] ?? 0);
+      $balanceDue = max(0, $lotPrice - $totalPaid);
+
+      if ($totalPaid >= $lotPrice && $lotPrice > 0) {
+        mysqli_query($conn, "UPDATE lots SET status = 'Paid', payment_type = 'Fully Paid', payment_amount = $totalPaid, payment_deadline = NULL WHERE id = $lot_id");
+        mysqli_query($conn, "UPDATE pin_locations SET pin_status = 'Paid' WHERE lot_id = $lot_id");
+
+        $defaultTurnoverRemark = mysqli_real_escape_string($conn, 'Client must claim ownership title at Main Office.');
+        mysqli_query($conn, "
+          INSERT INTO lot_turnovers (lot_id, turnover_date, title_released, remarks)
+          VALUES ($lot_id, CURDATE(), 0, '$defaultTurnoverRemark')
+          ON DUPLICATE KEY UPDATE remarks = CASE
+            WHEN remarks IS NULL OR TRIM(remarks) = '' THEN '$defaultTurnoverRemark'
+            ELSE remarks
+          END
+        ");
+      } else {
+        $scheduledInstallment = isset($lot['payment_amount']) && (float)$lot['payment_amount'] > 0
+          ? (float)$lot['payment_amount']
+          : $amount;
+        // Keep payment_deadline fixed as the Month 1 anchor of the installment plan.
+        mysqli_query($conn, "UPDATE lots SET status = 'Installment', payment_type = 'Down Payment', payment_amount = $scheduledInstallment WHERE id = $lot_id");
+        mysqli_query($conn, "UPDATE pin_locations SET pin_status = 'Installment' WHERE lot_id = $lot_id");
+      }
+
+      echo json_encode([
+        'success' => true,
+        'message' => 'Payment recorded successfully',
+        'total_paid' => $totalPaid,
+        'balance_due' => $balanceDue
+      ]);
+      exit;
+    }
+
+    // =====================================================
+    // MARK TURNOVER COMPLETE (AJAX: POST action=mark_turnover_complete)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'mark_turnover_complete') {
+      header('Content-Type: application/json');
+
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      $turnover_date = trim((string)($_POST['turnover_date'] ?? ''));
+      $title_released = intval($_POST['title_released'] ?? 0) ? 1 : 0;
+      $remarks = mysqli_real_escape_string($conn, trim((string)($_POST['remarks'] ?? '')));
+
+      if (!$lot_id) {
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      if ($turnover_date === '') {
+        $turnover_date = date('Y-m-d');
+      }
+
+      if ($remarks === '') {
+        $remarks = $title_released
+          ? mysqli_real_escape_string($conn, 'Ownership title claimed/released at Main Office.')
+          : mysqli_real_escape_string($conn, 'Client must claim ownership title at Main Office.');
+      }
+
+      $statusCheck = mysqli_query($conn, "
+        SELECT l.status, l.payment_type, l.lot_price,
+               IFNULL((SELECT SUM(t.amount) FROM lot_payment_transactions t WHERE t.lot_id = l.id), 0) AS total_paid
+        FROM lots l
+        WHERE l.id = $lot_id
+        LIMIT 1
+      ");
+      $statusRow = $statusCheck ? mysqli_fetch_assoc($statusCheck) : null;
+      $status = normalizeLotStatus($statusRow['status'] ?? '');
+      $paymentTypeNow = trim((string)($statusRow['payment_type'] ?? ''));
+      $lotPriceNow = (float)($statusRow['lot_price'] ?? 0);
+      $totalPaidNow = (float)($statusRow['total_paid'] ?? 0);
+      $isFullyPaid = ($status === 'Paid') || ($paymentTypeNow === 'Fully Paid') || ($lotPriceNow > 0 && $totalPaidNow >= $lotPriceNow);
+      if (!$isFullyPaid) {
+        echo json_encode(['success' => false, 'error' => 'Turnover is allowed only for fully paid lots']);
+        exit;
+      }
+
+      // Keep lot status consistent when turnover is saved for fully paid records.
+      if ($status !== 'Paid') {
+        mysqli_query($conn, "UPDATE lots SET status = 'Paid', payment_type = 'Fully Paid' WHERE id = $lot_id");
+        mysqli_query($conn, "UPDATE pin_locations SET pin_status = 'Paid' WHERE lot_id = $lot_id");
+      }
+
+      $upsert = "
+        INSERT INTO lot_turnovers (lot_id, turnover_date, title_released, remarks)
+        VALUES ($lot_id, '" . mysqli_real_escape_string($conn, $turnover_date) . "', $title_released, '$remarks')
+        ON DUPLICATE KEY UPDATE
+          turnover_date = VALUES(turnover_date),
+          title_released = VALUES(title_released),
+          remarks = VALUES(remarks)";
+
+      $ok = mysqli_query($conn, $upsert);
+      if (!$ok) {
+        echo json_encode(['success' => false, 'error' => 'Failed to save turnover: ' . mysqli_error($conn)]);
+        exit;
+      }
+
+      $mobileExpr = "''";
+      if (columnExists($conn, 'user_accounts', 'mobile_number')) {
+        $mobileExpr = 'u.mobile_number';
+      } elseif (columnExists($conn, 'user_accounts', 'phone_number')) {
+        $mobileExpr = 'u.phone_number';
+      } elseif (columnExists($conn, 'user_accounts', 'mobile')) {
+        $mobileExpr = 'u.mobile';
+      }
+
+      $ownerQuery = "
+        SELECT l.owner_id,
+               l.block_number,
+               l.lot_number,
+               ll.location_name,
+               CONCAT(IFNULL(u.first_name,''), ' ', IFNULL(u.last_name,'')) AS owner_name,
+               COALESCE($mobileExpr, '') AS mobile_number
+        FROM lots l
+        LEFT JOIN lot_locations ll ON ll.id = l.location_id
+        LEFT JOIN user_accounts u ON u.id = l.owner_id
+        WHERE l.id = $lot_id
+        LIMIT 1";
+      $ownerRes = mysqli_query($conn, $ownerQuery);
+      $ownerRow = $ownerRes ? mysqli_fetch_assoc($ownerRes) : null;
+
+      $systemNotified = false;
+      $smsSent = false;
+      $smsError = '';
+
+      if ($ownerRow && !empty($ownerRow['owner_id'])) {
+        $locationName = trim((string)($ownerRow['location_name'] ?? ''));
+        $lotLabel = 'Block ' . (string)($ownerRow['block_number'] ?? 'N/A') . ', Lot ' . (string)($ownerRow['lot_number'] ?? 'N/A');
+        if ($locationName !== '') {
+          $lotLabel .= ' (' . $locationName . ')';
+        }
+
+        $inAppMessage = $title_released
+          ? 'Your ownership title for ' . $lotLabel . ' is now ready/released at the Main Office. Please coordinate with the office staff for claiming.'
+          : 'Your lot turnover for ' . $lotLabel . ' has been processed. You may now proceed to the Main Office to claim your ownership title.';
+
+        $notifiedShared = insertRecipientNotification(
+          $conn,
+          'user',
+          (int)$ownerRow['owner_id'],
+          'Turnover and Title Claim Notice',
+          $inAppMessage,
+          'success'
+        );
+        $notifiedUserFeed = insertUserNotificationFeed(
+          $conn,
+          (int)$ownerRow['owner_id'],
+          'Turnover and Title Claim Notice',
+          $inAppMessage,
+          'success'
+        );
+        $systemNotified = $notifiedShared || $notifiedUserFeed;
+
+        $smsMessage = 'Nuevo Puerta: ' . $inAppMessage;
+        $smsSent = sendSmsViaGateway((string)($ownerRow['mobile_number'] ?? ''), $smsMessage, $smsError);
+      }
+
+      echo json_encode([
+        'success' => true,
+        'message' => 'Turnover updated successfully',
+        'system_notified' => $systemNotified,
+        'sms_sent' => $smsSent,
+        'sms_error' => $smsSent ? null : $smsError
+      ]);
+      exit;
     }
 
     // =====================================================
@@ -870,10 +1730,20 @@
   // ADMIN ACCOUNT CRUD  (AJAX: account_action)
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
+      // Prevent PHP errors from breaking JSON
+      ini_set('display_errors', 0);
+      ob_start();
+      registerJsonFatalHandler();
+      set_error_handler(function($errno, $errstr, $errfile, $errline) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => "PHP error [$errno]: $errstr in $errfile:$errline"]);
+        exit;
+      });
       header('Content-Type: application/json');
+      $accountAction = strtolower(trim((string)($_POST['account_action'] ?? '')));
 
       // ---------- ADD ADMIN ----------
-      if ($_POST['account_action'] === 'add') {
+      if ($accountAction === 'add') {
           $first_name        = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
           $middle_name       = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
           $last_name         = mysqli_real_escape_string($conn, $_POST['last_name']          ?? '');
@@ -928,7 +1798,7 @@
       }
 
       // ---------- UPDATE ADMIN ----------
-      if ($_POST['account_action'] === 'update') {
+      if ($accountAction === 'update') {
           $account_id       = intval($_POST['account_id'] ?? 0);
           $first_name       = mysqli_real_escape_string($conn, $_POST['first_name']         ?? '');
           $middle_name      = mysqli_real_escape_string($conn, $_POST['middle_name']        ?? '');
@@ -997,7 +1867,7 @@
       }
 
       // ---------- DELETE ADMIN ----------
-      if ($_POST['account_action'] === 'delete') {
+      if ($accountAction === 'delete') {
           $account_id = intval($_POST['account_id'] ?? 0);
 
           $sql  = "DELETE FROM admin_accounts WHERE id = ?";
@@ -1017,6 +1887,10 @@
           $stmt->close();
           exit;
       }
+
+          // Fallback: always return JSON if nothing matched
+          echo json_encode(['success' => false, 'error' => 'Unknown admin account action or missing fields.']);
+          exit;
   }
 
 
@@ -1027,8 +1901,16 @@
   //    – delete: normal form, no JSON
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
+      ini_set('display_errors', 0);
+      ob_start();
+      registerJsonFatalHandler();
+      set_error_handler(function($errno, $errstr, $errfile, $errline) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => "PHP error [$errno]: $errstr in $errfile:$errline"]);
+        exit;
+      });
 
-      $action = $_POST['agent_action'];
+      $action = strtolower(trim((string)($_POST['agent_action'] ?? '')));
 
       // Only ADD & UPDATE should respond with JSON (AJAX)
       if ($action === 'add' || $action === 'update') {
@@ -1117,7 +1999,7 @@
               }
 
               $stmt->bind_param(
-                "ssssssssisi",
+                "sssssssissi",
                 $first_name, $middle_name, $last_name, $username, $email, $phone,
                 $address, $availability, $password, $photo_path, $agent_id
               );
@@ -1170,6 +2052,11 @@
           }
           // PRG: redirect after POST to avoid resubmission
       }
+
+      if ($action === 'add' || $action === 'update') {
+        echo json_encode(['success' => false, 'error' => 'Unknown agent account action or missing fields.']);
+        exit;
+      }
   }
 
 
@@ -1177,26 +2064,44 @@
   // USER ACCOUNT CRUD (AJAX: user_action)
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
+      ini_set('display_errors', 0);
+      ob_start();
+      registerJsonFatalHandler();
+      set_error_handler(function($errno, $errstr, $errfile, $errline) {
+          header('Content-Type: application/json');
+          echo json_encode(['success' => false, 'error' => "PHP error [$errno]: $errstr in $errfile:$errline"]);
+          exit;
+      });
       header('Content-Type: application/json');
+      $userAction = strtolower(trim((string)($_POST['user_action'] ?? '')));
+      $userPhoneColumn = columnExists($conn, 'user_accounts', 'phone_number')
+        ? 'phone_number'
+        : (columnExists($conn, 'user_accounts', 'mobile_number') ? 'mobile_number' : null);
+
+      if ($userPhoneColumn === null) {
+        echo json_encode(['success' => false, 'error' => 'No phone column found in user_accounts (expected phone_number or mobile_number).']);
+        exit;
+      }
 
       // ---------- ADD USER ----------
-      if ($_POST['user_action'] === 'add') {
-          $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
-          $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name']);
-          $username      = mysqli_real_escape_string($conn, $_POST['username']);
-          $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
-          $email         = mysqli_real_escape_string($conn, $_POST['email']);
-          $mobile_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
-          $address       = mysqli_real_escape_string($conn, $_POST['address']);
-          $password      = password_hash($_POST['password'], PASSWORD_DEFAULT);
+      if ($userAction === 'add') {
+        $first_name   = mysqli_real_escape_string($conn, $_POST['first_name'] ?? '');
+        $middle_name  = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
+        $username     = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
+        $last_name    = mysqli_real_escape_string($conn, $_POST['last_name'] ?? '');
+        $email        = mysqli_real_escape_string($conn, $_POST['email'] ?? '');
+        $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? ($_POST['mobile_number'] ?? ''));
+        $address      = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+        $passwordRaw  = (string)($_POST['password'] ?? '');
+        $password     = password_hash($passwordRaw, PASSWORD_DEFAULT);
 
           $photo_path = null;
           if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
               $photo_path = handleFileUpload($_FILES['photo']);
           }
 
-          $sql  = "INSERT INTO user_accounts 
-                  (first_name, middle_name, username, last_name, email, phone_number, address, password, photo_path)
+            $sql  = "INSERT INTO user_accounts 
+              (first_name, middle_name, username, last_name, email, $userPhoneColumn, address, password, photo_path)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
           $stmt = $conn->prepare($sql);
 
@@ -1222,15 +2127,20 @@
       }
 
       // ---------- UPDATE USER ----------
-      if ($_POST['user_action'] === 'update') {
-          $user_id       = intval($_POST['account_id']);
-          $first_name    = mysqli_real_escape_string($conn, $_POST['first_name']);
+        if ($userAction === 'update') {
+          $user_id       = intval($_POST['account_id'] ?? 0);
+          $first_name    = mysqli_real_escape_string($conn, $_POST['first_name'] ?? '');
           $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
           $username      = mysqli_real_escape_string($conn, $_POST['username'] ?? '');
-          $last_name     = mysqli_real_escape_string($conn, $_POST['last_name']);
-          $email         = mysqli_real_escape_string($conn, $_POST['email']);
-          $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? '');
+          $last_name     = mysqli_real_escape_string($conn, $_POST['last_name'] ?? '');
+          $email         = mysqli_real_escape_string($conn, $_POST['email'] ?? '');
+          $phone_number  = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? ($_POST['mobile_number'] ?? ''));
           $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+
+          if ($user_id <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Missing or invalid user ID.']);
+            exit;
+          }
 
           $photo_path   = null;
           $passwordHash = null;
@@ -1241,7 +2151,7 @@
               'username=?',
               'last_name=?',
               'email=?',
-              'phone_number=?',
+              $userPhoneColumn . '=?',
               'address=?'
           ];
           $bind_types  = "sssssss";
@@ -1286,8 +2196,12 @@
       }
 
       // ---------- DELETE USER ----------
-      if ($_POST['user_action'] === 'delete') {
-          $user_id = intval($_POST['user_id']);
+        if ($userAction === 'delete') {
+          $user_id = intval($_POST['user_id'] ?? 0);
+          if ($user_id <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Missing or invalid user ID.']);
+            exit;
+          }
           $sql     = "DELETE FROM user_accounts WHERE id = ?";
           $stmt    = $conn->prepare($sql);
           if (!$stmt) {
@@ -1305,6 +2219,10 @@
           $stmt->close();
           exit;
       }
+
+          // Fallback: always return JSON if nothing matched
+          echo json_encode(['success' => false, 'error' => 'Unknown user account action or missing fields.']);
+          exit;
   }
 
   // =============================================
@@ -1331,6 +2249,8 @@
           $lots        = [];
           if ($lotsResult) {
               while ($lot = mysqli_fetch_assoc($lotsResult)) {
+                $lot['status'] = normalizeLotStatus($lot['status'] ?? 'Available');
+                $lot['workflow_stage'] = deriveLotWorkflowStage($lot['status'] ?? 'Available', $lot['payment_type'] ?? '');
                   $lots[] = $lot;
               }
           }
@@ -1543,8 +2463,8 @@
     $dashboard_stats['pending_documents'] = getPendingDocumentsCount($conn);
 
     $dashboard_stats['total_sales'] = 0;
-    if ($salesAmountCol) {
-      $salesTotalQuery = "SELECT IFNULL(SUM($salesAmountCol), 0) AS total FROM sales";
+    if ($salesAmountExprRoot) {
+      $salesTotalQuery = "SELECT IFNULL(SUM($salesAmountExprRoot), 0) AS total FROM sales";
       $salesTotalResult = mysqli_query($conn, $salesTotalQuery);
       if ($salesTotalResult) {
         $salesTotalRow = mysqli_fetch_assoc($salesTotalResult);
@@ -1553,9 +2473,9 @@
     }
 
     $monthly_sales = [];
-    if ($salesAmountCol && $salesDateCol) {
+    if ($salesAmountExprRoot && $salesDateCol) {
       $salesQuery = "
-      SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+      SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountExprRoot), 0) AS total
       FROM sales
       WHERE $salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
       GROUP BY YEAR($salesDateCol), MONTH($salesDateCol), month
@@ -1579,8 +2499,8 @@
       $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
 
       // KPIs
-      $salesQuery = $salesAmountCol
-        ? "SELECT IFNULL(SUM($salesAmountCol), 0) as total FROM sales WHERE 1"
+      $salesQuery = $salesAmountExprRoot
+        ? "SELECT IFNULL(SUM($salesAmountExprRoot), 0) as total FROM sales WHERE 1"
         : "SELECT 0 as total";
       $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
       $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
@@ -1598,14 +2518,14 @@
 
       // Monthly sales trend
       $monthlySalesQuery = null;
-      if ($salesAmountCol && $salesDateCol) {
+      if ($salesAmountExprRoot && $salesDateCol) {
         $monthlyWhere = $salesWhere;
         if (!$date_from && !$date_to) {
           $monthlyWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
         }
 
         $monthlySalesQuery = "
-        SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+        SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountExprRoot), 0) AS total
         FROM sales
         WHERE 1
         ";
@@ -1663,8 +2583,8 @@
       fputcsv($output, ['Metric', 'Value']);
 
       // Fetch KPIs
-        $salesQuery = $salesAmountCol
-          ? "SELECT IFNULL(SUM($salesAmountCol), 0) as total FROM sales WHERE 1"
+        $salesQuery = $salesAmountExprRoot
+          ? "SELECT IFNULL(SUM($salesAmountExprRoot), 0) as total FROM sales WHERE 1"
           : "SELECT 0 as total";
         $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
       $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
@@ -1698,14 +2618,14 @@
       // Fetch monthly sales
       fputcsv($output, []); // Empty row for separation
       fputcsv($output, ['Month', 'Sales Amount']);
-        if ($salesAmountCol && $salesDateCol) {
+        if ($salesAmountExprRoot && $salesDateCol) {
           $monthlyWhere = $salesWhere;
           if (!$date_from && !$date_to) {
             $monthlyWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
           }
 
           $monthlySalesQuery = "
-            SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountCol), 0) AS total
+            SELECT DATE_FORMAT($salesDateCol, '%b %Y') AS month, IFNULL(SUM($salesAmountExprRoot), 0) AS total
             FROM sales
             WHERE 1
           ";
@@ -1723,42 +2643,23 @@
       // Fetch top agents
       fputcsv($output, []); // Empty row for separation
       fputcsv($output, ['Agent Name', 'Email', 'Sales Count', 'Total Sales', 'Average Deal Size']);
-        $topAgentsWhere = [];
-        if ($salesDateCol && $date_from) $topAgentsWhere[] = "s.$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-        if ($salesDateCol && $date_to) $topAgentsWhere[] = "s.$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-        if ($salesLocationCol && $location_id) $topAgentsWhere[] = "s.$salesLocationCol = $location_id";
-        $topAgentsWhereSql = $topAgentsWhere ? 'WHERE ' . implode(' AND ', $topAgentsWhere) : '';
-
-        $topAgentsAmountExpr = $salesAmountCol ? "IFNULL(SUM(s.$salesAmountCol), 0)" : "0";
-        $topAgentsAvgExpr = $salesAmountCol
-          ? "IFNULL(ROUND(SUM(s.$salesAmountCol)/NULLIF(COUNT(s.id),0), 2), 0)"
-          : "0";
-
-        $topAgentsQuery = "
-          SELECT 
-              CONCAT(a.first_name, ' ', a.last_name) AS name,
-              a.email,
-              COUNT(s.id) AS sales_count,
-            $topAgentsAmountExpr AS total_amount,
-            $topAgentsAvgExpr AS avg_deal_size
-          FROM agent_accounts a
-          LEFT JOIN sales s ON a.id = s.agent_id
-          $topAgentsWhereSql
-          GROUP BY a.id
-          ORDER BY total_amount DESC, sales_count DESC
-          LIMIT 10
-      ";
-      $topAgentsResult = mysqli_query($conn, $topAgentsQuery);
-      if ($topAgentsResult) {
-          while ($row = mysqli_fetch_assoc($topAgentsResult)) {
-              fputcsv($output, [
-                  $row['name'],
-                  $row['email'],
-                  (int)$row['sales_count'],
-                  (float)$row['total_amount'],
-                  (float)$row['avg_deal_size']
-              ]);
-          }
+      $topAgentsRows = buildTopAgentsLeaderboard(
+        $conn,
+        $date_from,
+        $date_to,
+        $location_id,
+        $salesDateCol,
+        $salesLocationCol,
+        $salesAmountExprWithAlias
+      );
+      foreach ($topAgentsRows as $row) {
+        fputcsv($output, [
+          $row['name'],
+          $row['email'],
+          (int)$row['sales_count'],
+          (float)$row['total_amount'],
+          (float)$row['avg_deal_size']
+        ]);
       }
 
       fclose($output);
@@ -1817,6 +2718,28 @@
 
       function getDocumentPendingFilterSql($alias = 'd') {
         return "$alias.status IN ('pending', 'pending_review', 'under_review')";
+      }
+
+      function getPendingDocumentsCount($conn): int {
+        $total = 0;
+
+        if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
+          $query = "SELECT COUNT(*) AS total FROM user_documents d WHERE " . getDocumentPendingFilterSql('d');
+          $result = mysqli_query($conn, $query);
+          if ($result && ($row = mysqli_fetch_assoc($result))) {
+            $total += (int)($row['total'] ?? 0);
+          }
+        }
+
+        if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
+          $query = "SELECT COUNT(*) AS total FROM documents d WHERE " . getDocumentPendingFilterSql('d');
+          $result = mysqli_query($conn, $query);
+          if ($result && ($row = mysqli_fetch_assoc($result))) {
+            $total += (int)($row['total'] ?? 0);
+          }
+        }
+
+        return $total;
       }
 
         function updateDocumentReviewStatus($conn, $table, $doc_id, $status, $remarks = '', $admin_id = null) {
@@ -2241,16 +3164,31 @@
         font-family: 'Segoe UI', sans-serif;
       }
 
+      html,
+      body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+      }
+
       body {
         background-color: #f6f6f6;
-        display: flex;
+        display: block;
         min-height: 100vh;
+        overflow-x: hidden;
+        overflow-y: auto;
       }
 
       .sidebar-wrapper {
-        height: 100vh;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 290px;
+        height: 100dvh;
+        min-height: 100vh;
         display: flex;
         align-items: stretch;
+        z-index: 1000;
       }
 
       /* Unified UI controls: consistent buttons and form fields */
@@ -2333,18 +3271,18 @@
       }
 
   .sidebar {
-      width: 290px;
+      width: 100%;
       background-color: #14532d;
       border-radius: 0px;
       display: flex;
       flex-direction: column;
-      padding: 40px 25px;
+      padding: 16px 14px;
       height: 100%;
+      min-height: 100dvh;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      position: sticky;
-      top: 0;
-      /* FIX: allow scrolling inside the sidebar so the logout button isn't cut off */
-      overflow-y: auto; 
+      position: relative;
+      overflow-y: hidden;
+      overflow-x: hidden;
     }
 
     /* Scrollbar styling for a cleaner look */
@@ -2407,6 +3345,10 @@
         flex-direction: column;
         width: 100%;
         align-items: stretch;
+        flex: 1;
+        min-height: 0;
+        justify-content: space-between;
+        gap: 3px;
       }
 
       /* Make admin nav links match the user dashboard `.nav-link` appearance */
@@ -2414,13 +3356,13 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 12px 22px;
+        padding: clamp(8px, 1.1vh, 10px) 13px;
         color: rgba(255,255,255,0.9);
         text-decoration: none;
         transition: background 0.18s, color 0.18s, transform 0.12s;
         border-left: 4px solid transparent;
-        font-size: 15px;
-        margin: 6px 0;
+        font-size: clamp(14px, 1.5vh, 15px);
+        margin: 0;
         border-radius: 8px;
         justify-content: flex-start;
         width: 100%;
@@ -2435,9 +3377,9 @@
       }
       
       .nav-icon {
-        width: 24px;
-        height: 24px;
-        margin-right: 8px;
+        width: 21px;
+        height: 21px;
+        margin-right: 5px;
         vertical-align: middle;
         filter: brightness(0) invert(1);
       }
@@ -2453,13 +3395,17 @@
       }
 
       .container {
-    flex: 1;
-    padding: 40px;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    overflow-y: auto;
-  }
+        margin-left: 290px;
+        width: calc(100% - 290px);
+        max-width: calc(100% - 290px);
+        min-width: 0;
+        padding: 32px 28px;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        height: auto;
+        overflow: visible;
+      }
 
       .table-section {
         background: white;
@@ -2506,6 +3452,7 @@
 
       .dashboard-cards {
         display: flex;
+        flex-wrap: wrap;
         gap: 20px;
         margin-bottom: 30px;
       }
@@ -2515,12 +3462,66 @@
         padding: 20px;
         border-radius: 10px;
         box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-        flex: 1;
+        flex: 1 1 240px;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
         min-width: 200px;
         position: relative;
+      }
+
+      @media (max-width: 992px) {
+        body {
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+
+        .sidebar-wrapper {
+          position: relative;
+          width: 100%;
+          height: auto;
+        }
+
+        .sidebar {
+          height: auto;
+          max-height: none;
+          padding: 14px 12px;
+        }
+
+        .nav {
+          flex-direction: row;
+          flex-wrap: nowrap;
+          justify-content: flex-start;
+          gap: 8px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding-bottom: 6px;
+        }
+
+        .nav a {
+          width: auto;
+          min-width: max-content;
+          margin: 0;
+          padding: 9px 12px;
+          border-left: 0;
+        }
+
+        .container {
+          margin-left: 0;
+          width: 100%;
+          max-width: 100%;
+          height: auto;
+          min-height: calc(100vh - 1px);
+          padding: 20px 14px;
+        }
+
+        .header h2 {
+          font-size: 24px;
+        }
+
+        .table-section {
+          padding: 14px;
+        }
       }
 
       .card-content {
@@ -2590,18 +3591,19 @@
         box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         width: 100%;
         flex: 1;
+        max-width: 100%;
+        overflow-x: auto;
       }
 
-      .table-section h2 {
-        font-size: 20px;
-        font-weight: 600;
-        color: #2d482d;
-        margin-bottom: 10px;
-      }
-
-      .table-section table {
-        width: 100%;
-        border-collapse: collapse;
+      .accounts-table,
+      .payments-table,
+      } else {
+        $scheduledInstallment = isset($lot['payment_amount']) && (float)$lot['payment_amount'] > 0
+          ? (float)$lot['payment_amount']
+          : $amount;
+        // payment_deadline is intentionally NOT updated here — it stays fixed as Month 1's due date
+        // so the installment schedule always starts from the correct base month.
+        mysqli_query($conn, "UPDATE lots SET status = 'Installment', payment_type = 'Down Payment', payment_amount = $scheduledInstallment WHERE id = $lot_id");
         margin-top: 10px;
         font-size: 14px;
         color: #2d482d;
@@ -3173,6 +4175,353 @@
         border-color: #c82333;
       }
 
+      .payments-toolbar {
+        margin: 10px 0 12px;
+      }
+
+      .payment-search-input {
+        width: 100%;
+        max-width: 460px;
+        padding: 9px 11px;
+        border: 1px solid #cfd8d3;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #2f3b33;
+        background: #fff;
+      }
+
+      .payment-search-input:focus {
+        outline: none;
+        border-color: #3e5f3e;
+        box-shadow: 0 0 0 2px rgba(62, 95, 62, 0.15);
+      }
+
+      .payments-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 15px;
+        border: 1px solid #dfe6e1;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .payments-table thead tr {
+        background: #f3f7f3;
+      }
+
+      .payments-table th {
+        padding: 13px 14px;
+        text-align: left;
+        font-weight: 600;
+        color: #2f3b33;
+        font-size: 12px;
+        border-bottom: 2px solid #d7e2d9;
+      }
+
+      .payments-table td {
+        padding: 13px 14px;
+        font-size: 13px;
+        color: #2f3b33;
+        border-bottom: 1px solid #edf2ee;
+        vertical-align: middle;
+      }
+
+      /* Override generic accounts-table last-cell flex styling for payment table consistency */
+      .payments-table tbody td:last-child {
+        display: table-cell;
+        align-items: initial;
+        gap: 0;
+        flex-wrap: nowrap;
+      }
+
+      .payments-table tbody tr:nth-child(even) {
+        background: #fbfdfb;
+      }
+
+      .payments-table td.col-location {
+        min-width: 210px;
+        line-height: 1.35;
+        color: #4b5d4f;
+      }
+
+      .payments-table td.col-owner {
+        min-width: 170px;
+        font-weight: 600;
+      }
+
+      .payments-table td.col-actions {
+        min-width: 320px;
+        text-align: center;
+        white-space: normal;
+      }
+
+      .payments-table tbody tr {
+        transition: background 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .payments-table tbody tr:hover {
+        background: #f2f8f2;
+      }
+
+      .payments-table tbody td:first-child,
+      .payments-table tbody td:nth-child(2) {
+        font-weight: 700;
+        color: #223727;
+      }
+
+      .payment-chip,
+      .workflow-chip {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: #fff;
+        box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+      }
+
+      .payment-chip-na { background: #6b7280; }
+      .payment-chip-cash { background: #3e5f3e; }
+      .payment-chip-dp { background: #557a46; }
+      .payment-chip-paid { background: #2d6a34; }
+
+      .workflow-available { background: #6b7280; }
+      .workflow-reservation { background: #b7791f; }
+      .workflow-installments { background: #3e5f3e; }
+      .workflow-paid { background: #2d6a34; }
+
+      .amount-paid,
+      .amount-price,
+      .amount-balance {
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .amount-paid,
+      .amount-price {
+        font-weight: 600;
+      }
+
+      .amount-balance {
+        font-weight: 700;
+      }
+
+      .amount-balance-due { color: #b7791f; }
+      .amount-balance-clear { color: #2d6a34; }
+
+      .workflow-block {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        min-width: 280px;
+        padding: 12px;
+        border: 1px solid #dde7de;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #fdfefd 0%, #f5f9f5 100%);
+      }
+
+      .workflow-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        background: #ffffff;
+        border: 1px solid #dbe6dd;
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+
+      .workflow-title {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+        color: #4a5a4f;
+        line-height: 1.45;
+      }
+
+      .workflow-meta {
+        font-size: 12px;
+        color: #4b5563;
+        background: #ffffff;
+        border: 1px solid #e1e8e2;
+        border-radius: 10px;
+        padding: 8px 10px;
+        text-align: left;
+      }
+
+      .workflow-progress {
+        background: linear-gradient(180deg, #f1fbf4 0%, #ebf8ef 100%);
+        border-color: #b8e4c5;
+      }
+
+      .workflow-progress-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
+      .workflow-progress-percent {
+        color: #16803d;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .workflow-progress-track {
+        background: #dcfce7;
+        border-radius: 999px;
+        height: 7px;
+        overflow: hidden;
+      }
+
+      .workflow-progress-fill {
+        background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+        height: 100%;
+        border-radius: inherit;
+        transition: width 0.3s ease;
+      }
+
+      .payment-owner-empty {
+        color: #6c757d;
+        font-style: italic;
+      }
+
+      .payment-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .payment-actions .btn-small {
+        margin: 0;
+        width: 100%;
+        min-height: 40px;
+        padding: 9px 10px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-color: #2f5a32;
+        background: #3e5f3e;
+        color: #ffffff;
+        min-width: 0;
+        text-align: center;
+        white-space: nowrap;
+        box-shadow: 0 8px 16px rgba(45, 72, 45, 0.12);
+        transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+      }
+
+      .payment-actions .action-turnover {
+        grid-column: 2;
+        grid-row: 2;
+        min-height: 38px;
+        padding: 8px 10px;
+        font-size: 13px;
+      }
+
+      .payment-actions .action-history {
+        grid-column: 1;
+        grid-row: 2;
+        background: #ffffff;
+        color: #2f5a32;
+        border-color: #c6d4c8;
+        box-shadow: none;
+      }
+
+      .payment-actions .btn-small:hover {
+        background: #2f4e2f;
+        border-color: #274427;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(39, 68, 39, 0.16);
+      }
+
+      .payment-actions .action-history:hover {
+        background: #eef4ee;
+        border-color: #a8bcaa;
+        color: #244826;
+      }
+
+      .payment-action-disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        pointer-events: none;
+        background: #95a59a !important;
+        border-color: #95a59a !important;
+      }
+
+      @media (max-width: 960px) {
+        .payments-toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .payment-search-wrap {
+          flex-basis: auto;
+          min-width: 0;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .payments-toolbar {
+          padding: 20px 18px 16px;
+        }
+
+        .payments-toolbar-copy h3 {
+          font-size: 20px;
+        }
+
+        .payments-table-shell {
+          padding: 16px;
+        }
+
+        .payment-actions {
+          grid-template-columns: 1fr;
+        }
+
+        .payment-actions .action-turnover {
+          grid-column: auto;
+        }
+
+        .payment-actions .action-history {
+          grid-column: auto;
+        }
+
+        .workflow-block {
+          min-width: 0;
+        }
+      }
+
+      .payment-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid #2f5a32;
+        background: #3e5f3e;
+        color: #fff;
+        cursor: pointer;
+      }
+
+      .payment-btn:hover {
+        background: #2f4e2f;
+        border-color: #274427;
+      }
+
+      .payment-btn-secondary {
+        background: #557a46;
+        border-color: #486b3c;
+      }
+
+      .payment-btn-secondary:hover {
+        background: #47663a;
+        border-color: #3f5a33;
+      }
+
       .empty-state {
         text-align: center;
         padding: 40px 20px;
@@ -3404,17 +4753,17 @@
   <body onload="loadLocations()">
     <div class="sidebar-wrapper">
       <div class="sidebar">
-      <div class="logo-title" style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-    <img src="assets/a.png" alt="Logo" class="profile-pic" style="width:60px;height:60px;border-radius:50%;object-fit:cover;background-color:transparent;">
+      <div class="logo-title" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+    <img src="assets/a.png" alt="Logo" class="profile-pic" style="width:52px;height:52px;border-radius:50%;object-fit:cover;background-color:transparent;">
     <div style="display:flex;flex-direction:column;justify-content:center;line-height:1;">
-      <h2 style="font-weight:700;font-size:1.18rem;letter-spacing:1px;line-height:1;color:white;margin:0;">NUEVO PUERTA</h2>
-      <span style="font-size:0.95rem;letter-spacing:0.5px;color:white;opacity:0.9;line-height:1;">REAL ESTATE</span>
+      <h2 style="font-weight:700;font-size:1.06rem;letter-spacing:0.7px;line-height:1;color:white;margin:0;">NUEVO PUERTA</h2>
+      <span style="font-size:0.86rem;letter-spacing:0.4px;color:white;opacity:0.9;line-height:1;">REAL ESTATE</span>
     </div>
   </div>
 
-        <div style="background: rgba(255,255,255,0.08); border-radius:12px; padding:10px 12px; margin:0 auto 16px; width:220px; display:flex; align-items:center;">
+        <div style="background: rgba(255,255,255,0.08); border-radius:12px; padding:8px 10px; margin:0 auto 10px; width:100%; display:flex; align-items:center;">
           <div style="margin-right:12px; flex-shrink:0;">
-            <img src="assets/s.png" alt="User Image" style="width:40px; height:40px; border-radius:50%; object-fit:cover; display:block;" />
+            <img src="assets/s.png" alt="User Image" style="width:36px; height:36px; border-radius:50%; object-fit:cover; display:block;" />
           </div>
           <div style="line-height:1.1;">
             <div style="font-weight:600; font-size:15px; color:#ffffff;">
@@ -3429,7 +4778,7 @@
         <div class="nav">
           <a data-target="section-dashboard" class="active">
             <img src="assets/mdi_home.png" alt="Home Icon" class="nav-icon">
-            <span>Home</span>
+            <span>Dashboard</span>
           </a>
           <a data-target="section-accounts">
             <img src="assets/mdi_user.png" alt="Accounts Icon" class="nav-icon">
@@ -4002,7 +5351,7 @@
                 </div>
                 <div class="form-group">
                   <label for="user_mobile">Phone</label>
-                  <input type="tel" id="user_mobile" name="Phone_number" required>
+                  <input type="tel" id="user_mobile" name="phone_number" required>
                 </div>
               </div>
               <div class="form-group">
@@ -4039,6 +5388,9 @@
         </div>
         <div class="accounts-table">
           <h3>Existing User Accounts</h3>
+          <div style="margin-bottom:10px;">
+            <input type="text" id="userAccountsSearch" placeholder="Search user by name, email, mobile, address" style="width:100%; max-width:420px; padding:8px 10px; border:1px solid #ddd; border-radius:6px;">
+          </div>
           <?php if (empty($userAccounts)): ?>
             <div class="empty-state">
               <p>No user accounts found in the database.</p>
@@ -4057,7 +5409,7 @@
               </thead>
               <tbody>
                 <?php foreach ($userAccounts as $user): ?>
-                <tr>
+                <tr class="user-account-row">
                   <td>
                     <strong><?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']); ?></strong>
                   </td>
@@ -4099,13 +5451,13 @@
     <select id="location_id" name="location_id" style="flex:1; min-width:250px;">
       <option value="" disabled selected>Please select a location first</option>
             </select>
-            <button class="add-location-btn" onclick="openAddLocationModal()" style="background-color: #3e5f3e; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
+            <button type="button" class="add-location-btn" onclick="openAddLocationModal()" style="background-color: #3e5f3e; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 5v14M5 12h14"/>
               </svg>
               Add Location
             </button>
-            <button class="delete-location-btn" onclick="deleteSelectedLocation()" style="background-color: #8a2d2d; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
+            <button type="button" class="delete-location-btn" onclick="deleteSelectedLocation()" style="background-color: #8a2d2d; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;">
               Delete Location
             </button>
           </div>
@@ -4118,10 +5470,9 @@
                 <th></th>
                 <th>Block Number</th>
                 <th>Lot Number</th>
-                <th>Lot Size</th>
+                <th>Lot Size (Sqm)</th>
                 <th>Lot Price</th>
                 <th>Status</th>
-                <th>Payment</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -4137,27 +5488,9 @@
       <td><input type="text" id="lot_price"></td>
 
       <td>
-        <select id="status" onchange="togglePaymentFieldsByStatus(this.value)">
+        <select id="status">
           <option value="Available">Available</option>
-          <option value="Sold">Sold</option>
-          <option value="Reserved">Reserved</option>
         </select>
-      </td>
-
-      <td>
-        <select id="payment_type" onchange="toggleDownPaymentField(this.value)">
-          <option value="Not Applicable" selected>Not Applicable</option>
-          <option value="Fully Paid">Fully Paid</option>
-          <option value="Down Payment">Down Payment</option>
-        </select>
-        <div id="payment_amount_wrap" style="display:none; margin-top:6px;">
-          <div style="font-size:13px; margin-bottom:4px; color:#2d482d;">Down Payment Amount</div>
-          <input type="number" id="payment_amount" step="0.01" min="0" placeholder="Down payment amount" style="width:100%;">
-        </div>
-        <div id="payment_deadline_wrap" style="display:none; margin-top:6px;">
-          <div style="font-size:13px; margin-bottom:4px; color:#2d482d;">Payment Deadline</div>
-          <input type="date" id="payment_deadline" style="width:100%;">
-        </div>
       </td>
 
       <td>
@@ -4250,8 +5583,9 @@
             <button onclick="closePinModal()" class="pin-modal-footer-btn pin-modal-footer-btn-cancel">Cancel</button>
             <button onclick="savePinLocation()" class="pin-modal-footer-btn pin-modal-footer-btn-save">Save Pin Location</button>
           </div>
-        </div>
-      </div>
+          </div><!-- end pin-modal-content -->
+        </div><!-- end pin-modal-card -->
+      </div><!-- end pinModal -->
 
       <!-- Add Location Modal -->
       <div id="addLocationModal" style="
@@ -4326,7 +5660,6 @@
             </div>
           </form>
         </div>
-      </div>
       </div>
       
       <div id="section-viewings" class="section hidden">
@@ -4755,24 +6088,35 @@
         <div class="header">
           <div>
             <h2>Payment Overview</h2>
-            <small>View all lot payments by type (Down Payment, Cash)</small>
+            <small>Track paid amount, balance due, installments, and turnover</small>
           </div>
         </div>
 
-        <div class="table-section">
-          <h3>Payment Summary</h3>
-          <table class="accounts-table" style="width: 100%; border-collapse: collapse; margin-top: 15px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+        <div class="table-section payment-summary-panel">
+          <div class="payments-toolbar">
+            <div class="payments-toolbar-copy">
+              <span class="payments-eyebrow">Payment Ledger</span>
+              <h3>Payment Summary</h3>
+              <p>Track balances, installment progress, and turnover readiness for every lot from one section.</p>
+            </div>
+            <div class="payment-search-wrap">
+              <label class="payment-search-label" for="paymentSearchInput">Search records</label>
+              <input type="text" id="paymentSearchInput" class="payment-search-input" placeholder="Search by user, email, mobile, location, block, lot">
+            </div>
+          </div>
+          <div class="payments-table-shell">
+          <table class="accounts-table payments-table">
             <thead>
-              <tr style="background: #f8f9fa;">
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Block</th>
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Number</th>
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Location</th>
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Owner</th>
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Type</th>
-                <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Payment Amount</th>
-                <th style="padding: 15px; text-align: left; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Deadline</th>
-                <th style="padding: 15px; text-align: right; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Lot Price</th>
-                <th style="padding: 15px; text-align: center; font-weight: 600; color: #333; font-size: 13px; border-bottom: 2px solid #dee2e6;">Status</th>
+              <tr>
+                <th>Lot Block</th>
+                <th>Lot Number</th>
+                <th>Location</th>
+                <th>Owner</th>
+                <th>Status</th>
+                <th style="text-align:center;">Total Paid</th>
+                <th style="text-align:center;">Balance Due</th>
+                <th style="text-align:center;">Lot Price</th>
+                <th style="text-align:center;">Status / Actions</th>
               </tr>
             </thead>
             <tbody id="payments-tbody">
@@ -4781,6 +6125,135 @@
               </tr>
             </tbody>
           </table>
+          </div>
+        </div>
+
+        <div id="recordPaymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
+          <div style="background:#fff; width:95%; max-width:520px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="margin:0; color:#2d4e1e;">Record Payment</h3>
+              <button type="button" onclick="closeRecordPaymentModal()" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <input type="hidden" id="record-payment-lot-id">
+            <div style="display:grid; gap:10px;">
+              <div>
+                <label for="record-payment-amount" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Amount (PHP)</label>
+                <input id="record-payment-amount" type="number" min="0.01" step="0.01" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;" placeholder="0.00">
+              </div>
+              <div>
+                <label for="record-payment-date" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Payment Date</label>
+                <input id="record-payment-date" type="date" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+              </div>
+              <div>
+                <label for="record-payment-method" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Payment Method</label>
+                <select id="record-payment-method" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+                  <option value="Cash">Cash</option>
+                  <option value="Bank">Bank</option>
+                  <option value="GCash">GCash</option>
+                </select>
+              </div>
+              <div>
+                <label for="record-payment-remarks" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Remarks (optional)</label>
+                <textarea id="record-payment-remarks" rows="3" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; resize:vertical;"></textarea>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+              <button type="button" class="payment-btn payment-btn-secondary" onclick="closeRecordPaymentModal()">Cancel</button>
+              <button type="button" class="payment-btn" onclick="submitRecordPayment()">Save Payment</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="installmentPlanModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
+          <div style="background:#fff; width:95%; max-width:520px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="margin:0; color:#2d4e1e;">Set Installment Plan</h3>
+              <button type="button" onclick="closeInstallmentPlanModal()" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <input type="hidden" id="installment-lot-id">
+            <input type="hidden" id="installment-lot-price">
+            <div style="display:grid; gap:10px;">
+              <div>
+                <label for="installment-lot-price-display" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Lot Price</label>
+                <input id="installment-lot-price-display" type="text" readonly style="width:100%; padding:9px 10px; border:1px solid #d7dde2; border-radius:6px; background:#f8f9fa; color:#495057;">
+              </div>
+              <div>
+                <label for="down-payment-amount" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Down Payment Amount</label>
+                <input id="down-payment-amount" type="number" min="0" step="0.01" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;" placeholder="0.00" oninput="recalculateInstallmentPlan()">
+              </div>
+              <div>
+                <label for="installment-term-years" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">How Many Years to Pay</label>
+                <input id="installment-term-years" type="number" min="1" max="50" step="1" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;" placeholder="e.g. 5" oninput="recalculateInstallmentPlan()">
+              </div>
+              <div>
+                <label for="installment-remaining-balance" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Remaining Balance After Down Payment</label>
+                <input id="installment-remaining-balance" type="text" readonly style="width:100%; padding:9px 10px; border:1px solid #d7dde2; border-radius:6px; background:#f8f9fa; color:#495057;">
+              </div>
+              <div>
+                <label for="installment-amount" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Monthly Installment Amount</label>
+                <input id="installment-amount" type="text" readonly style="width:100%; padding:9px 10px; border:1px solid #d7dde2; border-radius:6px; background:#f8f9fa; color:#14532d; font-weight:600;" placeholder="Auto-calculated">
+                <small style="display:block; color:#6c757d; margin-top:6px; font-size:12px;">Computed as remaining balance divided by total months.</small>
+              </div>
+              <div>
+                <label for="installment-due-day" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Pay Every What Day of the Month</label>
+                <input id="installment-due-day" type="number" min="1" max="31" step="1" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;" placeholder="1-31">
+              </div>
+              <div>
+                <label for="installment-deadline" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Next Payment Deadline</label>
+                <input id="installment-deadline" type="date" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+                <small style="display:block; color:#6c757d; margin-top:6px; font-size:12px;">Leave blank to auto-generate the next due date from the monthly due day.</small>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+              <button type="button" class="payment-btn payment-btn-secondary" onclick="closeInstallmentPlanModal()">Cancel</button>
+              <button type="button" class="payment-btn" onclick="submitInstallmentPlan()">Save Installment</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="paymentHistoryModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
+          <div style="background:#fff; width:96%; max-width:840px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2); max-height:88vh; overflow:auto;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="margin:0; color:#2d4e1e;">Payment History</h3>
+              <button type="button" onclick="closePaymentHistoryModal()" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <div id="payment-history-content" style="border:1px solid #e9ecef; border-radius:8px; overflow:hidden;">
+              <div style="padding:16px; color:#6c757d; text-align:center;">Loading payment history...</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="turnoverModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
+          <div style="background:#fff; width:95%; max-width:540px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="margin:0; color:#2d4e1e;">Turnover and Title Claim</h3>
+              <button type="button" onclick="closeTurnoverModal()" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <input type="hidden" id="turnover-lot-id">
+            <div style="display:grid; gap:10px;">
+              <div style="font-size:13px; color:#495057; background:#f8f9fa; border:1px solid #e9ecef; border-radius:6px; padding:10px 12px;">
+                Fully paid clients should proceed to the <strong>Main Office</strong> to claim the ownership title.
+              </div>
+              <div>
+                <label for="turnover-date" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Turnover Date</label>
+                <input id="turnover-date" type="date" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;">
+              </div>
+              <div>
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#495057; cursor:pointer;">
+                  <input id="turnover-title-released" type="checkbox">
+                  Ownership title already claimed/released at Main Office
+                </label>
+              </div>
+              <div>
+                <label for="turnover-remarks" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Remarks</label>
+                <textarea id="turnover-remarks" rows="3" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; resize:vertical;"></textarea>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+              <button type="button" class="payment-btn payment-btn-secondary" onclick="closeTurnoverModal()">Cancel</button>
+              <button type="button" class="payment-btn" onclick="submitTurnoverUpdate()">Save Turnover</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -4867,7 +6340,7 @@
   <script>
   // Admin Dashboard JavaScript v1.3 - CRITICAL FIX - March 8, 2026
   // Fixed: Canvas positioning issue - wrapped image and canvas together for proper overlay
-  // Fixed: Lots auto-load, button text "Set Pin", added drawing debug logs
+  // Fixed: Lots auto-load, button text "Update Status", added drawing debug logs
   // ================================
   // MAIN NAVIGATION & INITIAL SETUP
   // ================================
@@ -4982,6 +6455,20 @@
     }, 20000);
 
     // ========= Edit Account modal submit =========
+    function parseJsonResponse(response) {
+      return response.text().then(text => {
+        const raw = (text || '').trim();
+        if (!raw) {
+          throw new Error('Server returned an empty response.');
+        }
+        try {
+          return JSON.parse(raw);
+        } catch (err) {
+          throw new Error('Server returned invalid JSON.');
+        }
+      });
+    }
+
     const editAccountForm = document.getElementById('editAccountForm');
     if (editAccountForm) {
       editAccountForm.addEventListener('submit', function (e) {
@@ -5002,7 +6489,7 @@
           method: 'POST',
           body: formData
         })
-        .then(r => r.json())
+        .then(parseJsonResponse)
         .then(res => {
           if (res.success) {
             alert(res.message || 'Account updated!');
@@ -5025,6 +6512,10 @@
       editLotForm.addEventListener('submit', function(e) {
         e.preventDefault();
         const formData = new FormData(editLotForm);
+        const lotPriceValue = formData.get('lot_price');
+        if (lotPriceValue !== null) {
+          formData.set('lot_price', normalizeLotPriceValue(lotPriceValue));
+        }
         formData.append('action', 'save');
         fetch(window.location.pathname, { method: 'POST', body: formData })
           .then(r => r.json())
@@ -5040,6 +6531,8 @@
           })
           .catch(() => alert('Failed to update lot.'));
       });
+
+      bindLotPriceFormatter(document.getElementById('lot_price'));
     }
 
     // ========= Agent account create (AJAX) =========
@@ -5215,6 +6708,24 @@
     window.closeAddLocationModal   = closeAddLocationModal;
     window.saveNewLocation         = saveNewLocation;
     window.deleteSelectedLocation  = deleteSelectedLocation;
+
+    const userAccountsSearch = document.getElementById('userAccountsSearch');
+    if (userAccountsSearch) {
+      userAccountsSearch.addEventListener('input', function() {
+        const query = userAccountsSearch.value.trim().toLowerCase();
+        document.querySelectorAll('#section-accounts .user-account-row').forEach(row => {
+          const text = row.textContent.toLowerCase();
+          row.style.display = !query || text.includes(query) ? '' : 'none';
+        });
+      });
+    }
+
+    const paymentSearchInput = document.getElementById('paymentSearchInput');
+    if (paymentSearchInput) {
+      paymentSearchInput.addEventListener('input', function() {
+        loadPayments();
+      });
+    }
   });
 
   // ===========================
@@ -5252,24 +6763,35 @@
   // ===========================
   // LOTS MANAGEMENT FUNCTIONS
   // ===========================
-  function loadLocations() {
+  function loadLocations(selectedLocationId = '') {
     fetch(window.location.pathname + '?fetch=locations')
       .then(response => response.json())
       .then(locations => {
         const selects = ['location_id', 'analytics_location'];
         selects.forEach(selectId => {
           const select = document.getElementById(selectId);
-          if (select) {
-            const isAnalytics = selectId === 'analytics_location';
-            select.innerHTML = isAnalytics
-              ? '<option value="">All Locations</option>'
-              : '<option value="" disabled selected>Please select a location first</option>';
-            locations.forEach(location => {
-              const option = document.createElement('option');
-              option.value = location.id;
-              option.textContent = location.location_name;
-              select.appendChild(option);
-            });
+          if (!select) return;
+
+          const isAnalytics = selectId === 'analytics_location';
+          const normalizedSelected = String(selectedLocationId || '');
+          let optionsHtml = isAnalytics
+            ? '<option value="">All Locations</option>'
+            : '<option value="" disabled>Please select a location first</option>';
+
+          optionsHtml += (locations || []).map(location => {
+            const id = String(location.id);
+            const selectedAttr = (!isAnalytics && normalizedSelected && normalizedSelected === id) ? ' selected' : '';
+            return `<option value="${id}"${selectedAttr}>${location.location_name}</option>`;
+          }).join('');
+
+          select.innerHTML = optionsHtml;
+
+          if (!isAnalytics && normalizedSelected) {
+            select.value = normalizedSelected;
+          }
+
+          if (!isAnalytics && !select.value && (locations || []).length > 0) {
+            select.selectedIndex = 1;
           }
         });
       })
@@ -5291,25 +6813,23 @@
         tbody.innerHTML = '';
         
         if (!data.length) {
-          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center;">No lots available.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No lots available.</td></tr>';
         } else {
           data.forEach(lot => {
-            const paymentType = lot.payment_type || (lot.status === 'Available' ? 'Not Applicable' : 'Fully Paid');
-            const paymentText = paymentType === 'Down Payment'
-              ? `Down Payment (PHP ${Number(lot.payment_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-              : paymentType;
+            const workflowStage = lot.workflow_stage || lot.status || 'Available';
             const row = tbody.insertRow();
             row.setAttribute('data-id', lot.id);
+            const formattedPrice = lot.lot_price ? '₱' + parseFloat(lot.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A';
+            const formattedSize = lot.lot_size ? parseFloat(lot.lot_size).toLocaleString() + ' sqm' : 'N/A';
             row.innerHTML = `
               <td><input type="checkbox" class="lot-checkbox" value="${lot.id}"></td>
               <td>${lot.block_number}</td>
               <td>${lot.lot_number}</td>
-              <td>${lot.lot_size}</td>
-              <td>${lot.lot_price}</td>
-              <td>${lot.status}</td>
-              <td>${paymentText}</td>
+              <td>${formattedSize}</td>
+              <td>${formattedPrice}</td>
+              <td>${workflowStage}</td>
               <td style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <button onclick='openPinModal(${lot.id}, ${JSON.stringify(lot)})' class="lot-action-btn lot-action-btn-blueprint">Set Pin</button>
+                <button onclick='openPinModal(${lot.id}, ${JSON.stringify(lot)})' class="lot-action-btn lot-action-btn-blueprint">Update Status</button>
                 <button onclick='openEditLotModal(${JSON.stringify(lot)})' class="lot-action-btn lot-action-btn-edit">Edit</button>
                 <button onclick="deleteLot(${lot.id})" class="lot-action-btn lot-action-btn-delete">Delete</button>
               </td>
@@ -5325,14 +6845,40 @@
       });
   }
 
+  function normalizeLotPriceValue(value) {
+    const cleaned = String(value ?? '').replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    if (firstDot === -1) return cleaned;
+    return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+  }
+
+  function formatLotPriceDisplay(value) {
+    const normalized = normalizeLotPriceValue(value);
+    if (normalized === '') return '';
+    const amount = Number(normalized);
+    if (!Number.isFinite(amount)) return '';
+    return amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function bindLotPriceFormatter(input) {
+    if (!input || input.dataset.priceFormatterBound === '1') return;
+    input.dataset.priceFormatterBound = '1';
+
+    input.addEventListener('focus', function() {
+      const raw = normalizeLotPriceValue(input.value);
+      if (raw !== '') input.value = raw;
+    });
+
+    input.addEventListener('blur', function() {
+      input.value = formatLotPriceDisplay(input.value);
+    });
+
+    input.value = formatLotPriceDisplay(input.value);
+  }
+
   function saveLot() {
-    const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status', 'payment_type'];
+    const fields = ['block_number', 'lot_number', 'lot_size', 'lot_price', 'status'];
     const locationId = document.getElementById('location_id').value;
-    const paymentType = document.getElementById('payment_type').value;
-    const paymentAmountInput = document.getElementById('payment_amount');
-    const paymentDeadlineInput = document.getElementById('payment_deadline');
-    const paymentAmount = paymentAmountInput ? paymentAmountInput.value : '';
-    const paymentDeadline = paymentDeadlineInput ? paymentDeadlineInput.value : '';
     
     const data = {};
     let isValid = true;
@@ -5342,7 +6888,7 @@
       if (!value || (field.includes('number') && isNaN(value))) {
         isValid = false;
       }
-      data[field] = value;
+      data[field] = field === 'lot_price' ? normalizeLotPriceValue(value) : value;
     });
 
     if (!isValid || !locationId) {
@@ -5350,23 +6896,13 @@
       return;
     }
 
-    if (paymentType === 'Down Payment') {
-      if (!paymentAmount || isNaN(paymentAmount) || Number(paymentAmount) <= 0) {
-        alert('Please enter a valid down payment amount.');
-        return;
-      }
-    }
-
     const formData = new FormData();
     formData.append('action', 'save');
     Object.keys(data).forEach(key => formData.append(key, data[key]));
     formData.append('location_id', locationId);
-    if (paymentType === 'Down Payment') {
-      formData.append('payment_amount', paymentAmount);
-    } else {
-      formData.append('payment_amount', '');
-    }
-    formData.append('payment_deadline', data.status === 'Available' ? '' : paymentDeadline);
+    formData.append('payment_type', 'Not Applicable');
+    formData.append('payment_amount', '');
+    formData.append('payment_deadline', '');
 
     fetch(window.location.pathname, { method: 'POST', body: formData })
       .then(response => response.json())
@@ -5414,7 +6950,8 @@
     cells[0].innerHTML = `<input type="text" value="${cells[0].getAttribute('data-original')}">`;
     cells[1].innerHTML = `<input type="text" value="${cells[1].getAttribute('data-original')}">`;
     cells[2].innerHTML = `<input type="text" value="${cells[2].getAttribute('data-original')}">`;
-    cells[3].innerHTML = `<input type="text" value="${cells[3].getAttribute('data-original')}">`;
+    const inlinePrice = formatLotPriceDisplay(cells[3].getAttribute('data-original'));
+    cells[3].innerHTML = `<input type="text" value="${inlinePrice}">`;
     cells[4].innerHTML = `
       <select>
         <option value="Available" ${cells[4].getAttribute('data-original') === 'Available' ? 'selected' : ''}>Available</option>
@@ -5423,6 +6960,9 @@
       </select>
     `;
     cells[5].innerHTML = '<button onclick="saveEdit(this)">Save</button><button onclick="cancelEdit(this)">Cancel</button>';
+
+    const inlinePriceInput = cells[3].querySelector('input');
+    bindLotPriceFormatter(inlinePriceInput);
   }
 
   function saveEdit(button) {
@@ -5442,7 +6982,7 @@
     formData.append('block_number', inputs[0].value);
     formData.append('lot_number', inputs[1].value);
     formData.append('lot_size', inputs[2].value);
-    formData.append('lot_price', inputs[3].value);
+    formData.append('lot_price', normalizeLotPriceValue(inputs[3].value));
     formData.append('status', inputs[4].value);
     formData.append('location_id', locationId);
 
@@ -5464,7 +7004,8 @@
     if (newRow) {
       newRow.style.display = 'table-row';
       const status = document.getElementById('status');
-      togglePaymentFieldsByStatus(status ? status.value : 'Available');
+      if (status) status.value = 'Available';
+      bindLotPriceFormatter(document.getElementById('lot_price'));
     }
   }
 
@@ -5475,11 +7016,6 @@
     newRow.querySelectorAll('input').forEach(input => input.value = '');
     const status = document.getElementById('status');
     if (status) status.value = 'Available';
-    const paymentType = document.getElementById('payment_type');
-    if (paymentType) paymentType.value = 'Not Applicable';
-    const paymentDeadline = document.getElementById('payment_deadline');
-    if (paymentDeadline) paymentDeadline.value = '';
-    togglePaymentFieldsByStatus('Available');
   }
 
   function togglePaymentFieldsByStatus(status) {
@@ -5498,9 +7034,20 @@
       return;
     }
 
-    paymentTypeSelect.disabled = false;
-    if (paymentTypeSelect.value === 'Not Applicable') {
+    if (status === 'Paid') {
       paymentTypeSelect.value = 'Fully Paid';
+      paymentTypeSelect.disabled = true;
+      if (paymentDeadlineInput) {
+        paymentDeadlineInput.style.display = 'none';
+        paymentDeadlineInput.value = '';
+      }
+      toggleDownPaymentField('Fully Paid');
+      return;
+    }
+
+    paymentTypeSelect.disabled = false;
+    if (!paymentTypeSelect.value) {
+      paymentTypeSelect.value = 'Not Applicable';
     }
     toggleDownPaymentField(paymentTypeSelect.value);
   }
@@ -5890,8 +7437,10 @@
   function loadPayments() {
     const tbody = document.getElementById('payments-tbody');
     if (!tbody) return;
+    const paymentSearchInput = document.getElementById('paymentSearchInput');
+    const paymentSearchValue = (paymentSearchInput?.value || '').trim().toLowerCase();
 
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #6c757d;">Loading payments...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:#6c757d;">Loading payments...</td></tr>';
 
     fetch(window.location.pathname + '?fetch=all_payments', { method: 'GET' })
       .then(response => response.json())
@@ -5901,34 +7450,100 @@
           return;
         }
 
-        tbody.innerHTML = data.payments.map(payment => `
-          <tr style="border-bottom: 1px solid #f0f0f0; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
-            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.block_number || 'N/A'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.lot_number || 'N/A'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.location_name || 'N/A'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #333;">${payment.owner_name || '<span style="color: #6c757d; font-style: italic;">Unassigned</span>'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #333;">
-              <span style="background: ${getPaymentTypeColor(payment.payment_type)}; padding: 5px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; color: white; display: inline-block;">
-                ${payment.payment_type || 'N/A'}
-              </span>
-            </td>
-            <td style="padding: 15px; font-size: 14px; color: #333; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.payment_amount ? parseFloat(payment.payment_amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #333; white-space: nowrap;">${payment.payment_type === 'Down Payment' && payment.payment_deadline ? new Date(payment.payment_deadline + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '<span style="color: #6c757d;">-</span>'}</td>
-            <td style="padding: 15px; font-size: 14px; color: #495057; text-align: right; white-space: nowrap; font-weight: 600;">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span style="color: #6c757d;">N/A</span>'}</td>
-            <td style="padding: 15px; font-size: 14px; text-align: center; min-width: 220px; white-space: nowrap;">
-              <select 
-                id="payment-status-${payment.lot_id}" 
-                class="payment-status-select" 
-                style="padding: 6px 34px 6px 12px; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; background: white; font-size: 13px; font-weight: 500; width: 200px; min-width: 200px; max-width: 200px; box-sizing: border-box;" 
-                onchange="updatePaymentStatus(${payment.lot_id}, this.value)">
-                <option value="Available" ${payment.status === 'Available' ? 'selected' : ''}>Available</option>
-                <option value="Reserved" ${payment.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
-                <option value="Sold" ${payment.status === 'Sold' ? 'selected' : ''}>Sold</option>
-                <option value="Paid" ${payment.status === 'Paid' ? 'selected' : ''}>Paid</option>
-              </select>
+        const filteredPayments = (data.payments || []).filter(payment => {
+          if (!paymentSearchValue) return true;
+          const haystack = [
+            payment.owner_name,
+            payment.email,
+            payment.mobile_number,
+            payment.location_name,
+            payment.block_number,
+            payment.lot_number
+          ].map(v => String(v || '').toLowerCase()).join(' ');
+          return haystack.includes(paymentSearchValue);
+        });
+
+        if (!filteredPayments.length) {
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #6c757d;">No matching payment records found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = filteredPayments.map(payment => {
+          const autoStage = getAutoWorkflowStage(payment);
+          const canTurnover = autoStage === 'Paid';
+          const canEditInstallment = autoStage !== 'Paid';
+          const paymentTypeLabel = payment.payment_type || 'Not Applicable';
+          const paymentTypeClass = getPaymentTypeClass(paymentTypeLabel);
+          const workflowClass = getWorkflowBadgeClass(autoStage);
+          const hasBalance = parseFloat(payment.balance_due || 0) > 0;
+          const installmentAmount = Number(payment.payment_amount || 0);
+          const downPaymentAmount = Number(payment.down_payment_amount || 0);
+          const installmentYears = Number(payment.payment_term_years || 0);
+          const dueDayValue = Number(payment.payment_due_day || 0);
+          const hasDeadline = !!payment.payment_deadline;
+          const hasLastPayment = !!payment.last_payment_date;
+          const computedNextDue = dueDayValue > 0
+            ? calcNextDueDate(dueDayValue, hasDeadline ? payment.payment_deadline : '', hasLastPayment ? payment.last_payment_date : '')
+            : (hasDeadline ? escapeText(payment.payment_deadline) : null);
+          const dueText = computedNextDue || 'No deadline';
+          const installmentText = installmentAmount > 0
+            ? 'PHP ' + installmentAmount.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+            : 'Not set';
+          const downPaymentText = downPaymentAmount > 0
+            ? 'PHP ' + downPaymentAmount.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+            : 'Not set';
+          const termText = installmentYears > 0 ? installmentYears + ' year' + (installmentYears > 1 ? 's' : '') : 'Not set';
+          const dueDayText = dueDayValue > 0 ? 'Day ' + dueDayValue : 'Not set';
+          const paidMonths = Number(payment.paid_months_count || 0);
+          const totalMonths = installmentYears > 0 ? installmentYears * 12 : 0;
+          const monthsText = totalMonths > 0
+            ? `${paidMonths} / ${totalMonths} months paid`
+            : (paidMonths > 0 ? `${paidMonths} payment(s) recorded` : '');
+          const monthsPct = totalMonths > 0 ? Math.min(100, Math.round((paidMonths / totalMonths) * 100)) : 0;
+          return `
+          <tr>
+            <td>${payment.block_number || 'N/A'}</td>
+            <td>${payment.lot_number || 'N/A'}</td>
+            <td class="col-location">${payment.location_name || 'N/A'}</td>
+            <td class="col-owner">${payment.owner_name || '<span class="payment-owner-empty">Unassigned</span>'}</td>
+            <td><span class="payment-chip ${paymentTypeClass}">${paymentTypeLabel}</span></td>
+            <td class="amount-paid">₱${parseFloat(payment.total_paid || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            <td class="amount-balance ${hasBalance ? 'amount-balance-due' : 'amount-balance-clear'}">₱${parseFloat(payment.balance_due || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            <td class="amount-price">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00'}</td>
+            <td class="col-actions">
+              <div class="workflow-block">
+                <div class="workflow-head">
+                  <span class="workflow-title">Status | Next Due: ${dueText}</span>
+                  <span class="workflow-chip ${workflowClass}">${autoStage}</span>
+                </div>
+                <div class="workflow-meta">
+                  Installment: <strong>${installmentText}</strong>
+                </div>
+                <div class="workflow-meta">
+                  Down Payment: <strong>${downPaymentText}</strong>
+                </div>
+                <div class="workflow-meta">
+                  Term: <strong>${termText}</strong> | Monthly Due: <strong>${dueDayText}</strong>
+                </div>
+                ${monthsText ? `
+                <div class="workflow-meta workflow-progress">
+                  <div class="workflow-progress-head">
+                    <span>${monthsText}</span>
+                    ${totalMonths > 0 ? `<span class="workflow-progress-percent">${monthsPct}%</span>` : ''}
+                  </div>
+                  ${totalMonths > 0 ? `<div class="workflow-progress-track"><div class="workflow-progress-fill" style="width:${monthsPct}%;"></div></div>` : ''}
+                </div>` : ''}
+                <div class="payment-actions">
+                  <button type="button" class="btn-small ${canEditInstallment ? '' : 'payment-action-disabled'}" onclick="openInstallmentPlanModal(${payment.lot_id}, ${Number(payment.lot_price || 0)}, ${installmentAmount || 0}, ${downPaymentAmount || 0}, ${installmentYears || 0}, ${dueDayValue || 0}, '${hasDeadline ? escapeText(payment.payment_deadline) : ''}', ${canEditInstallment ? 'true' : 'false'})">Set Installment</button>
+                  <button type="button" class="btn-small" onclick="recordPaymentForLot(${payment.lot_id}, ${dueDayValue}, '${payment.payment_deadline ? escapeText(payment.payment_deadline) : ''}', '${payment.last_payment_date ? escapeText(payment.last_payment_date) : ''}')">Record Payment</button>
+                  <button type="button" class="btn-small action-turnover ${canTurnover ? '' : 'payment-action-disabled'}" onclick="markTurnoverForLot(${payment.lot_id}, ${canTurnover ? 'true' : 'false'})">Turnover Title</button>
+                  <button type="button" class="btn-small action-history" onclick="showPaymentHistory(${payment.lot_id})">View History</button>
+                </div>
+              </div>
             </td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
       })
       .catch(error => {
         tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
@@ -5936,36 +7551,445 @@
       });
   }
 
-  function getPaymentTypeColor(type) {
-    switch(type) {
-      case 'Down Payment': return '#007bff';
-      case 'Cash': return '#28a745';
-      case 'Fully Paid': return '#20c997';
-      default: return '#6c757d';
+  function getPaymentTypeClass(type) {
+    switch(String(type || '').trim()) {
+      case 'Down Payment': return 'payment-chip-dp';
+      case 'Cash': return 'payment-chip-cash';
+      case 'Fully Paid': return 'payment-chip-paid';
+      default: return 'payment-chip-na';
     }
   }
 
-  function getStatusColor(status) {
-    switch(status) {
-      case 'Available': return '#6c757d';
-      case 'Sold': return '#dc3545';
-      case 'Reserved': return '#ffc107';
-      case 'Paid': return '#28a745';
-      default: return '#6c757d';
+  function getAutoWorkflowStage(payment) {
+    const status = String(payment?.status || '').trim();
+    const paymentType = String(payment?.payment_type || '').trim();
+    const totalPaid = Number(payment?.total_paid || 0);
+    const lotPrice = Number(payment?.lot_price || 0);
+
+    if (status === 'Available') return 'Available';
+    if ((lotPrice > 0 && totalPaid >= lotPrice) || status === 'Paid' || paymentType === 'Fully Paid') return 'Paid';
+    if (paymentType === 'Down Payment' || totalPaid > 0) return 'Installments';
+    if (status === 'Reserved') return 'Reserved';
+    return 'Available';
+  }
+
+  function getWorkflowBadgeClass(stage) {
+    switch (stage) {
+      case 'Reserved': return 'workflow-reservation';
+      case 'Installments': return 'workflow-installments';
+      case 'Paid': return 'workflow-paid';
+      case 'Available':
+      default:
+        return 'workflow-available';
     }
   }
 
-  // Update Payment Status - robust parser for mixed responses
-  function updatePaymentStatus(lotId, newStatus) {
-    const selectElement = document.getElementById(`payment-status-${lotId}`);
-    const previousValue = selectElement ? selectElement.value : newStatus;
+  function escapeText(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-    const formData = new FormData();
-    formData.append('action', 'update_lot_status');
-    formData.append('lot_id', lotId);
-    formData.append('status', newStatus);
+  function showModalById(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'flex';
+  }
 
-    fetch(window.location.pathname, { method: 'POST', body: formData })
+  function hideModalById(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+
+  function calcNextDueDate(dueDay, paymentDeadline, lastPaymentDate) {
+    if (!dueDay || dueDay < 1 || dueDay > 31) {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    if (lastPaymentDate) {
+      var lastDate = new Date(lastPaymentDate + 'T00:00:00');
+      if (!Number.isNaN(lastDate.getTime())) {
+        lastDate.setDate(lastDate.getDate() + 1);
+        var ly = lastDate.getFullYear();
+        var lm = lastDate.getMonth();
+        var ldim = new Date(ly, lm + 1, 0).getDate();
+        var next = new Date(ly, lm, Math.min(dueDay, ldim));
+        if (next < lastDate) {
+          lm++;
+          if (lm > 11) { lm = 0; ly++; }
+          ldim = new Date(ly, lm + 1, 0).getDate();
+          next = new Date(ly, lm, Math.min(dueDay, ldim));
+        }
+        return next.getFullYear() + '-' + String(next.getMonth() + 1).padStart(2, '0') + '-' + String(next.getDate()).padStart(2, '0');
+      }
+    }
+
+    if (paymentDeadline) {
+      var parts = String(paymentDeadline).split('-').map(Number);
+      if (parts.length === 3 && !parts.some(Number.isNaN)) {
+        return parts[0] + '-' + String(parts[1]).padStart(2, '0') + '-' + String(Math.min(parts[2], 31)).padStart(2, '0');
+      }
+    }
+
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var y = today.getFullYear();
+    var m = today.getMonth();
+    var dim = new Date(y, m + 1, 0).getDate();
+    var candidate = new Date(y, m, Math.min(dueDay, dim));
+    if (candidate < today) {
+      m++;
+      if (m > 11) { m = 0; y++; }
+      dim = new Date(y, m + 1, 0).getDate();
+      candidate = new Date(y, m, Math.min(dueDay, dim));
+    }
+    return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(candidate.getDate()).padStart(2, '0');
+  }
+
+  function recordPaymentForLot(lotId, dueDay, paymentDeadline, lastPaymentDate) {
+    const lotInput = document.getElementById('record-payment-lot-id');
+    const amountInput = document.getElementById('record-payment-amount');
+    const dateInput = document.getElementById('record-payment-date');
+    const methodInput = document.getElementById('record-payment-method');
+    const remarksInput = document.getElementById('record-payment-remarks');
+
+    if (!lotInput || !amountInput || !dateInput || !methodInput || !remarksInput) {
+      alert('Payment form is not available.');
+      return;
+    }
+
+    lotInput.value = String(lotId);
+    amountInput.value = '';
+    dateInput.value = calcNextDueDate(Number(dueDay) || 0, paymentDeadline || '', lastPaymentDate || '');
+    methodInput.value = 'Cash';
+    remarksInput.value = '';
+    showModalById('recordPaymentModal');
+  }
+
+  function closeRecordPaymentModal() {
+    hideModalById('recordPaymentModal');
+  }
+
+  function openInstallmentPlanModal(lotId, lotPrice, amount, downPaymentAmount, termYears, dueDay, deadline, canEdit) {
+    if (!canEdit) {
+      alert('Installment plan cannot be changed for fully paid lots.');
+      return;
+    }
+
+    const lotInput = document.getElementById('installment-lot-id');
+    const lotPriceInput = document.getElementById('installment-lot-price');
+    const lotPriceDisplay = document.getElementById('installment-lot-price-display');
+    const amountInput = document.getElementById('installment-amount');
+    const downPaymentInput = document.getElementById('down-payment-amount');
+    const termYearsInput = document.getElementById('installment-term-years');
+    const dueDayInput = document.getElementById('installment-due-day');
+    const remainingBalanceInput = document.getElementById('installment-remaining-balance');
+    const deadlineInput = document.getElementById('installment-deadline');
+
+    if (!lotInput || !lotPriceInput || !lotPriceDisplay || !amountInput || !downPaymentInput || !termYearsInput || !dueDayInput || !remainingBalanceInput || !deadlineInput) {
+      alert('Installment form is not available.');
+      return;
+    }
+
+    lotInput.value = String(lotId || 0);
+    lotPriceInput.value = String(Number(lotPrice || 0));
+    lotPriceDisplay.value = formatPhpAmount(Number(lotPrice || 0));
+    amountInput.value = Number(amount || 0) > 0 ? formatPhpAmount(Number(amount || 0)) : '';
+    downPaymentInput.value = Number(downPaymentAmount || 0) > 0 ? Number(downPaymentAmount).toFixed(2) : '';
+    termYearsInput.value = Number(termYears || 0) > 0 ? String(termYears) : '';
+    dueDayInput.value = Number(dueDay || 0) > 0 ? String(dueDay) : '';
+    remainingBalanceInput.value = '';
+    deadlineInput.value = (deadline || '').trim();
+    recalculateInstallmentPlan();
+    showModalById('installmentPlanModal');
+  }
+
+  function closeInstallmentPlanModal() {
+    hideModalById('installmentPlanModal');
+  }
+
+  function formatPhpAmount(value) {
+    const amount = Number(value || 0);
+    return 'PHP ' + amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function recalculateInstallmentPlan() {
+    const lotPrice = Number(document.getElementById('installment-lot-price')?.value || 0);
+    const downPaymentInput = document.getElementById('down-payment-amount');
+    const termYearsInput = document.getElementById('installment-term-years');
+    const remainingBalanceInput = document.getElementById('installment-remaining-balance');
+    const amountInput = document.getElementById('installment-amount');
+
+    if (!downPaymentInput || !termYearsInput || !remainingBalanceInput || !amountInput) {
+      return;
+    }
+
+    const downPayment = Number(downPaymentInput.value || 0);
+    const termYears = Number(termYearsInput.value || 0);
+    const safeDownPayment = Math.max(0, downPayment);
+    const remainingBalance = Math.max(0, lotPrice - safeDownPayment);
+
+    remainingBalanceInput.value = formatPhpAmount(remainingBalance);
+
+    if (termYears > 0 && remainingBalance > 0) {
+      const monthlyAmount = remainingBalance / (termYears * 12);
+      amountInput.value = formatPhpAmount(monthlyAmount);
+    } else {
+      amountInput.value = '';
+    }
+  }
+
+  function submitInstallmentPlan() {
+    const lotId = Number(document.getElementById('installment-lot-id')?.value || 0);
+    const lotPrice = Number(document.getElementById('installment-lot-price')?.value || 0);
+    const downPaymentAmount = Number(document.getElementById('down-payment-amount')?.value || 0);
+    const termYears = Number(document.getElementById('installment-term-years')?.value || 0);
+    const dueDay = Number(document.getElementById('installment-due-day')?.value || 0);
+    const deadline = (document.getElementById('installment-deadline')?.value || '').trim();
+
+    if (!lotId) {
+      alert('Missing lot reference.');
+      return;
+    }
+
+    if (!Number.isFinite(termYears) || termYears <= 0) {
+      alert('Please enter how many years the client will pay.');
+      return;
+    }
+
+    if (!Number.isFinite(downPaymentAmount) || downPaymentAmount < 0) {
+      alert('Please enter a valid down payment amount.');
+      return;
+    }
+
+    if (downPaymentAmount >= lotPrice) {
+      alert('Down payment must be less than the lot price.');
+      return;
+    }
+
+    if (!Number.isFinite(dueDay) || dueDay < 1 || dueDay > 31) {
+      alert('Please enter what day of the month the client should pay (1-31).');
+      return;
+    }
+
+    if (!deadline) {
+      const proceed = confirm('No exact deadline entered. The system will auto-generate the next due date from the monthly due day. Continue?');
+      if (!proceed) return;
+    }
+
+    const fd = new FormData();
+    fd.append('action', 'update_installment_plan');
+    fd.append('lot_id', String(lotId));
+    if (Number.isFinite(downPaymentAmount) && downPaymentAmount > 0) {
+      fd.append('down_payment_amount', String(downPaymentAmount));
+    }
+    fd.append('payment_term_years', String(termYears));
+    fd.append('payment_due_day', String(dueDay));
+    fd.append('payment_deadline', deadline);
+
+    fetch(window.location.pathname, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (!res.success) {
+          alert('Failed to update installment: ' + (res.error || 'Unknown error'));
+          return;
+        }
+        closeInstallmentPlanModal();
+        showMessage('Installment plan updated successfully.', true);
+        loadPayments();
+        loadLotOwners();
+      })
+      .catch(err => {
+        console.error(err);
+        alert('Failed to update installment plan.');
+      });
+  }
+
+  function submitRecordPayment() {
+    const lotId = Number(document.getElementById('record-payment-lot-id')?.value || 0);
+    const amount = Number(document.getElementById('record-payment-amount')?.value || 0);
+    const paymentDate = (document.getElementById('record-payment-date')?.value || '').trim();
+    const method = (document.getElementById('record-payment-method')?.value || 'Cash').trim();
+    const remarks = (document.getElementById('record-payment-remarks')?.value || '').trim();
+
+    if (!lotId || !Number.isFinite(amount) || amount <= 0) {
+      alert('Please enter a valid payment amount.');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('action', 'add_payment_transaction');
+    fd.append('lot_id', String(lotId));
+    fd.append('amount', String(amount));
+    fd.append('payment_date', paymentDate);
+    fd.append('payment_method', method || 'Cash');
+    fd.append('remarks', remarks);
+
+    fetch(window.location.pathname, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (!res.success) {
+          alert('Failed to record payment: ' + (res.error || 'Unknown error'));
+          return;
+        }
+        closeRecordPaymentModal();
+        showMessage('Payment recorded successfully.', true);
+        loadPayments();
+        loadLotOwners();
+        const locSel = document.getElementById('location_id');
+        loadLots(locSel ? locSel.value : '');
+      })
+      .catch(err => {
+        console.error(err);
+        alert('Failed to record payment.');
+      });
+  }
+
+  function closePaymentHistoryModal() {
+    hideModalById('paymentHistoryModal');
+  }
+
+  function showPaymentHistory(lotId) {
+    const content = document.getElementById('payment-history-content');
+    if (!content) {
+      alert('Payment history view is not available.');
+      return;
+    }
+
+    content.innerHTML = '<div style="padding:16px; color:#6c757d; text-align:center;">Loading payment history...</div>';
+    showModalById('paymentHistoryModal');
+
+    fetch(`${window.location.pathname}?fetch=payment_transactions&lot_id=${lotId}&_=${Date.now()}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) {
+          content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history.</div>';
+          return;
+        }
+
+        const getDateKey = (value) => {
+          const raw = String(value || '').trim();
+          if (!raw) return 0;
+          // Fast path for ISO-like yyyy-mm-dd
+          const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+          if (iso) {
+            const y = Number(iso[1]);
+            const m = Number(iso[2]);
+            const d = Number(iso[3]);
+            return (y * 10000) + (m * 100) + d;
+          }
+          // Fallback parser for values like "Feb 25, 2027"
+          const parsed = new Date(raw);
+          if (!Number.isNaN(parsed.getTime())) {
+            return (parsed.getFullYear() * 10000) + ((parsed.getMonth() + 1) * 100) + parsed.getDate();
+          }
+          return 0;
+        };
+
+        const rows = (data.transactions || []).slice().sort((a, b) => {
+          const ta = getDateKey(a.payment_date);
+          const tb = getDateKey(b.payment_date);
+          if (ta !== tb) return ta - tb;
+          return Number(a.id || 0) - Number(b.id || 0);
+        });
+        if (!rows.length) {
+          content.innerHTML = '<div style="padding:16px; color:#6c757d; text-align:center;">No payment records for this lot yet.</div>';
+          return;
+        }
+
+        content.innerHTML = `
+          <table style="width:100%; border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f8f9fa;">
+                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Date</th>
+                <th style="padding:10px 12px; text-align:right; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Amount</th>
+                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Method</th>
+                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Paid By</th>
+                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(tx => {
+                const amountText = Number(tx.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return `
+                  <tr>
+                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_date || 'N/A')}</td>
+                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#111827; text-align:right; font-weight:600;">PHP ${amountText}</td>
+                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_method || 'N/A')}</td>
+                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.paid_by || 'N/A')}</td>
+                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#495057;">${escapeText(tx.remarks || '')}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      })
+      .catch(err => {
+        console.error(err);
+        content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history.</div>';
+      });
+  }
+
+  function markTurnoverForLot(lotId, isPaid) {
+    if (!isPaid) {
+      alert('Turnover can only be set for fully paid lots.');
+      return;
+    }
+
+    const lotInput = document.getElementById('turnover-lot-id');
+    const dateInput = document.getElementById('turnover-date');
+    const releasedInput = document.getElementById('turnover-title-released');
+    const remarksInput = document.getElementById('turnover-remarks');
+
+    if (!lotInput || !dateInput || !releasedInput || !remarksInput) {
+      alert('Turnover form is not available.');
+      return;
+    }
+
+    lotInput.value = String(lotId);
+    dateInput.value = new Date().toISOString().slice(0, 10);
+    releasedInput.checked = false;
+    remarksInput.value = 'Client will claim ownership title at Main Office.';
+
+    fetch(`${window.location.pathname}?fetch=turnover_info&lot_id=${lotId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && data.turnover) {
+          dateInput.value = data.turnover.turnover_date || dateInput.value;
+          releasedInput.checked = Number(data.turnover.title_released || 0) === 1;
+          remarksInput.value = data.turnover.remarks || remarksInput.value;
+        }
+      })
+      .catch(err => console.error('Failed to preload turnover info:', err))
+      .finally(() => showModalById('turnoverModal'));
+  }
+
+  function closeTurnoverModal() {
+    hideModalById('turnoverModal');
+  }
+
+  function submitTurnoverUpdate() {
+    const lotId = Number(document.getElementById('turnover-lot-id')?.value || 0);
+    const turnoverDate = (document.getElementById('turnover-date')?.value || '').trim();
+    const titleReleased = document.getElementById('turnover-title-released')?.checked ? '1' : '0';
+    const remarks = (document.getElementById('turnover-remarks')?.value || '').trim();
+
+    if (!lotId) {
+      alert('Missing lot reference for turnover update.');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('action', 'mark_turnover_complete');
+    fd.append('lot_id', String(lotId));
+    fd.append('turnover_date', turnoverDate || '');
+    fd.append('title_released', titleReleased);
+    fd.append('remarks', remarks);
+
+    fetch(window.location.pathname, { method: 'POST', body: fd })
       .then(r => r.text())
       .then(text => {
         let res;
@@ -5977,26 +8001,24 @@
           if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
             res = JSON.parse(text.slice(firstBrace, lastBrace + 1));
           } else {
-            throw new Error('Non-JSON response: ' + text.slice(0, 180));
+            throw new Error('Non-JSON response: ' + text.slice(0, 200));
           }
         }
 
-        if (res.success) {
-          showMessage('Payment status updated successfully', true);
+        if (!res.success) {
+          alert('Failed to update turnover: ' + (res.error || 'Unknown error'));
           return;
         }
-
-        if (selectElement) {
-          selectElement.value = previousValue;
-        }
-        alert('Failed to update payment status: ' + (res.error || 'Unknown error'));
+        closeTurnoverModal();
+        let statusText = res.message || 'Turnover details updated.';
+        statusText += res.system_notified ? ' Client was notified in the system.' : ' Client system notification was not sent.';
+        statusText += res.sms_sent ? ' SMS sent.' : (' SMS not sent' + (res.sms_error ? ': ' + res.sms_error : '.') );
+        showMessage(statusText, true);
+        loadPayments();
       })
-      .catch(error => {
-        if (selectElement) {
-          selectElement.value = previousValue;
-        }
-        console.error('Status update response error:', error);
-        alert('Failed to update payment status. ' + (error.message || 'Please check console.'));
+      .catch(err => {
+        console.error(err);
+        alert('Failed to update turnover. ' + (err.message || 'Please check server logs.'));
       });
   }
 
@@ -6056,7 +8078,7 @@
               <select id="status-${owner.lot_id}" class="lot-status-select" style="padding: 6px 30px 6px 10px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; width: 170px; min-width: 170px; max-width: 170px; box-sizing: border-box;" onchange="updateLotPaymentStatus(${owner.lot_id}, this.value)">
                 <option value="Available" ${owner.status === 'Available' ? 'selected' : ''}>Available</option>
                 <option value="Reserved" ${owner.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
-                <option value="Sold" ${owner.status === 'Sold' ? 'selected' : ''}>Sold</option>
+                <option value="Installments">Installments</option>
                 <option value="Paid" ${owner.status === 'Paid' ? 'selected' : ''}>Paid</option>
               </select>
             </td>
@@ -7044,7 +9066,7 @@
           html += `
             <div class="form-group">
               <label>Mobile Number</label>
-              <input type="text" name="mobile_number" value="${account.mobile_number || ''}">
+              <input type="text" name="phone_number" value="${account.mobile_number || ''}">
             </div>
           `;
         }
@@ -7099,38 +9121,24 @@
       </div>
       <div class="form-group">
         <label>Lot Price</label>
-        <input type="text" name="lot_price" value="${lot.lot_price || ''}" required>
+        <input type="text" name="lot_price" value="${formatLotPriceDisplay(lot.lot_price || '')}" required>
       </div>
       <div class="form-group">
-        <label>Status</label>
-        <select name="status" id="edit_status" onchange="toggleEditPaymentFieldsByStatus(this.value)" required>
-          <option value="Available" ${lot.status === 'Available' ? 'selected' : ''}>Available</option>
-          <option value="Sold" ${lot.status === 'Sold' ? 'selected' : ''}>Sold</option>
-          <option value="Reserved" ${lot.status === 'Reserved' ? 'selected' : ''}>Reserved</option>
-        </select>
+        <label>Workflow Status</label>
+        <div style="padding:8px 10px; border:1px solid #ddd; border-radius:6px; background:#f8f9fa; color:#2d4e1e; font-weight:600;">
+          ${lot.workflow_stage || lot.status || 'Available'}
+        </div>
+        <input type="hidden" name="status" value="${lot.status || 'Available'}">
       </div>
-      <div class="form-group">
-        <label>Payment</label>
-        <select name="payment_type" id="edit_payment_type" onchange="toggleEditDownPaymentField(this.value)" required>
-          <option value="Not Applicable" ${(lot.payment_type || 'Not Applicable') === 'Not Applicable' ? 'selected' : ''}>Not Applicable</option>
-          <option value="Fully Paid" ${(lot.payment_type || 'Fully Paid') === 'Fully Paid' ? 'selected' : ''}>Fully Paid</option>
-          <option value="Down Payment" ${(lot.payment_type || 'Fully Paid') === 'Down Payment' ? 'selected' : ''}>Down Payment</option>
-        </select>
-      </div>
-      <div class="form-group" id="edit_payment_amount_group">
-        <label>Down Payment Amount</label>
-        <input type="number" step="0.01" min="0" name="payment_amount" id="edit_payment_amount" value="${lot.payment_amount || ''}" placeholder="Enter down payment amount">
-      </div>
-      <div class="form-group" id="edit_payment_deadline_group">
-        <label>Payment Deadline</label>
-        <input type="date" name="payment_deadline" id="edit_payment_deadline" value="${lot.payment_deadline || ''}">
-      </div>
+      <input type="hidden" name="payment_type" value="${lot.payment_type || 'Not Applicable'}">
+      <input type="hidden" name="payment_amount" value="${lot.payment_amount || ''}">
+      <input type="hidden" name="payment_deadline" value="${lot.payment_deadline || ''}">
       <div class="form-group">
         <label>Location ID</label>
         <input type="text" name="location_id" value="${lot.location_id || ''}" required>
       </div>
     `;
-    toggleEditPaymentFieldsByStatus(lot.status || 'Available');
+    bindLotPriceFormatter(fieldsDiv.querySelector('input[name="lot_price"]'));
     modal.style.display = 'flex';
   }
 
@@ -7550,10 +9558,15 @@ function closePinModal() {
 
   function saveNewLocation(event) {
     event.preventDefault();
-    
-    const locationName = document.getElementById('new_location_name').value;
+
+    const locationName = document.getElementById('new_location_name').value.trim();
     const latitude = document.getElementById('new_latitude').value;
     const longitude = document.getElementById('new_longitude').value;
+
+    if (!locationName) {
+      alert('Location name is required. Click the map to auto-fill it, or type a name.');
+      return;
+    }
 
     if (!latitude || !longitude) {
       alert('Please click on the map to select a location.');
@@ -7575,19 +9588,35 @@ function closePinModal() {
       method: 'POST',
       body: formData
     })
-    .then(response => response.json())
-    .then(data => {
+    .then(response => response.text())
+    .then(text => {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          data = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+        } else {
+          throw new Error('Invalid response from server.');
+        }
+      }
+
       if (data.success) {
-        alert('Location added successfully!');
+        alert(data.message || 'Location added successfully!');
         closeAddLocationModal();
-        loadLocations(); // Reload the locations dropdown
+        loadLocations(data.location_id || '');
+        if (data.location_id) {
+          loadLots(data.location_id);
+        }
       } else {
         alert('Failed to save location: ' + (data.error || data.message || 'Unknown error'));
       }
     })
     .catch(error => {
       console.error('Error:', error);
-      alert('An error occurred while saving the location.');
+      alert('An error occurred while saving the location. ' + (error.message || ''));
     });
   }
 

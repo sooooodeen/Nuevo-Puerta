@@ -261,11 +261,16 @@ $stmt->close();
 :root { --green:#2d4e1e; --ink:#222; --muted:#6b7280; --bg:#e3e2e2; --navH: 88px; }
 *{ box-sizing:border-box; }
 html,body{ margin:0; padding:0; }
-body{
-  font-family:'Inter','Roboto',Arial,Helvetica,sans-serif;
-  font-size:16px; line-height:1.6;
-  background:var(--bg); color:var(--ink);
-  text-align:center;
+body {
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  background-color: #e3efe2;
+  color: #333;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  text-align: center;
   overflow-y: scroll;
 }
 
@@ -302,8 +307,12 @@ nav a:hover{ transform:translateY(-3px); color:#f4d03f; }
 /* Layout */
 main{ padding: calc(var(--navH) + 24px) 16px 48px; }
 .container{
-  max-width:1200px; margin:0 auto; background:#fff; border-radius:12px;
-  box-shadow:0 10px 6px rgba(0,0,0,.06); padding:28px;
+  max-width: 1200px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 25px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  padding: 40px 40px 48px 40px;
 }
 .head{ display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-left:16px; margin-bottom:8px; }
 .head h1{ margin:0; font-size:40px; }
@@ -348,24 +357,24 @@ select, .chk {
 
 /* Agent card original styling (we'll override widths later) */
 .agent-card {
-  background: #f9fbf7;
-  border-radius: 16px;
-  padding: 14px 10px;
-  margin-bottom: 18px;
-  border: 2px solid #eaf7e1;
-  box-shadow: 0 8px 32px rgba(44,62,80,0.18), 0 1.5px 8px rgba(44,62,80,0.10);
-  transition: box-shadow 0.25s, border-color 0.25s, transform 0.18s;
-  box-sizing: border-box;
+  background: #fdfdfd;
+  border-radius: 18px;
+  padding: 25px 20px;
+  margin-bottom: 24px;
+  border: 1px solid #eef2ed;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+  transition: background 0.3s, transform 0.3s, box-shadow 0.3s;
+  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
 }
 .agent-card:hover {
-  border-color: #205c20;
-  box-shadow: 0 16px 48px rgba(44,62,80,0.22), 0 3px 16px rgba(44,62,80,0.14);
-  transform: translateY(-6px) scale(1.02);
-  z-index: 2;
+  background: #eff5ed;
+  transform: translateY(-5px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  border-color: #b8c9a7;
 }
 .agent-card .agent-avatar {
   margin-top: 24px;
@@ -375,7 +384,7 @@ select, .chk {
   border-radius: 50%;
   overflow: hidden;
   background: #f6f6f6;
-  border: 3px solid #205c20;
+  border: 3px solid #2d4e1e;
   box-shadow: 0 2px 8px rgba(44,62,80,0.12);
 }
 .agent-card .agent-avatar img {
@@ -384,60 +393,65 @@ select, .chk {
   object-fit: cover;
 }
 .agent-card .agent-name {
-  font-size: 1rem;
-  font-weight: 800;
-  color: #205c20;
-  margin-bottom: 4px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #2d4e1e;
+  margin-bottom: 8px;
   letter-spacing: 0.5px;
 }
 .agent-card .agent-meta {
-  font-size: 0.85rem;
-  color: #444;
-  margin-bottom: 2px;
+  font-size: 0.9rem;
+  color: #555;
+  margin-bottom: 0;
   text-align: center;
 }
 .agent-card .agent-location {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   color: #666;
   margin-bottom: 6px;
   text-align: center;
 }
 .agent-card .agent-status {
-  font-size: 0.90rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  color: #207c20;
-  background: #dbead1ff;
+  color: #2d4e1e;
+  background: #eaf6e7;
   border-radius: 14px;
-  padding: 2px 12px;
+  padding: 4px 16px;
   margin-bottom: 10px;
   display: inline-block;
   box-shadow: 0 1px 4px rgba(44,62,80,0.08);
 }
 .agent-card .agent-actions {
-  margin-top: 8px;
+  margin-top: 16px;
   width: 100%;
   display: flex;
-  gap: 8px;
+  gap: 18px;
   justify-content: center;
+  align-items: center;
 }
 .agent-card .btn {
-  background: #205c20;
+  background: #2d4e1e;
   color: #fff;
-  border-radius: 8px;
-  padding: 4px 14px;
-  font-size: 0.90rem;
+  border-radius: 20px;
+  padding: 12px 28px;
+  font-size: 1rem;
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: background .2s;
+  transition: background 0.2s;
   text-decoration: none;
   white-space: nowrap;
-  min-width: 0;
-  max-width: 140px;
+  min-width: 120px;
+  max-width: 180px;
   box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .agent-card .btn:hover {
-  background: #f4d03f;
+  background: #3a6c28;
+  color: #fff;
 }
 
 /* Modal */
@@ -471,11 +485,10 @@ select, .chk {
 
 /* Agent grid layout – 3 in a row on desktop */
 .agent-grid{
-  display:flex;
-  flex-wrap:wrap;
-  gap:24px;
-  justify-content:center;
-  margin-top:20px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 25px;
+  margin-top: 20px;
 }
 
 .agent-card{
@@ -488,15 +501,15 @@ select, .chk {
 
 /* 2 per row on medium screens */
 @media (max-width:1100px){
-  .agent-card{
-    flex:0 0 calc(50% - 24px);
+  .agent-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
 /* 1 per row on small screens */
 @media (max-width:720px){
-  .agent-card{
-    flex:0 0 100%;
+  .agent-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -707,6 +720,7 @@ select, .chk {
           <input type="email" id="client_email" name="client_email" class="form-control" required>
         </div>
       </div>
+      <div class="dropdown-row">
       <div style="display: flex; gap: 12px; margin-top: 12px;">
         <div style="flex:1;">
           <label for="client_phone">Phone</label>
@@ -720,16 +734,6 @@ select, .chk {
           </div>
           <button type="button" class="btn secondary" id="getLocationBtn" onclick="getClientLocation()" style="margin-top: 6px; font-size: 12px; padding: 8px 14px; min-width: auto; background: #2d7d2d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s;">📍 Get My Location</button>
           <div class="location-info" id="geoInfo" style="display:none;"></div>
-        </div>
-      </div>
-      <div style="display: flex; gap: 12px; margin-top: 12px;">
-        <div style="flex:1;">
-          <label for="block_number">Block Number</label>
-          <input type="text" id="block_number" name="block_number" class="form-control" required>
-        </div>
-        <div style="flex:1;">
-          <label for="lot_number">Lot Number</label>
-          <input type="text" id="lot_number" name="lot_number" class="form-control" required>
         </div>
       </div>
 
@@ -755,6 +759,49 @@ select, .chk {
 let locationMap = null;
 let currentMarker = null;
 
+// Dynamic lot/block selection
+document.addEventListener('DOMContentLoaded', function() {
+  const locationSelect = document.getElementById('location_select');
+  const blockSelect = document.getElementById('block_number');
+  const lotSelect = document.getElementById('lot_number');
+
+  locationSelect.addEventListener('change', function() {
+    const locationId = this.value;
+    blockSelect.innerHTML = '<option value="">-- Select Block --</option>';
+    lotSelect.innerHTML = '<option value="">-- Select Lot --</option>';
+    blockSelect.disabled = true;
+    lotSelect.disabled = true;
+    if (!locationId) return;
+    fetch('admin_properties.php?api=blocks&location_id=' + encodeURIComponent(locationId))
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data)) {
+          data.forEach(block => {
+            blockSelect.innerHTML += `<option value="${block.block_no}">${block.block_no}</option>`;
+          });
+          blockSelect.disabled = false;
+        }
+      });
+  });
+
+  blockSelect.addEventListener('change', function() {
+    const locationId = locationSelect.value;
+    const blockNo = this.value;
+    lotSelect.innerHTML = '<option value="">-- Select Lot --</option>';
+    lotSelect.disabled = true;
+    if (!locationId || !blockNo) return;
+    fetch('admin_properties.php?api=lots&location_id=' + encodeURIComponent(locationId) + '&block_no=' + encodeURIComponent(blockNo))
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data)) {
+          data.forEach(lot => {
+            lotSelect.innerHTML += `<option value="${lot.lot_no}">${lot.lot_no}</option>`;
+          });
+          lotSelect.disabled = false;
+        }
+      });
+  });
+});
 // Reverse geocode coordinates to address using Nominatim (free service)
 async function reverseGeocode(lat, lng) {
   try {
@@ -772,17 +819,24 @@ async function reverseGeocode(lat, lng) {
     if (data.address) {
       const addr = data.address;
       const parts = [];
-      
-      // Add road/street
-      if (addr.road) parts.push(addr.road);
+      // House number and street
       if (addr.house_number) parts.push(addr.house_number);
-      
-      // Add city/town
+      if (addr.road) parts.push(addr.road);
+      // Barangay/suburb/village
+      if (addr.suburb) parts.push(addr.suburb);
+      else if (addr.barangay) parts.push(addr.barangay);
+      else if (addr.village) parts.push(addr.village);
+      // City/town
       if (addr.city) parts.push(addr.city);
       else if (addr.town) parts.push(addr.town);
       else if (addr.county) parts.push(addr.county);
-      
-      const address = parts.join(', ');
+      // Region/state
+      if (addr.state) parts.push(addr.state);
+      // Country
+      if (addr.country) parts.push(addr.country);
+      // Postcode
+      if (addr.postcode) parts.push(addr.postcode);
+      const address = parts.filter(Boolean).join(', ');
       return address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
     

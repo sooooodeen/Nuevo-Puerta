@@ -21,7 +21,7 @@ body {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    background-color: #f8f8f8; /* Light background for contrast */
+    background-color: #e3efe2; /* Cooler, more green background */
     color: #333;
     opacity: 1;
     transition: opacity 0.35s ease;
@@ -140,7 +140,7 @@ body.page-leave {
     position: relative;
 }
 .nav-links a:hover {
-    color: #f4d03f;
+    color: #b8c9a7;
 }
 .nav-links a::after {
     content: '';
@@ -149,15 +149,15 @@ body.page-leave {
     height: 2px;
     bottom: -5px;
     left: 0;
-    background-color: #f4d03f;
+    background-color: #b8c9a7;
     transition: width 0.3s ease-out;
 }
 .nav-links a:hover::after {
     width: 100%;
 }
 .login-btn {
-    background: #ffffff;
-    color: #2d4e1e;
+    background: #2d4e1e;
+    color: #ffffff;
     font-weight: 600;
     border-radius: 20px; 
     padding: 10px 25px;
@@ -168,9 +168,9 @@ body.page-leave {
     box-shadow: 0 4px 12px rgba(44,62,80,0.1);
 }
 .login-btn:hover {
-    background: #f4d03f;
-    color: #2d4e1e;
-    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+    background: #3a6c28;
+    color: #ffffff;
+    box-shadow: 0 6px 15px rgba(58, 108, 40, 0.35);
 }
 
 .section-divider {
@@ -250,7 +250,7 @@ header div { /* For the sub-heading/slogan */
 .features-redesigned {
     text-align: center;
     padding: 60px 20px 80px 20px;
-    background-color: #f8f8f8; /* Base background remains light grey */
+    background-color: #e3efe2;
 }
 
 /* Wrapper for the entire card block to apply rounding and shadow */
@@ -258,7 +258,7 @@ header div { /* For the sub-heading/slogan */
     max-width: 1200px;
     margin: 0 auto;
     padding: 60px 40px;
-    background-color: #fcfcfc; /* Slightly off-white for main card block */
+    background-color: #eaf6e7;
     border-radius: 25px; 
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08); /* Slightly softer shadow */
 }
@@ -312,7 +312,7 @@ header div { /* For the sub-heading/slogan */
     
     width: 65px;
     height: 65px;
-    background-color: #f4d03f; /* GOLD background */
+    background-color: #b8c9a7; /* Muted sage background */
     color: #2d4e1e; /* DARK GREEN icon color */
     border-radius: 50%;
     font-size: 1.8rem;
@@ -390,7 +390,7 @@ header div { /* For the sub-heading/slogan */
     width: 200px;
     height: 200px;
     border-radius: 50%;
-    border: 6px solid #f4d03f; /* Bold Gold Border */
+    border: 6px solid #b8c9a7; /* Muted sage border */
     object-fit: cover;
     box-shadow: 0 4px 24px rgba(0,0,0,0.2); /* Stronger shadow for depth */
     background: #fff;
@@ -405,7 +405,7 @@ header div { /* For the sub-heading/slogan */
     font-size: 2.5em; 
     font-weight: 800; /* Extra bold name */
     margin-bottom: 0.1em; /* Reduced space below name */
-    color: #f4d03f; /* Gold color */
+    color: #dce8d3; /* Soft sage highlight */
     letter-spacing: 0.5px;
 }
 
@@ -428,7 +428,7 @@ header div { /* For the sub-heading/slogan */
 
 .founder-signature {
     font-size: 1.1em;
-    color: #f4d03f;
+    color: #dce8d3;
     font-weight: 600;
     margin-top: 1.2em;
 }
@@ -455,7 +455,7 @@ header div { /* For the sub-heading/slogan */
 /* ---------------------------------- */
 .social-media {
     padding: 60px 20px;
-    background: #f0f0f0; 
+    background: #eaf2e8;
     text-align: center;
 }
 .social-media h2 {
@@ -488,11 +488,11 @@ body.dark-mode .nav-links a {
 }
 
 body.dark-mode .nav-links a:hover {
-    color: #f4d03f;
+    color: #b8c9a7;
 }
 
 body.dark-mode .nav-links li.active a {
-    color: #f4d03f;
+    color: #b8c9a7;
 }
 
 body.dark-mode .theme-toggle {
@@ -505,8 +505,8 @@ body.dark-mode .theme-toggle:hover {
 }
 
 body.dark-mode .login-btn {
-    background: #f4d03f;
-    color: #1f2d1f;
+    background: #2d4e1e;
+    color: #ffffff;
 }
 
 body.dark-mode .features-redesigned {
@@ -628,7 +628,7 @@ body.dark-mode .social-media p {
 
 /* Active link color */
 .nav-links li.active a {
-    color: #f4d03f; /* Gold text color */
+    color: #b8c9a7; /* Sage text color */
     font-weight: 600;
 }
 
@@ -640,7 +640,7 @@ body.dark-mode .social-media p {
     left: 0;
     width: 100%;
     height: 3px; /* Thickness of the line */
-    background: #f4d03f; /* Gold line color */
+    background: #b8c9a7; /* Sage line color */
     border-radius: 2px;
 }
     </style>
@@ -670,7 +670,7 @@ body.dark-mode .social-media p {
         </div>
     </nav>
 
-    <header style="background: url('assets/g.jpg') center/cover no-repeat; text-align: center; padding: 70px 20px 80px 20px; color: white; position: relative;">
+    <header style="background: linear-gradient(rgba(44, 78, 30, 0.36), rgba(44, 78, 30, 0.44)), url('assets/g.jpg') center/cover no-repeat; text-align: center; padding: 70px 20px 80px 20px; color: white; position: relative;">
         <h1 style="font-size: 2.8em; font-weight: 800; margin-bottom: 0.3em; text-shadow: 2px 2px 8px rgba(0,0,0,0.4); line-height: 1.15;">
             Discover Your Dream House and<br>Spacious Lot for Sale
         </h1>

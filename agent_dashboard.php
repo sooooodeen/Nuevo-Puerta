@@ -169,6 +169,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $stmt->execute();
       $stmt->close();
     }
+    // Reserve lot only after agent approval.
+    $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
+    if ($lotRow) {
+      $lr = $lotRow->fetch_assoc();
+      $lotId = (int)($lr['lot_id'] ?? 0);
+      if ($lotId > 0) {
+        $conn->query("UPDATE lots SET status='Reserved' WHERE id=$lotId AND COALESCE(NULLIF(status,''),'Available')='Available'");
+        $conn->query("UPDATE pin_locations SET pin_status='reserved' WHERE lot_id=$lotId AND LOWER(COALESCE(pin_status,'available'))='available'");
+      }
+    }
     header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
     exit;
   }
@@ -184,6 +194,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute();
         $stmt->close();
       }
+      // If the viewing is cancelled, revert the lot status back to Available
+      if ($action === 'cancelled') {
+        $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid LIMIT 1");
+        if ($lotRow) {
+          $lr = $lotRow->fetch_assoc();
+          $lotId = (int)($lr['lot_id'] ?? 0);
+          if ($lotId > 0) {
+            $conn->query("UPDATE lots SET status='Available' WHERE id=$lotId AND status='Reserved'");
+            $conn->query("UPDATE pin_locations SET pin_status='available' WHERE lot_id=$lotId AND LOWER(pin_status)='reserved'");
+          }
+        }
+      }
     }
     header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
     exit;
@@ -192,6 +214,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   /* Delete a viewing record */
   if (isset($_POST['delete_viewing_id'])) {
     $vid = (int)$_POST['delete_viewing_id'];
+    // Before deleting, check if we should revert the lot to Available
+    $lotRow = $conn->query("SELECT lot_id, status FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
+    if ($lotRow) {
+      $lr = $lotRow->fetch_assoc();
+      $lotId = (int)($lr['lot_id'] ?? 0);
+      if ($lotId > 0) {
+        $conn->query("UPDATE lots SET status='Available' WHERE id=$lotId AND status='Reserved'");
+        $conn->query("UPDATE pin_locations SET pin_status='available' WHERE lot_id=$lotId AND LOWER(pin_status)='reserved'");
+      }
+    }
     if ($stmt = $conn->prepare("DELETE FROM viewings WHERE id=? AND agent_id=?")) {
       $stmt->bind_param('ii', $vid, $agentId);
       $stmt->execute();

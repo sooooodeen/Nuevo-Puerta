@@ -22,9 +22,26 @@ if ($result->num_rows > 0) {
     }
 }
 
-// Fetch all lots grouped by location_id
+// Fetch available lots grouped by location_id for the outside table
+$available_lots = [];
+$sql = "
+  SELECT id, block_number, lot_number, lot_size, lot_price, location_id,
+       COALESCE(NULLIF(status, ''), 'Available') AS lot_status
+  FROM lots
+  WHERE COALESCE(NULLIF(status, ''), 'Available') = 'Available'";
+$result = $conn->query($sql);
+if ($result && $result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
+        $available_lots[$row['location_id']][] = $row;
+    }
+}
+
+// Fetch all lots grouped by location_id for blueprint rendering and click handling
 $all_lots = [];
-$sql = "SELECT id, block_number, lot_number, lot_size, lot_price, location_id, status AS lot_status FROM lots";
+$sql = "
+  SELECT id, block_number, lot_number, lot_size, lot_price, location_id,
+       COALESCE(NULLIF(status, ''), 'Available') AS lot_status
+  FROM lots";
 $result = $conn->query($sql);
 if ($result && $result->num_rows > 0) {
     while ($row = $result->fetch_assoc()) {
@@ -50,7 +67,7 @@ if (isset($_GET['fetch_pins']) && isset($_GET['location_id'])) {
     $sql = "SELECT p.lot_id, p.polygon_coordinates, p.pin_status, l.block_number, l.lot_number
             FROM pin_locations p
             INNER JOIN lots l ON l.id = p.lot_id
-            WHERE l.location_id = $location_id";
+          WHERE l.location_id = $location_id";
     
     $result = $conn->query($sql);
     if ($result && $result->num_rows > 0) {
@@ -95,7 +112,8 @@ body {
     box-sizing: border-box;
     background-color: #f8f8f8;
     color: #333;
-    overflow-y: scroll;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 /* ---------------------------------- */
@@ -189,7 +207,8 @@ body {
 }
 .adminlots-main {
   display: flex;
-  height: calc(100vh - 70px);
+  min-height: calc(100vh - 70px);
+  height: auto;
   padding: 20px;
   gap: 20px;
   box-sizing: border-box;
@@ -218,7 +237,7 @@ body {
   padding: 20px;
   display: flex;
   flex-direction: column;
-  min-width: 440px;
+  min-width: 0;
 }
 .info-panel h3 {
   margin: 0 0 10px 0;
@@ -349,6 +368,79 @@ body {
   height: 20px;
   border-radius: 3px;
   border: 2px solid;
+}
+
+/* Userlots chatbot */
+.chatbot-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 12000;
+  border: none;
+  background: #23613b;
+  color: #fff;
+  border-radius: 999px;
+  padding: 11px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+}
+
+.chatbot-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 68px;
+  width: 320px;
+  max-width: calc(100vw - 28px);
+  background: #fff;
+  border: 1px solid #d7e2d6;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.22);
+  z-index: 12001;
+  display: none;
+}
+
+.chatbot-head {
+  background: #2d4e1e;
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 10px 10px 0 0;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chatbot-body {
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.chatbot-msg {
+  background: #f3f7f1;
+  border: 1px solid #e3ece0;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.chatbot-quick {
+  border-top: 1px solid #edf2ea;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.chatbot-quick button {
+  border: 1px solid #b7cdb8;
+  background: #fff;
+  color: #2d4e1e;
+  border-radius: 6px;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .lots-table {
@@ -637,6 +729,62 @@ body {
   .info-panel { min-width: unset; margin-top: 20px; }
 }
 
+@media (max-width: 768px) {
+  .main-nav {
+    height: auto;
+    min-height: 68px;
+    padding: 10px 14px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .nav-left {
+    width: 100%;
+  }
+
+  .company-name {
+    font-size: 1.15rem;
+  }
+
+  .nav-links {
+    width: 100%;
+    gap: 14px;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: 4px;
+  }
+
+  .nav-links a {
+    font-size: 0.92rem;
+  }
+
+  .login-btn {
+    padding: 8px 16px;
+    font-size: 0.92rem;
+    margin-left: auto;
+  }
+
+  .adminlots-main {
+    padding: 12px;
+    gap: 12px;
+    margin-top: 0;
+  }
+
+  .map-panel,
+  .info-panel {
+    padding: 14px;
+  }
+
+  #map {
+    height: 52vh;
+    min-height: 280px;
+  }
+
+  #lotsInfoTable {
+    overflow-x: auto;
+  }
+}
+
 /* Location status */
 .location-status {
   margin-top: 10px;
@@ -764,7 +912,7 @@ body {
 <div id="viewingModal" class="viewing-modal">
   <div class="viewing-modal-content" style="margin:10px auto 0 auto;">
     <div class="viewing-modal-header">
-      <h2 class="viewing-modal-title">Request a Viewing</h2>
+      <h2 class="viewing-modal-title">Reservation Request</h2>
       <button class="viewing-close" onclick="closeViewingModal()">&times;</button>
     </div>
 
@@ -876,40 +1024,10 @@ body {
 
         <div class="form-actions">
           <button type="button" class="btn-cancel" onclick="closeViewingModal()">Cancel</button>
-          <button type="submit" class="btn-submit">Submit Request</button>
+          <button type="submit" class="btn-submit">Submit Reservation</button>
         </div>
       </form>
     </div>
-  </div>
-</div>
-
-<!-- ORIGINAL inquire modal (kept but IDs changed to avoid conflicts) -->
-<div id="inquireModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);z-index:999;align-items:flex-start;justify-content:center;">
-  <div style="background:#fff;padding:32px 24px;border-radius:12px;max-width:400px;margin:10px auto 0 auto;position:relative;">
-    <button onclick="closeInquireModal()" style="position:absolute;top:12px;right:12px;">&times;</button>
-    <h2>Request a Viewing</h2>
-    <form id="inquireForm" method="POST" action="submit_lead.php">
-      <input type="text" name="first_name" placeholder="First Name" required>
-      <input type="text" name="last_name" placeholder="Last Name" required>
-      <input type="email" name="email" placeholder="Email" required>
-      <input type="text" name="phone" placeholder="Mobile Number" required>
-      
-      <label for="user_location_old" style="font-weight:600;">Enter Your Location</label>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="text" id="user_location_old" name="location" class="form-input" style="width:140px;" required>
-        <button type="button" id="getAgentBtnOld" class="btn-submit" style="padding:6px 12px;">Get Agent</button>
-      </div>
-
-      <input type="date" name="preferred_date" required>
-      <textarea name="note" placeholder="Notes or questions"></textarea>
-
-      <label>
-        <input type="checkbox" name="consent" required>
-        I agree to the privacy policy and to be contacted.
-      </label>
-
-      <button type="submit">Submit Request</button>
-    </form>
   </div>
 </div>
 
@@ -919,6 +1037,23 @@ body {
     <div id="userMessageModalText" style="font-size:1.08em;color:#222;margin-bottom:18px;"></div>
     <button onclick="closeUserMessageModal()" style="background:#23613b;color:#fff;padding:8px 22px;border:none;border-radius:6px;font-weight:600;font-size:1em;cursor:pointer;">OK</button>
     <button id="userMessageModalCloseBtn" style="display:none;position:absolute;top:10px;right:14px;background:none;border:none;font-size:1.5em;color:#888;cursor:pointer;">&times;</button>
+  </div>
+</div>
+
+<button id="chatbotFab" class="chatbot-fab" type="button">Help</button>
+<div id="chatbotPanel" class="chatbot-panel" aria-live="polite">
+  <div class="chatbot-head">
+    <span>Userlots Assistant</span>
+    <button type="button" id="chatbotClose" style="border:none;background:transparent;color:#fff;font-size:18px;cursor:pointer;">&times;</button>
+  </div>
+  <div class="chatbot-body" id="chatbotBody">
+    <div class="chatbot-msg">Hi! I can help with reservation flow, viewing schedule, and lot status.</div>
+  </div>
+  <div class="chatbot-quick">
+    <button type="button" onclick="chatbotReply('reservation')">How do I reserve a lot?</button>
+    <button type="button" onclick="chatbotReply('flow')">What is the payment flow?</button>
+    <button type="button" onclick="chatbotReply('status')">What do Available/Reserved/Paid mean?</button>
+    <button type="button" onclick="chatbotReply('contact')">Contact Us</button>
   </div>
 </div>
 
@@ -932,8 +1067,55 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 // PHP dumps
 const locations  = <?php echo json_encode($locations); ?>;
+const availableLots = <?php echo json_encode($available_lots); ?>;
 const allLots    = <?php echo json_encode($all_lots); ?>;
 const blueprints = <?php echo json_encode($blueprints); ?>;
+
+function appendChatbotMessage(text) {
+  const body = document.getElementById('chatbotBody');
+  if (!body) return;
+  const node = document.createElement('div');
+  node.className = 'chatbot-msg';
+  node.textContent = text;
+  body.appendChild(node);
+  body.scrollTop = body.scrollHeight;
+}
+
+function chatbotReply(topic) {
+  if (topic === 'reservation') {
+    appendChatbotMessage('Select a location, choose an available lot, then click Reserve. Fill out the form and submit — the lot will be marked Reserved right away. An agent will review and contact you to confirm.');
+    return;
+  }
+  if (topic === 'flow') {
+    appendChatbotMessage('Flow: 1️⃣ Schedule Viewing → 2️⃣ Reserve Lot → 3️⃣ Pay Installments / Full Payment → 4️⃣ Fully Paid → 5️⃣ Title Turnover. Status is updated by your assigned agent as your documents and payments are processed.');
+    return;
+  }
+  if (topic === 'status') {
+    appendChatbotMessage('🟢 Available = open lot, ready for reservation.\n🟡 Reserved = under reservation, pending agent approval.\n🔴 Sold/Paid = lot is fully paid and being processed for title turnover.');
+    return;
+  }
+  if (topic === 'contact') {
+    appendChatbotMessage('📞 Contact El Nuevo Puerta Real Estate:\n\n📱 Mobile: +63 912 345 6789\n📧 Email: info@elnuevopuerta.com\n🏢 Office: Main Road, Zamboanga City\n⏰ Hours: Mon–Sat 8AM–5PM\n\nOr visit our Contact page for more info.');
+    return;
+  }
+  appendChatbotMessage('Available = open lot. Reserved = lot is under reservation (pending agent approval). Paid = lot is fully paid and ready for turnover processing.');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const fab = document.getElementById('chatbotFab');
+  const panel = document.getElementById('chatbotPanel');
+  const close = document.getElementById('chatbotClose');
+  if (fab && panel) {
+    fab.addEventListener('click', function() {
+      panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    });
+  }
+  if (close && panel) {
+    close.addEventListener('click', function() {
+      panel.style.display = 'none';
+    });
+  }
+});
 
 locations.forEach(loc => {
   const marker = L.marker([loc.latitude, loc.longitude]).addTo(map);
@@ -941,7 +1123,7 @@ locations.forEach(loc => {
     map.setView([loc.latitude, loc.longitude], 16);
     marker.bindPopup(`<b>${loc.location_name}</b>`).openPopup();
 
-    const lots = allLots[loc.id] || [];
+    const lots = availableLots[loc.id] || [];
     const blueprint_url = blueprints[loc.id] || null;
 
     updateInfoPanel({
@@ -958,26 +1140,32 @@ function updateInfoPanel(data) {
   if (data.lots.length) {
     data.lots.forEach(lot => {
       let cls = '';
-      if (lot.lot_status === 'Sale' || lot.lot_status === 'Available') cls = 'sale';
-      else if (lot.lot_status === 'Sold') cls = 'sold';
-      else if (lot.lot_status === 'Reserved') cls = 'reserved';
+      const status = lot.lot_status || 'Available';
+      if (status === 'Sale' || status === 'Available') cls = 'sale';
+      else if (status === 'Sold' || status === 'Paid') cls = 'sold';
+      else if (status === 'Reserved') cls = 'reserved';
+
+      let actionBtn = '';
+      if (status === 'Sold' || status === 'Paid') {
+        actionBtn = `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Unavailable</button>`;
+      } else if (status === 'Reserved') {
+        actionBtn = `<button class="inquire-btn" disabled style="background:#e9c46a;color:#2d4e1e;cursor:not-allowed;" title="This lot is under reservation pending agent approval">Under Reservation</button>`;
+      } else {
+        actionBtn = `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Reserve</button>`;
+      }
 
       rows += `
         <tr>
           <td>${lot.block_number}</td>
           <td>${lot.lot_number}</td>
           <td>${lot.lot_size} sqm</td>
-          <td>${(+lot.lot_price).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
-          <td><span class="lot-status ${cls}">${lot.lot_status}</span></td>
-          <td>
-            ${lot.lot_status === 'Sold'
-              ? `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Inquire</button>`
-              : `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Inquire</button>`}
-          </td>
+          <td>&#8369;${(+lot.lot_price).toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
+          <td><span class="lot-status ${cls}">${status}</span></td>
+          <td>${actionBtn}</td>
         </tr>`;
     });
   } else {
-    rows = `<tr><td colspan="6" style="color:#b71c1c;font-weight:bold;">No lots available</td></tr>`;
+    rows = `<tr><td colspan="6" style="color:#b71c1c;font-weight:bold;">No available lots</td></tr>`;
   }
 
   const panel = document.getElementById('infoPanel');
@@ -1146,7 +1334,7 @@ function loadAndDrawPins(locationId) {
         poly.appendChild(title);
 
         // Add visual hover effect & clicking logic
-        poly.style.cursor = stat === 'sold' ? 'not-allowed' : 'pointer';
+        poly.style.cursor = (stat === 'sold' || stat === 'reserved') ? 'not-allowed' : 'pointer';
         poly.onmouseover = () => { 
             poly.setAttribute('fill', stat === 'sold' ? 'rgba(220,53,69,0.8)' : (stat === 'reserved' ? 'rgba(255,193,7,0.8)' : 'rgba(40,167,69,0.8)')); 
         };
@@ -1154,16 +1342,18 @@ function loadAndDrawPins(locationId) {
             poly.setAttribute('fill', stat === 'sold' ? 'rgba(220,53,69,0.5)' : (stat === 'reserved' ? 'rgba(255,193,7,0.5)' : 'rgba(40,167,69,0.5)')); 
         };
 
-        // Open inquiry modal specifically for this lot when clicked
+        // Open modal on click; show notices for reserved/sold lots
         poly.onclick = () => {
           const targetLot = allLots[locationId]?.find(l => Number(l.id) === Number(pin.lot_id));
-          if (targetLot) {
-            if (targetLot.lot_status === 'Sold') {
-                alert('This lot is already sold and cannot be inquired about.');
-            } else {
-                document.getElementById('blueprintModalBox').style.display = 'none';
-                openViewingModal(targetLot);
-            }
+          if (!targetLot) return;
+          const lotStat = String(targetLot.lot_status || '').toLowerCase();
+          if (lotStat === 'sold' || lotStat === 'paid') {
+            showUserMessageModal('This lot is already sold and is no longer available.');
+          } else if (lotStat === 'reserved') {
+            showUserMessageModal('This lot is currently under reservation pending agent approval. It is not available at this time.');
+          } else {
+            document.getElementById('blueprintModalBox').style.display = 'none';
+            openViewingModal(targetLot);
           }
         };
 
@@ -1203,7 +1393,7 @@ function openViewingModal(lot) {
   currentLot = lot || null;
 
   if (currentLot && currentLot.lot_status === 'Reserved') {
-    if (!confirm('Warning: This lot is reserved and may not be available. Do you want to proceed with your inquiry?')) {
+    if (!confirm('Warning: This lot is already in reservation stage. Do you still want to request a viewing?')) {
       return;
     }
   }
@@ -1759,7 +1949,11 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
     .then(r => r.json())
     .then((data) => {
       if (data.success) {
-        showUserMessageModal('Your viewing request has been submitted! We will contact you soon.', closeViewingModal);
+        showUserMessageModal(
+          '✅ Reservation request submitted!\n\nYour request is pending agent approval.\n\n' +
+          'The lot will be marked as Reserved only after agent approval.\n\nWe will reach out to you soon.',
+          closeViewingModal
+        );
       } else {
         showUserMessageModal('Error submitting request: ' + (data.error || 'Unknown error'));
       }
