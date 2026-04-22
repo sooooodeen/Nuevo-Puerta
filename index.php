@@ -1,0 +1,839 @@
+<?php
+session_start();
+require_once __DIR__ . '/includes/user_helpers.php';
+// Now you can use userHasAccount() anywhere in this file
+// Example: if (userHasAccount()) { ... }
+?>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Nuevo Puerta Real Estate</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+      
+/* 1. General Styles and Font Imports */
+/* ---------------------------------- */
+body {
+    font-family: 'Poppins', sans-serif; /* Use Poppins */
+    font-size: 16px; 
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    background-color: #e3efe2; /* Cooler, more green background */
+    color: #333;
+    opacity: 1;
+    transition: opacity 0.35s ease;
+    overflow-y: scroll;
+}
+
+body.page-leave {
+    opacity: 0;
+}
+
+/* ---------------------------------- */
+/* Scroll Reveal Animations */
+/* ---------------------------------- */
+.reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    will-change: opacity, transform;
+}
+
+.reveal-left {
+    transform: translateX(-28px);
+}
+
+.reveal-right {
+    transform: translateX(28px);
+}
+
+.reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.reveal-left.visible,
+.reveal-right.visible {
+    transform: translateX(0);
+}
+
+.reveal-stagger {
+    transition-delay: var(--reveal-delay, 0ms);
+}
+
+.nav-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.theme-toggle {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: transparent;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-toggle:hover {
+    background: rgba(255,255,255,0.12);
+}
+
+/* ---------------------------------- */
+/* 2. Navigation */
+/* ---------------------------------- */
+.main-nav {
+    background: #2d4e1e;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px; 
+    height: 80px; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+    z-index: 1000;
+    position: sticky;
+    top: 0;
+}
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.nav-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: contain;
+    background: transparent;
+    padding: 4px;
+    margin-right: 0;
+}
+.company-name {
+    font-size: 1.5rem; 
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.nav-links {
+    display: flex;
+    gap: 30px; 
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 8px 0;
+    transition: color 0.18s;
+    position: relative;
+}
+.nav-links a:hover {
+    color: #b8c9a7;
+}
+.nav-links a::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: -5px;
+    left: 0;
+    background-color: #b8c9a7;
+    transition: width 0.3s ease-out;
+}
+.nav-links a:hover::after {
+    width: 100%;
+}
+.login-btn {
+    background: #2d4e1e;
+    color: #ffffff;
+    font-weight: 600;
+    border-radius: 20px; 
+    padding: 10px 25px;
+    text-decoration: none;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    border: none;
+    box-shadow: 0 4px 12px rgba(44,62,80,0.1);
+}
+.login-btn:hover {
+    background: #3a6c28;
+    color: #ffffff;
+    box-shadow: 0 6px 15px rgba(58, 108, 40, 0.35);
+}
+
+.section-divider {
+    width: 100%;
+    height: 1px;
+    background-color: #ddd;
+}
+
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - ADJUSTED HEIGHT */
+/* ---------------------------------- */
+/* 3. Header (Hero Section) - MAX HEIGHT GUARANTEED */
+/* ---------------------------------- */
+header {
+    text-align: center;
+    color: white; 
+    position: relative;
+    /* Use min-height to force the header to occupy at least 70% of the screen height */
+    min-height: 40vh; 
+    
+    /* Ensure content is centered vertically within this large space */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    
+    /* Image and overlay properties */
+    background: url('assets/g.jpg') center/cover no-repeat; 
+    position: relative;
+    z-index: 1; 
+    padding: 20px; /* Reduced padding since min-height controls the size */
+}
+
+/* Add a subtle overlay to improve text readability */
+header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.35); /* Slightly darker overlay for contrast */
+    z-index: -1; 
+}
+
+/* Ensure the text inside the header maintains its styling */
+header h1 {
+    font-size: 2.8em; 
+    font-weight: 800; 
+    margin-bottom: 0.3em; 
+    text-shadow: 2px 2px 8px rgba(0,0,0,0.4); 
+    line-height: 1.15;
+}
+header div { /* For the sub-heading/slogan */
+    font-size: 1.5em; 
+    font-weight: 400;
+    margin-bottom: 0; /* Remove bottom margin since height is controlled by flexbox */
+    margin-top: 0.5em; 
+    text-shadow: 1px 1px 6px rgba(0,0,0,0.3);
+}
+
+/* Responsive adjustment */
+@media (max-width: 768px) {
+    header {
+        min-height: 50vh; /* Adjust height for smaller screens */
+    }
+    header h1 {
+        font-size: 2em !important; 
+    }
+    header div {
+        font-size: 1.1em !important; 
+    }
+}
+/*/* ---------------------------------- */
+/* 4. Feature Section (Offers) - COLOR EXPERIMENT */
+/* ---------------------------------- */
+.features-redesigned {
+    text-align: center;
+    padding: 60px 20px 80px 20px;
+    background-color: #e3efe2;
+}
+
+/* Wrapper for the entire card block to apply rounding and shadow */
+.features-container-wrap { 
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 60px 40px;
+    background-color: #eaf6e7;
+    border-radius: 25px; 
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08); /* Slightly softer shadow */
+}
+
+.features-redesigned h2 {
+    color: #2d4e1e;
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 15px;
+    letter-spacing: 0.5px;
+}
+
+.features-intro {
+    font-size: 1rem;
+    color: #666;
+    margin-bottom: 40px;
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+}
+
+.features-grid-redesigned {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); 
+    gap: 25px; 
+    margin-bottom: 40px;
+}
+
+.feature-card {
+    /* Subtle light green background for cards */
+    background: #fdfdfd; 
+    padding: 25px 20px; 
+    border-radius: 18px; 
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05); /* Individual card shadow for depth */
+    transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+    text-align: center;
+    border: 1px solid #eef2ed; /* Very light green border */
+}
+
+.feature-card:hover {
+    background: #eff5ed; /* Lighter green on hover */
+    transform: translateY(-5px); /* Gentle lift on hover */
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1); /* Enhanced shadow on hover */
+}
+
+.feature-card .icon-circle {
+    display: flex;
+    justify-content: center;
+    align-items: center; 
+    
+    width: 65px;
+    height: 65px;
+    background-color: #b8c9a7; /* Muted sage background */
+    color: #2d4e1e; /* DARK GREEN icon color */
+    border-radius: 50%;
+    font-size: 1.8rem;
+    margin: 0 auto 18px auto;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.feature-card h3 {
+    font-size: 1.15rem;
+    color: #2d4e1e; /* Dark green for headings */
+    font-weight: 700;
+    margin-bottom: 8px;
+    line-height: 1.2;
+}
+
+.feature-card p {
+    font-size: 0.9rem;
+    color: #555; /* Slightly darker grey for body text */
+    line-height: 1.5;
+    margin-bottom: 0;
+}
+
+.buttons {
+    margin-top: 40px;
+}
+.buttons a {
+    display: inline-block;
+    font-size: 1rem;
+    margin: 0 12px;
+    padding: 14px 30px;
+    background: #2d4e1e;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    transition: transform 0.2s ease, background 0.3s ease;
+    font-weight: 600;
+}
+.buttons a:hover {
+    transform: translateY(-3px);
+    background: #3a6c28;
+}
+
+
+
+/* ---------------------------------- */
+/*/* ---------------------------------- */
+/* 5. Founder Section (REDESIGNED) */
+/* ---------------------------------- */
+.founder-footer {
+    /* Use a slightly darker shade of green for depth and better contrast */
+    background: #395c31; 
+    padding: 80px 0; 
+    font-family: 'Poppins', sans-serif;
+    margin-bottom: 0;
+}
+
+.founder-container {
+    max-width: 1000px; /* Slightly narrower container for focus */
+    margin: 0 auto;
+    /* Use grid for better alignment control */
+    display: grid;
+    grid-template-columns: 220px 1fr; /* Fixed width for image, rest for text */
+    gap: 48px;
+    align-items: center; /* Center vertically */
+    padding: 0 20px;
+}
+
+.founder-img-wrap {
+    /* No change needed here, just holds the image */
+    display: flex;
+    justify-content: center;
+}
+
+.founder-img {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    border: 6px solid #b8c9a7; /* Muted sage border */
+    object-fit: cover;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2); /* Stronger shadow for depth */
+    background: #fff;
+}
+
+.founder-text {
+    /* Text alignment remains left */
+    text-align: left;
+}
+
+.founder-text h2 {
+    font-size: 2.5em; 
+    font-weight: 800; /* Extra bold name */
+    margin-bottom: 0.1em; /* Reduced space below name */
+    color: #dce8d3; /* Soft sage highlight */
+    letter-spacing: 0.5px;
+}
+
+.founder-title {
+    font-size: 1em; /* Slightly smaller title */
+    color: #ccc;
+    font-weight: 500;
+    margin-bottom: 1.5em; /* Increased space below title */
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.founder-message {
+    font-size: 1.1em; /* Slightly smaller, easier to read */
+    line-height: 1.7; /* Increased line height */
+    color: #ffffff; /* Pure white for body text for better contrast */
+    margin-bottom: 1.5em;
+    font-weight: 300; /* Lighter weight for body text */
+}
+
+.founder-signature {
+    font-size: 1.1em;
+    color: #dce8d3;
+    font-weight: 600;
+    margin-top: 1.2em;
+}
+
+
+/* ---------------------------------- */
+/* Responsive Adjustments for Founder Section */
+/* ---------------------------------- */
+@media (max-width: 768px) {
+    .founder-container {
+        /* Stack the image and text vertically on smaller screens */
+        grid-template-columns: 1fr; 
+        gap: 30px;
+    }
+    .founder-text {
+        text-align: center; /* Center text when stacked */
+    }
+    .founder-footer {
+        padding: 50px 0; /* Reduced padding on mobile */
+    }
+}
+/* ---------------------------------- */
+/* 6. Social Media Section */
+/* ---------------------------------- */
+.social-media {
+    padding: 60px 20px;
+    background: #eaf2e8;
+    text-align: center;
+}
+.social-media h2 {
+    font-size: 1.6rem;
+    color: #2d4e1e;
+    font-weight: 700;
+}
+.social-media p {
+    max-width: 700px;
+    font-size: 1.05rem;
+    color: #555;
+    margin: 0 auto 30px auto;
+}
+
+/* ---------------------------------- */
+/* 8. Dark Mode */
+/* ---------------------------------- */
+body.dark-mode {
+    background-color: #0f1410;
+    color: #e5e7e1;
+}
+
+body.dark-mode .main-nav {
+    background: #152417;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .nav-links a {
+    color: #e5e7e1;
+}
+
+body.dark-mode .nav-links a:hover {
+    color: #b8c9a7;
+}
+
+body.dark-mode .nav-links li.active a {
+    color: #b8c9a7;
+}
+
+body.dark-mode .theme-toggle {
+    border-color: rgba(229,231,225,0.6);
+    color: #e5e7e1;
+}
+
+body.dark-mode .theme-toggle:hover {
+    background: rgba(229,231,225,0.12);
+}
+
+body.dark-mode .login-btn {
+    background: #2d4e1e;
+    color: #ffffff;
+}
+
+body.dark-mode .features-redesigned {
+    background-color: #0f1410;
+}
+
+body.dark-mode .features-container-wrap {
+    background-color: #131a14;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .features-redesigned h2 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .features-intro {
+    color: #c2c9c0;
+}
+
+body.dark-mode .feature-card {
+    background: #141c16;
+    border-color: #1f2a20;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+}
+
+body.dark-mode .feature-card:hover {
+    background: #182219;
+}
+
+body.dark-mode .feature-card h3 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .feature-card p {
+    color: #c2c9c0;
+}
+
+body.dark-mode .buttons a {
+    background: #3a6c28;
+}
+
+body.dark-mode .section-divider {
+    background-color: #242f25;
+}
+
+body.dark-mode .founder-footer {
+    background: #1f2f21;
+}
+
+body.dark-mode .founder-message {
+    color: #e6efe6;
+}
+
+body.dark-mode .social-media {
+    background: #111614;
+}
+
+body.dark-mode .social-media h2 {
+    color: #e9f2e7;
+}
+
+body.dark-mode .social-media p {
+    color: #c2c9c0;
+}
+.icons {
+    display: flex;
+    justify-content: center;
+    gap: 25px; 
+    margin-top: 20px;
+}
+.icons a img {
+    width: 45px; 
+    height: 45px;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+.icons a img:hover {
+    transform: scale(1.15) rotate(5deg);
+}
+
+/* ---------------------------------- */
+/* 7. Responsive Design */
+/* ---------------------------------- */
+@media (max-width: 900px) {
+    .main-nav { padding: 0 15px; }
+    .nav-links { display: none; }
+    .company-name { font-size: 1.2rem; }
+    .nav-logo { width: 40px; height: 40px; }
+    
+    .features-container-wrap {
+        padding: 40px 20px;
+        border-radius: 15px;
+    }
+    /* Maintain 3 columns down to 700px */
+    .features-grid-redesigned {
+        grid-template-columns: repeat(3, 1fr); 
+    }
+    
+    .founder-container {
+        flex-direction: column;
+        gap: 30px;
+        text-align: center;
+    }
+    .founder-text {
+        text-align: center;
+    }
+}
+
+@media (max-width: 700px) { 
+    /* Stack feature cards on smaller mobile devices */
+    .features-grid-redesigned {
+        grid-template-columns: 1fr;
+    }
+}
+/* ---------------------------------- */
+/* 6. Active Navigation Indicator */
+/* ---------------------------------- */
+
+/* Active link color */
+.nav-links li.active a {
+    color: #b8c9a7; /* Sage text color */
+    font-weight: 600;
+}
+
+/* Add the decorative line/bar */
+.nav-links li.active a::after {
+    content: '';
+    position: absolute;
+    bottom: -5px; /* Adjust this value to control distance from text */
+    left: 0;
+    width: 100%;
+    height: 3px; /* Thickness of the line */
+    background: #b8c9a7; /* Sage line color */
+    border-radius: 2px;
+}
+    </style>
+</head>
+<body>
+    <nav class="main-nav">
+        <div class="nav-left">
+            <img src="assets/f.png" alt="Logo" class="nav-logo">
+            <span class="company-name">El Nuevo Puerta Real Estate</span>
+        </div>
+        <ul class="nav-links">
+            <li class="active"><a href="index.php">Home</a></li> <li><a href="userlot.php">View Lots</a></li>
+            <li><a href="findagent.php">Find Agent</a></li>
+            <li><a href="about.php">About</a></li>
+            <li><a href="faqs.php">FAQs</a></li>
+            <li><a href="contact.php">Contact</a></li>
+        </ul>
+        <div class="nav-right">
+            <?php if (userHasAccount()): ?>
+                <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
+            <?php else: ?>
+                <a href="Login/login.php" class="login-btn">Login</a>
+            <?php endif; ?>
+        </div>
+    </nav>
+
+    <header style="background: linear-gradient(rgba(44, 78, 30, 0.36), rgba(44, 78, 30, 0.44)), url('assets/g.jpg') center/cover no-repeat; text-align: center; padding: 70px 20px 80px 20px; color: white; position: relative;">
+        <h1 style="font-size: 2.8em; font-weight: 800; margin-bottom: 0.3em; text-shadow: 2px 2px 8px rgba(0,0,0,0.4); line-height: 1.15;">
+            Discover Your Dream House and<br>Spacious Lot for Sale
+        </h1>
+        <div style="font-size: 1.5em; font-weight: 400;margin-bottom: 1.5em; margin-top: 0.5em; text-shadow: 1px 1px 6px rgba(0,0,0,0.3);">
+            Embrace the Perfect Blend of Comfort, Style, and Serenity.
+        </div>
+    </header>
+
+ <section class="features-redesigned">
+    <div class="features-container-wrap"> 
+        <div class="container">
+            <h2>El Nuevo Puerta Real Estate Offers</h2>
+            <p class="features-intro">Discover the exceptional advantages of choosing El Nuevo Puerta for your next property investment.</p>
+            
+            <div class="features-grid-redesigned">
+                <div class="feature-card">
+                    <i class="fas fa-mountain icon-circle"></i>
+                    <h3>Scenic Views</h3>
+                    <p>Enjoy breathtaking natural landscapes and serene surroundings.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-chart-line icon-circle"></i>
+                    <h3>Investment Opportunities</h3>
+                    <p>Secure your future with properties in high-growth areas.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-map-marker-alt icon-circle"></i>
+                    <h3>Prime Locations</h3>
+                    <p>Properties strategically located for convenience and value.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-hammer icon-circle"></i>
+                    <h3>Ready-to-Build Lots</h3>
+                    <p>Start construction without delay on prepared land.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-road icon-circle"></i>
+                    <h3>Prime Accessibility</h3>
+                    <p>Easy access to main roads, amenities, and city centers.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-hand-holding-usd icon-circle"></i>
+                    <h3>Unmatched Value</h3>
+                    <p>Get the best return on investment with our competitive pricing.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-expand-arrows-alt icon-circle"></i>
+                    <h3>Customizable Lot Sizes</h3>
+                    <p>Tailor your property to fit your exact needs and vision.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-leaf icon-circle"></i>
+                    <h3>Eco-Friendly Options</h3>
+                    <p>Sustainable living solutions integrated into our developments.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-handshake icon-circle"></i>
+                    <h3>Hassle-Free Transactions</h3>
+                    <p>Smooth and transparent processes from inquiry to ownership.</p>
+                </div>
+            </div>
+            
+            <div class="buttons">
+                <a href="userlot.php">Explore Lots</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+    <div class="section-divider"></div>
+
+    <footer class="founder-footer">
+        <div class="founder-container">
+            <div class="founder-img-wrap">
+                <img src="assets/d.jpg" alt="Founder Image" class="founder-img">
+            </div>
+            <div class="founder-text">
+                <h2>Rosibelle G. Ituralde</h2>
+                <div class="founder-title">CEO / Founder</div>
+                <div class="founder-message">
+                    "At Nuevo Puerta Real Estate, we believe every property is a gateway to new possibilities. Our commitment is to deliver premium lots and exceptional service, empowering you to build your future with confidence—whether it's your dream home, a thriving business, or a smart investment.<br><br>
+                    Thank you for making us part of your journey."
+                </div>
+                <div class="founder-signature">
+                    — Rosibelle G. Ituralde
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <div class="section-divider"></div>
+
+    <section class="social-media">
+        <h2>Stay Connected with Nuevo Puerta!</h2>
+        <p>Follow us on social media for the latest updates, exclusive offers, and inspiration for your next big project. Don’t miss out on exciting opportunities and tips to help you build your dreams!</p>
+        
+        <div class="icons">
+            <a href="https://www.facebook.com/nuevopuertarealestate" target="_blank">
+                <img src="assets/fb.png" alt="Facebook">
+            </a>
+            <a href="mailto:nuevopuertarealestate@gmail.com">
+                <img src="assets/email.png" alt="Email">
+            </a>
+        </div>
+    </section>
+
+        <script>
+            (function() {
+                const body = document.body;
+                const toggle = document.getElementById('theme-toggle');
+                const stored = localStorage.getItem('theme');
+                const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const startDark = stored ? stored === 'dark' : prefersDark;
+
+                if (startDark) {
+                    body.classList.add('dark-mode');
+                }
+
+                function syncToggle() {
+                    if (!toggle) return;
+                    const isDark = body.classList.contains('dark-mode');
+                    toggle.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+                    toggle.innerHTML = isDark ? '<i class="fa fa-sun"></i>' : '<i class="fa fa-moon"></i>';
+                }
+
+                if (toggle) {
+                    toggle.addEventListener('click', function() {
+                        body.classList.toggle('dark-mode');
+                        const isDark = body.classList.contains('dark-mode');
+                        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+                        syncToggle();
+                    });
+                }
+
+                syncToggle();
+            })();
+        </script>
+
+        <script>
+            (function() {
+                const revealTargets = document.querySelectorAll(
+                    'header, .features-container-wrap, .feature-card, .founder-footer, .social-media'
+                );
+
+                revealTargets.forEach((el, idx) => {
+                    el.classList.add('reveal');
+                    if (el.classList.contains('feature-card')) {
+                        el.classList.add('reveal-stagger');
+                        el.classList.add(idx % 2 === 0 ? 'reveal-left' : 'reveal-right');
+                        el.style.setProperty('--reveal-delay', `${(idx % 9) * 60}ms`);
+                    }
+                });
+
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.add('visible');
+                        } else {
+                            entry.target.classList.remove('visible');
+                        }
+                    });
+                }, { threshold: 0.15, rootMargin: '0px 0px -10% 0px' });
+
+                revealTargets.forEach(el => observer.observe(el));
+            })();
+        </script>
+
+</body>
+</html>
