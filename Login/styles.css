@@ -8,10 +8,11 @@
 
 /* Full-Screen Background */
 body {
-    background: url('img/bgr.png') no-repeat center center/cover;
+    background: none;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 48px;
     min-height: 100vh;
     padding: 0 8%;
     position: relative;
@@ -19,28 +20,45 @@ body {
     overflow-y: auto;
 }
 
-/* Gradient Overlay - More Premium Look */
+/* Full-page blurred background image */
 body::before {
     content: "";
     position: absolute;
     left: 0;
     top: 0;
-    width: 70%;
+    width: 100%;
     height: 100%;
-    background: linear-gradient(to right, rgba(229, 215, 164, 0.92), rgba(221, 224, 164, 0.75), transparent);
+    background: url('img/bgr.png') no-repeat center center/cover;
+    filter: blur(4px);
+    transform: scale(1.06);
+    z-index: 0;
+}
+
+/* Overlay tint for readability */
+body::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(229, 215, 164, 0.55), rgba(221, 224, 164, 0.35), rgba(0, 0, 0, 0.18));
     z-index: 1;
+    pointer-events: none;
 }
 
 /* Welcome Message - Positioned Mid-Left */
 .welcome-message {
     color: white;
-    max-width: 420px;
+    max-width: 540px;
     z-index: 2;
     position: relative;
+    flex: 0 1 48%;
+    margin-right: auto;
 }
 
 .welcome-message h1 {
-    font-size: 38px;
+    font-size: 40px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -48,16 +66,16 @@ body::before {
 }
 
 .welcome-message h2 {
-    font-size: 50px;
+    font-size: 58px;
     font-weight: 700;
     text-transform: uppercase;
-    line-height: 1.2;
+    line-height: 1.1;
     color: #2d4e1e;
     text-shadow: 15px 15px 15px rgba(0, 0, 0, 0.2);
 }
 
 .welcome-message p {
-    font-size: 17.5px ;
+    font-size: 18px;
     margin-top: 5px;
     line-height: 1.5;
     opacity: 10px;
@@ -73,16 +91,20 @@ body::before {
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
     text-align: center;
     width: 420px; /* Slightly wider */
+    flex: 0 0 420px;
     position: relative;
     z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
+    margin: 24px 0 24px auto; /* keep space from top and bottom, pin to right */
+    max-height: calc(100vh - 48px);
+    overflow: visible;
 }
 
 /* Logo */
 .logo {
-    width: 180px;
+    width: 140px;
     margin-bottom: 15px;
 }
 
@@ -96,16 +118,16 @@ body::before {
     align-items: center; /* Center children horizontally */
 }
 
-.input-group {
-    width: 80%; /* Make input fields narrower than the form */
-    margin-bottom: 18px;
+ .input-group {
+    width: 92%; /* Increased width so input fields are longer */
+    margin-bottom: 12px; /* reduced vertical gap between fields */
     display: flex;
     justify-content: center; /* Center the input inside the group */
 }
 
-.login-form input[type="text"],
-.login-form input[type="password"] {
-    width: 100%; /* Fill the input-group */
+/* Ensure all inputs inside the login/register form get the same oblong styling */
+.login-form input {
+    width: 100%;
     padding: 14px 20px;
     border: none;
     border-radius: 30px;
@@ -120,10 +142,12 @@ body::before {
 }
 
 input:focus,
-.login-form input[type="text"]:focus,
-.login-form input[type="password"]:focus {
+.login-form input:focus {
     box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.15);
 }
+
+/* Ensure inputs inside input-group always fill the group */
+.input-group input { width: 100%; }
 
 /* Password Container */
 .password-container {
@@ -138,7 +162,7 @@ input:focus,
 /* Login Button */
 button,
 .login-form button[type="submit"] {
-    width: 80%;
+    width: 92%;
     padding: 12px 0;
     background: linear-gradient(to right, #2f7d32, #1f5f23);
     color: #ffffff;
@@ -199,13 +223,14 @@ button:hover,
         gap: 18px;
     }
 
-    body::before {
-        width: 100%;
-        background: linear-gradient(to bottom, rgba(229, 215, 164, 0.9), rgba(221, 224, 164, 0.55), transparent);
-    }
+    body::before { transform: scale(1.1); }
+
+    body::after { background: linear-gradient(to bottom, rgba(229, 215, 164, 0.45), rgba(221, 224, 164, 0.25), rgba(0, 0, 0, 0.22)); }
 
     .welcome-message {
         max-width: 100%;
+        flex: 0 1 auto;
+        margin-right: 0;
         text-align: center;
     }
 
@@ -220,13 +245,18 @@ button:hover,
     }
 
     .welcome-message p {
-        font-size: 15px;
+        font-size: 16px;
         text-shadow: 6px 6px 10px rgba(0, 0, 0, 0.15);
     }
 
     .form-container {
         width: min(100%, 460px);
-        padding: 28px 20px;
+        flex: 0 1 auto;
+        padding: 20px;
+        margin: 20px 0;
+        margin-left: 0;
+        max-height: calc(100vh - 40px);
+        overflow: auto;
     }
 
     .login-form {
@@ -250,15 +280,15 @@ button:hover,
     }
 
     .logo {
-        width: 140px;
+        width: 120px;
     }
 
     .welcome-message h1 {
-        font-size: 24px;
+        font-size: 25px;
     }
 
     .welcome-message h2 {
-        font-size: 28px;
+        font-size: 30px;
     }
 }
 

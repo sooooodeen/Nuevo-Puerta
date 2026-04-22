@@ -246,6 +246,7 @@ if ($stmt) {
 <title>My Viewings</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="assets/js/alert-modal.js"></script>
 <style>
 :root{
   --green:#2d4e1e; --bg:#f8f8f8; --ink:#0f172a; --muted:#64748b;
@@ -391,7 +392,7 @@ h1{margin:8px 0 14px}
                     <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                     <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                     <input type="hidden" name="action" value="cancel_viewing">
-                    <button class="btn" onclick="return confirm('Cancel this viewing?')">Cancel</button>
+                    <button class="btn" onclick="return confirmFormSubmit(event, this.form, 'Cancel this viewing?')">Cancel</button>
                   </form>
                 </td>
               </tr>

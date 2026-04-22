@@ -389,6 +389,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       </div>
     </div>
   </div>
+  <script src="assets/js/alert-modal.js"></script>
   <script>
 // AJAX upload script
 document.getElementById('uploadForm').addEventListener('submit', function(e) {

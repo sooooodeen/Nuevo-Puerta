@@ -264,9 +264,13 @@ body {
         <li class="active"><a href="faqs.html">FAQs</a></li>
     <li><a href="contact.html">Contact</a></li>
   </ul>
-  <div class="nav-right">
-    <a href="Login/login.php" class="login-btn">Login</a>
-  </div>
+    <div class="nav-right">
+        <?php session_start(); if (isset($_SESSION['user_id'])): ?>
+            <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
+        <?php else: ?>
+            <a href="Login/login.php" class="login-btn">Login</a>
+        <?php endif; ?>
+    </div>
 </nav>
 
     <!-- Example FAQ Section -->

@@ -1,4 +1,8 @@
 <?php
+// Start session at the very top before any output
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
 $servername = "localhost";
 $username = "root";
 $password = ""; 
@@ -26,7 +30,8 @@ if ($result->num_rows > 0) {
 $available_lots = [];
 $sql = "
   SELECT id, block_number, lot_number, lot_size, lot_price, location_id,
-       COALESCE(NULLIF(status, ''), 'Available') AS lot_status
+    payment_type, payment_amount, down_payment_amount, payment_deadline, payment_term_years, payment_due_day,
+    COALESCE(NULLIF(status, ''), 'Available') AS lot_status
   FROM lots
   WHERE COALESCE(NULLIF(status, ''), 'Available') = 'Available'";
 $result = $conn->query($sql);
@@ -40,7 +45,8 @@ if ($result && $result->num_rows > 0) {
 $all_lots = [];
 $sql = "
   SELECT id, block_number, lot_number, lot_size, lot_price, location_id,
-       COALESCE(NULLIF(status, ''), 'Available') AS lot_status
+    payment_type, payment_amount, down_payment_amount, payment_deadline, payment_term_years, payment_due_day,
+    COALESCE(NULLIF(status, ''), 'Available') AS lot_status
   FROM lots";
 $result = $conn->query($sql);
 if ($result && $result->num_rows > 0) {
@@ -168,7 +174,7 @@ body {
     position: relative;
 }
 .nav-links a:hover {
-    color: #f4d03f;
+    color: #b8c9a7;
 }
 .nav-links a::after {
     content: '';
@@ -177,15 +183,15 @@ body {
     height: 2px;
     bottom: -5px;
     left: 0;
-    background-color: #f4d03f;
+    background-color: #b8c9a7;
     transition: width 0.3s ease-out;
 }
 .nav-links a:hover::after {
     width: 100%;
 }
 .login-btn {
-    background: #ffffff;
-    color: #2d4e1e;
+    background: #2d4e1e;
+    color: #ffffff;
     font-weight: 600;
     border-radius: 20px; 
     padding: 10px 25px;
@@ -196,9 +202,68 @@ body {
     box-shadow: 0 4px 12px rgba(44,62,80,0.1);
 }
 .login-btn:hover {
-    background: #f4d03f;
-    color: #2d4e1e;
-    box-shadow: 0 6px 15px rgba(244, 208, 63, 0.4);
+    background: #3a6c28;
+    color: #ffffff;
+    box-shadow: 0 6px 15px rgba(58, 108, 40, 0.35);
+}
+.nav-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.theme-toggle {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: transparent;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.theme-toggle:hover {
+    background: rgba(255,255,255,0.12);
+}
+.nav-links li.active a {
+    color: #b8c9a7;
+    font-weight: 600;
+}
+.nav-links li.active a::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: #b8c9a7;
+    border-radius: 2px;
+}
+body.dark-mode .main-nav {
+    background: #152417;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+body.dark-mode .nav-links a {
+    color: #e5e7e1;
+}
+body.dark-mode .nav-links a:hover {
+    color: #b8c9a7;
+}
+body.dark-mode .nav-links li.active a {
+    color: #b8c9a7;
+}
+body.dark-mode .theme-toggle {
+    border-color: rgba(229,231,225,0.6);
+    color: #e5e7e1;
+}
+body.dark-mode .theme-toggle:hover {
+    background: rgba(229,231,225,0.12);
+}
+body.dark-mode .login-btn {
+    background: #2d4e1e;
+    color: #ffffff;
 }
 
 /* Add margin to main content so it's not hidden behind navbar */
@@ -491,6 +556,14 @@ body {
   background: #2d4e1e;
 }
 
+
+.lot-action-group {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* Request Viewing Modal Styles */
 .viewing-modal {
   display: none;
@@ -615,6 +688,51 @@ body {
   margin-top: 30px;
   padding-top: 20px;
   border-top: 1px solid #e0e0e0;
+}
+
+.installment-planner {
+  border: 1px solid #dbe7d8;
+  background: #f5faf4;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.installment-planner h4 {
+  margin: 0 0 8px;
+  color: #2d4e1e;
+  font-size: 1rem;
+}
+
+.installment-planner p {
+  margin: 0 0 10px;
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.planner-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.planner-summary {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e4ebe2;
+}
+
+.planner-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.planner-summary-row strong {
+  color: #1f2937;
 }
 
 .btn-cancel {
@@ -876,6 +994,113 @@ body {
   color: #888;
   cursor: pointer;
 }
+
+.lot-details-modal {
+  display: none;
+  position: fixed;
+  z-index: 3200;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.65);
+  align-items: center;
+  justify-content: center;
+}
+
+.lot-details-content {
+  width: min(640px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+}
+
+.lot-details-header {
+  background: linear-gradient(135deg, #2d4e1e, #3a6c28);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+}
+
+.lot-details-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.lot-details-close {
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lot-details-body {
+  padding: 16px 22px 22px;
+  color: #1f2937;
+}
+
+.lot-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.lot-details-item {
+  background: #f8faf8;
+  border: 1px solid #e3ece0;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.lot-details-label {
+  display: block;
+  font-size: 12px;
+  color: #5b6472;
+  margin-bottom: 3px;
+}
+
+.lot-details-value {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.lot-payment-summary {
+  border: 1px solid #dbe7d8;
+  border-radius: 10px;
+  background: #f5faf4;
+  padding: 12px;
+  margin-top: 4px;
+}
+
+.lot-payment-summary h4 {
+  margin: 0 0 8px;
+  color: #2d4e1e;
+  font-size: 0.98rem;
+}
+
+.lot-payment-summary p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+@media (max-width: 700px) {
+  .lot-details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-grid {
+    grid-template-columns: 1fr;
+  }
+}
   </style>
 </head>
 <body>
@@ -889,12 +1114,16 @@ body {
     <li><a href="index.php">Home</a></li>
     <li class="active"><a href="userlot.php">View Lots</a></li>
     <li><a href="findagent.php">Find Agent</a></li>
-    <li><a href="about.html">About</a></li>
-    <li><a href="faqs.html">FAQs</a></li>
-    <li><a href="contact.html">Contact</a></li>
+    <li><a href="about.php">About</a></li>
+    <li><a href="faqs.php">FAQs</a></li>
+    <li><a href="contact.php">Contact</a></li>
  </ul>
   <div class="nav-right">
-    <a href="Login/login.php" class="login-btn">Login</a>
+    <?php if (function_exists('userHasAccount') ? userHasAccount() : (isset($_SESSION['user_id']))): ?>
+        <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
+    <?php else: ?>
+        <a href="Login/login.php" class="login-btn">Login</a>
+    <?php endif; ?>
   </div>
 </nav>
 </header>
@@ -912,7 +1141,7 @@ body {
 <div id="viewingModal" class="viewing-modal">
   <div class="viewing-modal-content" style="margin:10px auto 0 auto;">
     <div class="viewing-modal-header">
-      <h2 class="viewing-modal-title">Reservation Request</h2>
+      <h2 class="viewing-modal-title">Lot Description and Details</h2>
       <button class="viewing-close" onclick="closeViewingModal()">&times;</button>
     </div>
 
@@ -922,6 +1151,8 @@ body {
         <input type="hidden" name="viewing_action" value="request">
         <input type="hidden" name="location_id" id="location_id" value="">
         <input type="hidden" name="lot_id" id="lot_id" value="">
+
+        <br></br>
 
         <div class="form-row">
           <div class="form-group">
@@ -966,16 +1197,12 @@ body {
 
             <div style="margin-top:10px;display:flex;gap:10px;">
               <button type="button" onclick="getCurrentLocationUser()" class="btn-location btn-submit" style="padding:6px 12px;">Get Current Location</button>
-              <button type="button" onclick="enableMapPinMode()" class="btn-location" style="padding:6px 12px;background:#e6e6e6;color:#23613b;border:none;border-radius:6px;cursor:pointer;">Pin on Map</button>
               <button type="button" onclick="clearLocationUser()" class="btn-location btn-cancel" style="padding:6px 12px;">Clear Location</button>
             </div>
 
             <div id="user-location-status" class="location-status"></div>
 
             <div style="margin-top:16px;">
-              <label style="font-size:13px;color:#14532d;font-weight:500;">Or select location on map:</label>
-              <div id="user-select-map" style="height:350px;width:100%;border-radius:8px;margin-top:8px;"></div>
-              <div style="font-size:12px;color:#666;margin-top:4px;">Click on the map to set your location.</div>
             </div>
           </div>
         </div>
@@ -1024,8 +1251,45 @@ body {
 
         <div class="form-actions">
           <button type="button" class="btn-cancel" onclick="closeViewingModal()">Cancel</button>
+          <button type="button" class="btn-submit" style="background:#23613b;margin-right:8px;" onclick="bookAppointment()">Book an Appointment</button>
           <button type="submit" class="btn-submit">Submit Reservation</button>
         </div>
+      <script>
+      function bookAppointment() {
+        // Collect form data
+        const form = document.querySelector('form');
+        const formData = new FormData(form);
+        formData.append('appointment_type', 'appointment');
+        // Ensure agent_id is included
+        const agentDiv = document.getElementById('suggestedAgent');
+        const agent_id = agentDiv && agentDiv.dataset ? agentDiv.dataset.agentId || null : null;
+        formData.append('agent_id', agent_id);
+
+        fetch('submit_viewing.php', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            showUserMessage('Appointment request sent! The agent will be notified.');
+            closeViewingModal();
+          } else {
+            showUserMessage('Failed to book appointment: ' + (data.error || 'Unknown error'));
+          }
+        })
+        .catch(() => {
+          showUserMessage('Failed to book appointment: Network error');
+        });
+      }
+
+      function showUserMessage(msg) {
+        const modal = document.getElementById('userMessageModal');
+        document.getElementById('userMessageModalText').textContent = msg;
+        modal.style.display = 'flex';
+        setTimeout(() => { modal.style.display = 'none'; }, 3000);
+      }
+      </script>
       </form>
     </div>
   </div>
@@ -1036,7 +1300,17 @@ body {
   <div style="background:#fff;padding:32px 28px 24px 28px;border-radius:12px;max-width:350px;width:90vw;box-shadow:0 8px 32px rgba(44,62,80,0.18);position:relative;text-align:center;">
     <div id="userMessageModalText" style="font-size:1.08em;color:#222;margin-bottom:18px;"></div>
     <button onclick="closeUserMessageModal()" style="background:#23613b;color:#fff;padding:8px 22px;border:none;border-radius:6px;font-weight:600;font-size:1em;cursor:pointer;">OK</button>
-    <button id="userMessageModalCloseBtn" style="display:none;position:absolute;top:10px;right:14px;background:none;border:none;font-size:1.5em;color:#888;cursor:pointer;">&times;</button>
+    <button id="userMessageModalCloseBtn" style="display:none;position:absolute;top:10px;right:14px;background: none;border: none;font-size:1.5em;color:#888;cursor:pointer;">&times;</button>
+  </div>
+</div>
+
+<div id="lotDetailsModal" class="lot-details-modal">
+  <div class="lot-details-content">
+    <div class="lot-details-header">
+      <h3 id="lotDetailsTitle">Lot Details</h3>
+      <button type="button" class="lot-details-close" onclick="closeLotDetailsModal()">&times;</button>
+    </div>
+    <div class="lot-details-body" id="lotDetailsBody"></div>
   </div>
 </div>
 
@@ -1058,6 +1332,7 @@ body {
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="assets/js/alert-modal.js"></script>
 <script>
 /* -------------------- MAP & INFO PANEL -------------------- */
 const map = L.map('map').setView([6.9214, 122.0790], 12);
@@ -1083,7 +1358,7 @@ function appendChatbotMessage(text) {
 
 function chatbotReply(topic) {
   if (topic === 'reservation') {
-    appendChatbotMessage('Select a location, choose an available lot, then click Reserve. Fill out the form and submit — the lot will be marked Reserved right away. An agent will review and contact you to confirm.');
+    appendChatbotMessage('Select a location, choose an available lot, then click Reserve. Fill out the form and submit your reservation request. The lot will only be marked Reserved after an agent reviews and approves it, then they will contact you to confirm.');
     return;
   }
   if (topic === 'flow') {
@@ -1142,16 +1417,16 @@ function updateInfoPanel(data) {
       let cls = '';
       const status = lot.lot_status || 'Available';
       if (status === 'Sale' || status === 'Available') cls = 'sale';
-      else if (status === 'Sold' || status === 'Paid') cls = 'sold';
+      else if (status === 'Sold' || status === 'Paid' || status === 'Installment') cls = 'sold';
       else if (status === 'Reserved') cls = 'reserved';
 
       let actionBtn = '';
-      if (status === 'Sold' || status === 'Paid') {
-        actionBtn = `<button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Unavailable</button>`;
+      if (status === 'Sold' || status === 'Paid' || status === 'Installment') {
+        actionBtn = `<div class="lot-action-group"><button class="inquire-btn" disabled style="background:#ccc;cursor:not-allowed;">Unavailable</button></div>`;
       } else if (status === 'Reserved') {
-        actionBtn = `<button class="inquire-btn" disabled style="background:#e9c46a;color:#2d4e1e;cursor:not-allowed;" title="This lot is under reservation pending agent approval">Under Reservation</button>`;
+        actionBtn = `<div class="lot-action-group"><button class="inquire-btn" disabled style="background:#e9c46a;color:#2d4e1e;cursor:not-allowed;" title="This lot is under reservation pending agent approval">Under Reservation</button></div>`;
       } else {
-        actionBtn = `<button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>Reserve</button>`;
+        actionBtn = `<div class="lot-action-group"><button class="inquire-btn" onclick='openViewingModal(${JSON.stringify(lot)})'>View Details</button></div>`;
       }
 
       rows += `
@@ -1184,7 +1459,7 @@ function updateInfoPanel(data) {
           <th>Lot Size</th>
           <th>Lot Price</th>
           <th>Lot Status</th>
-          <th></th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -1233,6 +1508,251 @@ function updateInfoPanel(data) {
     };
     closeB.onclick   = () => { modal.style.display = 'none'; };
     window.onclick   = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+  }
+}
+
+function toMoney(value) {
+  const num = Number(value);
+  if (!isFinite(num)) return 'Not set';
+  return `PHP ${num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function normalizePaymentType(rawType) {
+  const type = String(rawType || '').trim();
+  if (!type || type.toLowerCase() === 'not applicable') return 'Not set';
+  return type;
+}
+
+function calculateNextDueDateFromDay(dueDay) {
+  const day = Math.floor(Number(dueDay) || 0);
+  if (day < 1 || day > 31) return '';
+
+  const today = new Date();
+  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const daysInCurrentMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const currentMonthDay = Math.min(day, daysInCurrentMonth);
+  let candidate = new Date(today.getFullYear(), today.getMonth(), currentMonthDay);
+
+  if (candidate < todayOnly) {
+    const firstNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const daysInNextMonth = new Date(firstNextMonth.getFullYear(), firstNextMonth.getMonth() + 1, 0).getDate();
+    const nextMonthDay = Math.min(day, daysInNextMonth);
+    candidate = new Date(firstNextMonth.getFullYear(), firstNextMonth.getMonth(), nextMonthDay);
+  }
+
+  const yyyy = candidate.getFullYear();
+  const mm = String(candidate.getMonth() + 1).padStart(2, '0');
+  const dd = String(candidate.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function sanitizePreferredValues(lotPrice, downPaymentRaw, termYearsRaw, dueDayRaw) {
+  const lotPriceSafe = Number(lotPrice) || 0;
+  const downPaymentNum = Number(downPaymentRaw);
+  const termYearsNum = Number(termYearsRaw);
+  const dueDayNum = Number(dueDayRaw);
+
+  const downPayment = isFinite(downPaymentNum) && downPaymentNum > 0 ? downPaymentNum : 0;
+  const cappedDown = Math.min(Math.max(0, downPayment), Math.max(0, lotPriceSafe - 0.01));
+  const termYears = isFinite(termYearsNum) && termYearsNum > 0 ? Math.min(5, Math.floor(termYearsNum)) : 0;
+  const dueDay = isFinite(dueDayNum) && dueDayNum >= 1 && dueDayNum <= 31 ? Math.floor(dueDayNum) : 0;
+  const months = termYears > 0 ? termYears * 12 : 0;
+  const remaining = Math.max(0, lotPriceSafe - cappedDown);
+  const monthly = months > 0 && remaining > 0 ? (remaining / months) : 0;
+
+  return {
+    down_payment_amount: cappedDown,
+    payment_term_years: termYears,
+    payment_due_day: dueDay,
+    payment_amount: monthly,
+    remaining_balance: remaining,
+    term_months: months
+  };
+}
+
+function enforceClientTermYearsRange(inputEl) {
+  if (!inputEl) return;
+  const raw = String(inputEl.value || '').trim();
+  if (raw === '') {
+    inputEl.dataset.termWarned = '';
+    return;
+  }
+
+  const years = Number(raw);
+  if (!isFinite(years)) return;
+
+  if (years < 1 || years > 5) {
+    const clamped = years < 1 ? 1 : 5;
+    inputEl.value = String(clamped);
+    if (inputEl.dataset.termWarned !== '1') {
+      showUserMessageModal('Payment term is only 1 to 5 years.');
+      inputEl.dataset.termWarned = '1';
+    }
+    return;
+  }
+
+  inputEl.dataset.termWarned = '';
+}
+
+const preferredInstallmentByLot = {};
+
+function openLotDetailsModal(lot) {
+  if (!lot) return;
+
+  const title = document.getElementById('lotDetailsTitle');
+  const body = document.getElementById('lotDetailsBody');
+  const modal = document.getElementById('lotDetailsModal');
+  if (!title || !body || !modal) return;
+
+  const lotPrice = Number(lot.lot_price) || 0;
+  const paymentType = normalizePaymentType(lot.payment_type);
+  const termYears = Number(lot.payment_term_years) || 0;
+  const downPayment = Number(lot.down_payment_amount) || 0;
+  const dueDay = Number(lot.payment_due_day) || 0;
+  const hasSavedDeadline = !!lot.payment_deadline;
+  const savedDeadlineText = hasSavedDeadline ? String(lot.payment_deadline) : '';
+  const prefKey = String(lot.id || '');
+  const savedPref = prefKey && preferredInstallmentByLot[prefKey] ? preferredInstallmentByLot[prefKey] : null;
+  const seedDown = savedPref ? Number(savedPref.down_payment_amount || 0) : downPayment;
+  const seedYears = savedPref ? Number(savedPref.payment_term_years || 0) : termYears;
+  const seedDueDay = savedPref ? Number(savedPref.payment_due_day || 0) : dueDay;
+  const seedPaymentMethod = savedPref ? String(savedPref.payment_method || '') : String(lot.payment_method || '');
+  const seedFinancingOption = savedPref ? String(savedPref.financing_option || '') : String(lot.financing_option || '');
+
+  const initial = sanitizePreferredValues(lotPrice, seedDown, seedYears, seedDueDay);
+
+  title.textContent = `Block ${lot.block_number} - Lot ${lot.lot_number} Details`;
+
+  body.innerHTML = `
+    <div class="lot-details-grid">
+      <div class="lot-details-item">
+        <span class="lot-details-label">Lot Size</span>
+        <span class="lot-details-value">${lot.lot_size} sqm</span>
+      </div>
+      <div class="lot-details-item">
+        <span class="lot-details-label">Lot Price</span>
+        <span class="lot-details-value">${toMoney(lotPrice)}</span>
+      </div>
+      <div class="lot-details-item">
+        <span class="lot-details-label">Status</span>
+        <span class="lot-details-value">${lot.lot_status || 'Available'}</span>
+      </div>
+      <div class="lot-details-item">
+        <span class="lot-details-label">Payment Type</span>
+        <span class="lot-details-value">${paymentType}</span>
+      </div>
+    </div>
+
+    <div class="lot-payment-summary">
+      <h4>Payment Description (Calculator)</h4>
+      <div class="planner-grid">
+        <div class="form-group">
+          <label class="form-label">Down Payment (PHP)</label>
+          <input type="number" min="0" step="0.01" class="form-input" id="detailsPreferredDownPayment" value="${initial.down_payment_amount > 0 ? initial.down_payment_amount : ''}" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Term (Years)</label>
+          <input type="number" min="1" max="5" step="1" class="form-input" id="detailsPreferredTermYears" value="${initial.payment_term_years > 0 ? initial.payment_term_years : ''}" placeholder="e.g. 3">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Monthly Due Day</label>
+          <input type="number" min="1" max="31" step="1" class="form-input" id="detailsPreferredDueDay" value="${initial.payment_due_day > 0 ? initial.payment_due_day : ''}" placeholder="1 to 31">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Estimated Monthly (Auto)</label>
+          <input type="text" class="form-input" id="detailsPreferredMonthly" value="${initial.payment_amount > 0 ? formatPhpAmount(initial.payment_amount) : ''}" readonly placeholder="Auto-calculated">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Payment Method</label>
+          <select class="form-input" id="detailsPreferredPaymentMethod">
+            <option value="" ${seedPaymentMethod === '' ? 'selected' : ''}>Select payment method</option>
+            <option value="Cash" ${seedPaymentMethod === 'Cash' ? 'selected' : ''}>Cash</option>
+            <option value="Bank" ${seedPaymentMethod === 'Bank' ? 'selected' : ''}>Bank</option>
+            <option value="GCash" ${seedPaymentMethod === 'GCash' ? 'selected' : ''}>GCash</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Financing Option</label>
+          <select class="form-input" id="detailsPreferredFinancingOption">
+            <option value="" ${seedFinancingOption === '' ? 'selected' : ''}>Select financing option</option>
+            <option value="Spot Cash Payment" ${seedFinancingOption === 'Spot Cash Payment' ? 'selected' : ''}>Spot Cash Payment</option>
+            <option value="Bank Financing" ${seedFinancingOption === 'Bank Financing' ? 'selected' : ''}>Bank Financing</option>
+            <option value="Pag-IBIG Financing" ${seedFinancingOption === 'Pag-IBIG Financing' ? 'selected' : ''}>Pag-IBIG Financing</option>
+            <option value="Deffered Cash Payment" ${seedFinancingOption === 'Deffered Cash Payment' ? 'selected' : ''}>Deffered Cash Payment</option>
+          </select>
+        </div>
+      </div>
+      <p><strong>Remaining Balance:</strong> <span id="detailsPreferredRemaining">${toMoney(initial.remaining_balance)}</span></p>
+      <p><strong>Total Months:</strong> <span id="detailsPreferredMonths">${initial.term_months > 0 ? initial.term_months : '0'}</span></p>
+      <p><strong>Monthly Due:</strong> <span id="detailsPreferredDueText">${initial.payment_due_day > 0 ? `Every day ${initial.payment_due_day} of the month` : 'Not set'}</span></p>
+      <p><strong>Payment Deadline:</strong> <span id="detailsPreferredDeadline">${hasSavedDeadline ? savedDeadlineText : (initial.payment_due_day > 0 ? `${calculateNextDueDateFromDay(initial.payment_due_day)} (Auto from due day)` : 'Not set')}</span></p>
+    </div>
+  `;
+
+  const downInput = document.getElementById('detailsPreferredDownPayment');
+  const yearInput = document.getElementById('detailsPreferredTermYears');
+  const dueInput = document.getElementById('detailsPreferredDueDay');
+  const monthlyInput = document.getElementById('detailsPreferredMonthly');
+  const remainEl = document.getElementById('detailsPreferredRemaining');
+  const monthsEl = document.getElementById('detailsPreferredMonths');
+  const dueTextEl = document.getElementById('detailsPreferredDueText');
+  const deadlineEl = document.getElementById('detailsPreferredDeadline');
+  const paymentMethodInput = document.getElementById('detailsPreferredPaymentMethod');
+  const financingOptionInput = document.getElementById('detailsPreferredFinancingOption');
+
+  const recalcDetailsPlan = () => {
+    enforceClientTermYearsRange(yearInput);
+    const calc = sanitizePreferredValues(lotPrice, downInput ? downInput.value : 0, yearInput ? yearInput.value : 0, dueInput ? dueInput.value : 0);
+    if (monthlyInput) monthlyInput.value = calc.payment_amount > 0 ? formatPhpAmount(calc.payment_amount) : '';
+    if (remainEl) remainEl.textContent = toMoney(calc.remaining_balance);
+    if (monthsEl) monthsEl.textContent = calc.term_months > 0 ? String(calc.term_months) : '0';
+    if (dueTextEl) dueTextEl.textContent = calc.payment_due_day > 0 ? `Every day ${calc.payment_due_day} of the month` : 'Not set';
+    if (deadlineEl) {
+      if (hasSavedDeadline) {
+        deadlineEl.textContent = savedDeadlineText;
+      } else if (calc.payment_due_day > 0) {
+        const projected = calculateNextDueDateFromDay(calc.payment_due_day);
+        deadlineEl.textContent = projected ? `${projected} (Auto from due day)` : 'Not set';
+      } else {
+        deadlineEl.textContent = 'Not set';
+      }
+    }
+    return calc;
+  };
+
+  const persistDetailsPlan = () => {
+    const calc = recalcDetailsPlan();
+    if (!prefKey) return calc;
+    preferredInstallmentByLot[prefKey] = {
+      down_payment_amount: calc.down_payment_amount,
+      payment_term_years: calc.payment_term_years,
+      payment_due_day: calc.payment_due_day,
+      payment_amount: calc.payment_amount,
+      payment_method: paymentMethodInput ? String(paymentMethodInput.value || '') : '',
+      financing_option: financingOptionInput ? String(financingOptionInput.value || '') : ''
+    };
+    return calc;
+  };
+
+  [downInput, yearInput, dueInput].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', recalcDetailsPlan);
+  });
+  [paymentMethodInput, financingOptionInput].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', persistDetailsPlan);
+  });
+
+  persistDetailsPlan();
+
+  modal.style.display = 'flex';
+}
+
+function closeLotDetailsModal() {
+  const modal = document.getElementById('lotDetailsModal');
+  if (modal) {
+    modal.style.display = 'none';
   }
 }
 
@@ -1334,7 +1854,7 @@ function loadAndDrawPins(locationId) {
         poly.appendChild(title);
 
         // Add visual hover effect & clicking logic
-        poly.style.cursor = (stat === 'sold' || stat === 'reserved') ? 'not-allowed' : 'pointer';
+        poly.style.cursor = (stat === 'sold' || stat === 'reserved' || stat === 'installment') ? 'not-allowed' : 'pointer';
         poly.onmouseover = () => { 
             poly.setAttribute('fill', stat === 'sold' ? 'rgba(220,53,69,0.8)' : (stat === 'reserved' ? 'rgba(255,193,7,0.8)' : 'rgba(40,167,69,0.8)')); 
         };
@@ -1347,8 +1867,8 @@ function loadAndDrawPins(locationId) {
           const targetLot = allLots[locationId]?.find(l => Number(l.id) === Number(pin.lot_id));
           if (!targetLot) return;
           const lotStat = String(targetLot.lot_status || '').toLowerCase();
-          if (lotStat === 'sold' || lotStat === 'paid') {
-            showUserMessageModal('This lot is already sold and is no longer available.');
+          if (lotStat === 'sold' || lotStat === 'paid' || lotStat === 'installment') {
+            showUserMessageModal('This lot is already sold or under installment and is no longer available.');
           } else if (lotStat === 'reserved') {
             showUserMessageModal('This lot is currently under reservation pending agent approval. It is not available at this time.');
           } else {
@@ -1389,133 +1909,229 @@ function loadAndDrawPins(locationId) {
 /* -------------------- VIEWING MODAL -------------------- */
 let currentLot = null;
 
-function openViewingModal(lot) {
-  currentLot = lot || null;
+function formatPhpAmount(value) {
+  const num = Number(value);
+  if (!isFinite(num)) return 'PHP 0.00';
+  return `PHP ${num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function getPreferredInstallmentState() {
+  const downPaymentInput = document.getElementById('preferredDownPayment');
+  const termYearsInput = document.getElementById('preferredTermYears');
+  const dueDayInput = document.getElementById('preferredDueDay');
+
+  const lotPrice = Number(currentLot && currentLot.lot_price ? currentLot.lot_price : 0);
+  const downPaymentSeed = downPaymentInput && downPaymentInput.value !== ''
+    ? downPaymentInput.value
+    : (currentLot && currentLot.down_payment_amount ? currentLot.down_payment_amount : 0);
+  const termYearsSeed = termYearsInput && termYearsInput.value !== ''
+    ? termYearsInput.value
+    : (currentLot && currentLot.payment_term_years ? currentLot.payment_term_years : 0);
+  const dueDaySeed = dueDayInput && dueDayInput.value !== ''
+    ? dueDayInput.value
+    : (currentLot && currentLot.payment_due_day ? currentLot.payment_due_day : 0);
+
+  const downPaymentRaw = Number(downPaymentSeed);
+  const downPayment = isFinite(downPaymentRaw) && downPaymentRaw > 0 ? downPaymentRaw : 0;
+  const termYears = Number(termYearsSeed);
+  const dueDay = Number(dueDaySeed);
+  const paymentMethod = String(currentLot && currentLot.payment_method ? currentLot.payment_method : '');
+  const financingOption = String(currentLot && currentLot.financing_option ? currentLot.financing_option : '');
+
+  const safeDownPayment = Math.min(Math.max(0, downPayment), Math.max(0, lotPrice - 0.01));
+  const remaining = Math.max(0, lotPrice - safeDownPayment);
+  const months = termYears > 0 ? termYears * 12 : 0;
+  const monthly = months > 0 && remaining > 0 ? (remaining / months) : 0;
+
+  return {
+    lotPrice,
+    downPayment,
+    safeDownPayment,
+    termYears,
+    dueDay,
+    paymentMethod,
+    financingOption,
+    remaining,
+    months,
+    monthly
+  };
+}
+
+async function openViewingModal(lot) {
+  const sourceLot = lot || null;
+  const sourceKey = sourceLot && sourceLot.id ? String(sourceLot.id) : '';
+  const savedPref = sourceKey && preferredInstallmentByLot[sourceKey] ? preferredInstallmentByLot[sourceKey] : null;
+  currentLot = savedPref ? { ...sourceLot, ...savedPref } : sourceLot;
 
   if (currentLot && currentLot.lot_status === 'Reserved') {
-    if (!confirm('Warning: This lot is already in reservation stage. Do you still want to request a viewing?')) {
+    const proceed = await showConfirmModal('Warning: This lot is already in reservation stage. Do you still want to request a viewing?');
+    if (!proceed) {
       return;
     }
   }
 
+  // Show modal and reset form
   document.getElementById('viewingModal').style.display = 'block';
   document.getElementById('viewingForm').reset();
-  
   document.getElementById('location_id').value = currentLot ? currentLot.location_id : '';
   document.getElementById('lot_id').value = currentLot ? currentLot.id : '';
 
-  const ag = document.getElementById('suggestedAgent');
-  if (ag) {
-    ag.innerHTML = '';
-    ag.style.display = 'none';
-    delete ag.dataset.agentId;
-  }
-  if (document.getElementById('agentActions')) document.getElementById('agentActions').style.display = 'none';
-  if (document.getElementById('otherAgentSelect')) document.getElementById('otherAgentSelect').style.display = 'none';
+  // Insert lot details and payment summary at the top of the modal
+  const viewingBody = document.querySelector('.viewing-modal-body');
+  if (viewingBody) {
+    // Remove any previous lot details and payment summary to prevent duplicates
+    const prevDetails = viewingBody.querySelectorAll('.lot-details-grid, .lot-payment-summary');
+    prevDetails.forEach(el => el.remove());
 
-  // Force re-initialize modal map
-  setTimeout(() => {
-    const mapDiv = document.getElementById('user-select-map');
-    if (!mapDiv) return;
-    
-    // Remove previous map instance if exists
-    if (window.userLocationMap && window.userLocationMap.map) {
-      window.userLocationMap.map.remove();
-    }
-    if (mapDiv._leaflet_id) {
-      mapDiv._leaflet_id = null;
-      mapDiv.innerHTML = '';
-    }
-    
-    const map = L.map('user-select-map').setView([13.41, 122.56], 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-    
-    let marker = null;
-    
-    map.on('click', async function(e) {
-      const lat = e.latlng.lat;
-      const lng = e.latlng.lng;
-      document.getElementById('user_lat').value = lat;
-      document.getElementById('user_lng').value = lng;
-      
-      // Reverse geocode the clicked location
-      const address = await reverseGeocodeUser(lat, lng);
-      document.getElementById('user_location').value = address;
+    const lotPrice = Number(currentLot.lot_price) || 0;
+    const paymentType = normalizePaymentType(currentLot.payment_type);
+    const termYears = Number(currentLot.payment_term_years) || 0;
+    const downPayment = Number(currentLot.down_payment_amount) || 0;
+    const dueDay = Number(currentLot.payment_due_day) || 0;
+    const hasSavedDeadline = !!currentLot.payment_deadline;
+    const savedDeadlineText = hasSavedDeadline ? String(currentLot.payment_deadline) : '';
+    const prefKey = String(currentLot.id || '');
+    const savedPref = prefKey && preferredInstallmentByLot[prefKey] ? preferredInstallmentByLot[prefKey] : null;
+    const seedDown = savedPref ? Number(savedPref.down_payment_amount || 0) : downPayment;
+    const seedYears = savedPref ? Number(savedPref.payment_term_years || 0) : termYears;
+    const seedDueDay = savedPref ? Number(savedPref.payment_due_day || 0) : dueDay;
+    const seedPaymentMethod = savedPref ? String(savedPref.payment_method || '') : String(currentLot.payment_method || '');
+    const seedFinancingOption = savedPref ? String(savedPref.financing_option || '') : String(currentLot.financing_option || '');
+    const initial = sanitizePreferredValues(lotPrice, seedDown, seedYears, seedDueDay);
+    const detailsHtml = `
+      <div class="lot-details-grid">
+        <div class="lot-details-item">
+          <span class="lot-details-label">Lot Size</span>
+          <span class="lot-details-value">${currentLot.lot_size} sqm</span>
+        </div>
+        <div class="lot-details-item">
+          <span class="lot-details-label">Lot Price</span>
+          <span class="lot-details-value">${toMoney(lotPrice)}</span>
+        </div>
+        <div class="lot-details-item">
+          <span class="lot-details-label">Status</span>
+          <span class="lot-details-value">${currentLot.lot_status || 'Available'}</span>
+        </div>
+        <div class="lot-details-item">
+          <span class="lot-details-label">Payment Type</span>
+          <span class="lot-details-value">${paymentType}</span>
+        </div>
+      </div>
+      <div class="lot-payment-summary">
+        <h4>Payment Description (Calculator)</h4>
+        <div class="planner-grid">
+          <div class="form-group">
+            <label class="form-label">Down Payment (PHP)</label>
+            <input type="number" min="0" step="0.01" class="form-input" id="preferredDownPayment" value="${initial.down_payment_amount > 0 ? initial.down_payment_amount : ''}" placeholder="0.00">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Term (Years)</label>
+            <input type="number" min="1" max="5" step="1" class="form-input" id="preferredTermYears" value="${initial.payment_term_years > 0 ? initial.payment_term_years : ''}" placeholder="e.g. 3">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Monthly Due Day</label>
+            <input type="number" min="1" max="31" step="1" class="form-input" id="preferredDueDay" value="${initial.payment_due_day > 0 ? initial.payment_due_day : ''}" placeholder="1 to 31">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Estimated Monthly (Auto)</label>
+            <input type="text" class="form-input" id="preferredMonthly" value="${initial.payment_amount > 0 ? formatPhpAmount(initial.payment_amount) : ''}" readonly placeholder="Auto-calculated">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <select class="form-input" id="preferredPaymentMethod">
+              <option value="" ${seedPaymentMethod === '' ? 'selected' : ''}>Select payment method</option>
+              <option value="Cash" ${seedPaymentMethod === 'Cash' ? 'selected' : ''}>Cash</option>
+              <option value="Bank" ${seedPaymentMethod === 'Bank' ? 'selected' : ''}>Bank</option>
+              <option value="GCash" ${seedPaymentMethod === 'GCash' ? 'selected' : ''}>GCash</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Financing Option</label>
+            <select class="form-input" id="preferredFinancingOption">
+              <option value="" ${seedFinancingOption === '' ? 'selected' : ''}>Select financing option</option>
+              <option value="Spot Cash Payment" ${seedFinancingOption === 'Spot Cash Payment' ? 'selected' : ''}>Spot Cash Payment</option>
+              <option value="Bank Financing" ${seedFinancingOption === 'Bank Financing' ? 'selected' : ''}>Bank Financing</option>
+              <option value="Pag-IBIG Financing" ${seedFinancingOption === 'Pag-IBIG Financing' ? 'selected' : ''}>Pag-IBIG Financing</option>
+              <option value="Deffered Cash Payment" ${seedFinancingOption === 'Deffered Cash Payment' ? 'selected' : ''}>Deffered Cash Payment</option>
+            </select>
+          </div>
+        </div>
+        <p><strong>Remaining Balance:</strong> <span id="preferredRemaining">${toMoney(initial.remaining_balance)}</span></p>
+        <p><strong>Total Months:</strong> <span id="preferredMonths">${initial.term_months > 0 ? initial.term_months : '0'}</span></p>
+        <p><strong>Monthly Due:</strong> <span id="preferredDueText">${initial.payment_due_day > 0 ? `Every day ${initial.payment_due_day} of the month` : 'Not set'}</span></p>
+        <p><strong>Payment Deadline:</strong> <span id="preferredDeadline">${hasSavedDeadline ? savedDeadlineText : (initial.payment_due_day > 0 ? `${calculateNextDueDateFromDay(initial.payment_due_day)} (Auto from due day)` : 'Not set')}</span></p>
+      </div>
+    `;
+    // Insert at the top of the modal body
+    viewingBody.insertAdjacentHTML('afterbegin', detailsHtml);
 
-      updateLocationStatus(`Pinned location selected from map | Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
-      
-      // Always remove existing marker first so there is only one visible pin.
-      if (marker && map.hasLayer(marker)) {
-        map.removeLayer(marker);
+    // Add listeners for monthly estimate accuracy
+    const downInput = document.getElementById('preferredDownPayment');
+    const yearInput = document.getElementById('preferredTermYears');
+    const dueInput = document.getElementById('preferredDueDay');
+    const monthlyInput = document.getElementById('preferredMonthly');
+    const remainEl = document.getElementById('preferredRemaining');
+    const monthsEl = document.getElementById('preferredMonths');
+    const dueTextEl = document.getElementById('preferredDueText');
+    const deadlineEl = document.getElementById('preferredDeadline');
+    const paymentMethodInput = document.getElementById('preferredPaymentMethod');
+    const financingOptionInput = document.getElementById('preferredFinancingOption');
+
+    const recalcPlan = () => {
+      enforceClientTermYearsRange(yearInput);
+      const calc = sanitizePreferredValues(lotPrice, downInput ? downInput.value : 0, yearInput ? yearInput.value : 0, dueInput ? dueInput.value : 0);
+      if (monthlyInput) monthlyInput.value = calc.payment_amount > 0 ? formatPhpAmount(calc.payment_amount) : '';
+      if (remainEl) remainEl.textContent = toMoney(calc.remaining_balance);
+      if (monthsEl) monthsEl.textContent = calc.term_months > 0 ? String(calc.term_months) : '0';
+      if (dueTextEl) dueTextEl.textContent = calc.payment_due_day > 0 ? `Every day ${calc.payment_due_day} of the month` : 'Not set';
+      if (deadlineEl) {
+        if (hasSavedDeadline) {
+          deadlineEl.textContent = savedDeadlineText;
+        } else if (calc.payment_due_day > 0) {
+          const projected = calculateNextDueDateFromDay(calc.payment_due_day);
+          deadlineEl.textContent = projected ? `${projected} (Auto from due day)` : 'Not set';
+        } else {
+          deadlineEl.textContent = 'Not set';
+        }
       }
-      if (window.userLocationMap && window.userLocationMap.marker && map.hasLayer(window.userLocationMap.marker)) {
-        map.removeLayer(window.userLocationMap.marker);
-      }
+      // Save preferred values for this lot
+      preferredInstallmentByLot[prefKey] = {
+        down_payment_amount: calc.down_payment_amount,
+        payment_term_years: calc.payment_term_years,
+        payment_due_day: calc.payment_due_day,
+        payment_amount: calc.payment_amount,
+        payment_method: paymentMethodInput ? String(paymentMethodInput.value || '') : '',
+        financing_option: financingOptionInput ? String(financingOptionInput.value || '') : ''
+      };
+      return calc;
+    };
 
-      marker = L.marker(e.latlng, {
-        draggable:true,
-        icon: L.icon({
-          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41]
-        })
-      }).addTo(map);
-      marker.bindPopup(`<strong>Selected Location</strong><br>Lat: ${lat.toFixed(6)}<br>Lng: ${lng.toFixed(6)}`).openPopup();
-      marker.on('dragend', async function(ev) {
-        const pos = ev.target.getLatLng();
-        document.getElementById('user_lat').value = pos.lat;
-        document.getElementById('user_lng').value = pos.lng;
-        const dragAddress = await reverseGeocodeUser(pos.lat, pos.lng);
-        document.getElementById('user_location').value = dragAddress;
-        marker.setPopupContent(`<strong>Selected Location</strong><br>Lat: ${pos.lat.toFixed(6)}<br>Lng: ${pos.lng.toFixed(6)}`);
-        updateLocationStatus(`Pinned location updated by dragging marker | Lat: ${pos.lat.toFixed(6)}, Lng: ${pos.lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
-      });
-
-      // Keep global marker reference synchronized to avoid duplicate markers.
-      if (window.userLocationMap) {
-        window.userLocationMap.marker = marker;
-      }
+    [downInput, yearInput, dueInput].forEach((el) => {
+      if (!el) return;
+      el.addEventListener('input', recalcPlan);
     });
-    
-    // If lat/lng already set, show marker
-    const lat = document.getElementById('user_lat').value;
-    const lng = document.getElementById('user_lng').value;
-    if (lat && lng) {
-      marker = L.marker([lat, lng], {
-        draggable:true,
-        icon: L.icon({
-          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41]
-        })
-      }).addTo(map);
-      map.setView([lat, lng], 14);
-      marker.on('dragend', async function(ev) {
-        const pos = ev.target.getLatLng();
-        document.getElementById('user_lat').value = pos.lat;
-        document.getElementById('user_lng').value = pos.lng;
-        const dragAddress = await reverseGeocodeUser(pos.lat, pos.lng);
-        document.getElementById('user_location').value = dragAddress;
-        marker.setPopupContent(`<strong>Selected Location</strong><br>Lat: ${pos.lat.toFixed(6)}<br>Lng: ${pos.lng.toFixed(6)}`);
-        updateLocationStatus(`Pinned location updated by dragging marker | Lat: ${pos.lat.toFixed(6)}, Lng: ${pos.lng.toFixed(6)} | Updated: ${getStatusTimeSuffix()}`, 'success');
-      });
+    [paymentMethodInput, financingOptionInput].forEach((el) => {
+      if (!el) return;
+      el.addEventListener('change', recalcPlan);
+    });
+    recalcPlan();
+  }
 
-      if (window.userLocationMap) {
-        window.userLocationMap.marker = marker;
-      }
-    }
-    
-    // Store map and marker globally for access by other functions
-    window.userLocationMap = { map, marker };
-  }, 300);
+  // Ensure agent slots are loaded for selected agent
+  const agentDiv = document.getElementById('suggestedAgent');
+  let agentId = null;
+  if (agentDiv && agentDiv.dataset && agentDiv.dataset.agentId) {
+    agentId = agentDiv.dataset.agentId;
+  }
+  if (agentId) {
+    loadAgentSlots(agentId);
+  } else {
+    // Reset slot dropdown if no agent
+    const slotSelect = document.getElementById('agentTimeSlot');
+    slotSelect.innerHTML = '<option value="">Please pick an agent first</option>';
+    slotSelect.disabled = true;
+  }
+  // ...existing code for agent, map, etc...
 }
 
 function closeViewingModal() {
@@ -1787,6 +2403,15 @@ function setPickButtonState(isPicked) {
 
 function renderSelectedAgentCard(agent, tagText) {
   const tag = tagText ? `<div style="margin-bottom:6px;font-size:12px;font-weight:700;color:#23613b;">${tagText}</div>` : '';
+  const avgRating = Number(agent.avg_rating || 0);
+  const reviewCount = Number(agent.review_count || 0);
+  const roundedStars = Math.max(0, Math.min(5, Math.round(avgRating)));
+  const stars = '★'.repeat(roundedStars) + '☆'.repeat(5 - roundedStars);
+  const ratingHtml = `<div style="margin-top:4px; font-size:13px; color:#b45309; font-weight:700;">
+      ${stars}
+      <span style="color:#1f2937; font-weight:600;">${avgRating.toFixed(1)}/5</span>
+      <span style="color:#6b7280; font-weight:500;">(${reviewCount} review${reviewCount === 1 ? '' : 's'})</span>
+    </div>`;
   return `
     <div class="agent-card">
       ${tag}
@@ -1795,6 +2420,7 @@ function renderSelectedAgentCard(agent, tagText) {
       </div>
       <div class="agent-card-info">
         <div class="agent-card-name">${agent.name}</div>
+        ${ratingHtml}
         <div class="agent-card-contact">${agent.email}<br>${agent.mobile || ''}</div>
         <div class="agent-card-location">${agent.city || ''}${agent.address ? ', ' + agent.address : ''}</div>
       </div>
@@ -1928,6 +2554,20 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
   const agentDiv = document.getElementById('suggestedAgent');
   const agent_id = agentDiv && agentDiv.dataset ? agentDiv.dataset.agentId || null : null;
   const lot_no = currentLot ? currentLot.lot_number : '';
+  const pref = getPreferredInstallmentState();
+
+  if (pref.termYears && (pref.termYears < 1 || pref.termYears > 5)) {
+    showUserMessageModal('Preferred term years must be between 1 and 5.');
+    return;
+  }
+  if (pref.dueDay && (pref.dueDay < 1 || pref.dueDay > 31)) {
+    showUserMessageModal('Preferred monthly due day must be between 1 and 31.');
+    return;
+  }
+  if (pref.downPayment >= pref.lotPrice && pref.lotPrice > 0) {
+    showUserMessageModal('Preferred down payment must be less than lot price.');
+    return;
+  }
 
   const formData = new FormData();
   formData.append('agent_id', agent_id);
@@ -1940,6 +2580,13 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
   formData.append('lot_no', lot_no);
   formData.append('preferredDateTime', document.getElementById('agentTimeSlot').value || '');
   formData.append('notes', document.getElementById('notes').value || '');
+  formData.append('preferred_down_payment', pref.downPayment > 0 ? String(pref.downPayment) : '');
+  formData.append('preferred_term_years', pref.termYears > 0 ? String(pref.termYears) : '');
+  formData.append('preferred_due_day', pref.dueDay > 0 ? String(pref.dueDay) : '');
+  formData.append('preferred_monthly_amount', pref.monthly > 0 ? String(pref.monthly.toFixed(2)) : '');
+  formData.append('preferred_remaining_balance', pref.remaining > 0 ? String(pref.remaining.toFixed(2)) : '');
+  formData.append('preferred_payment_method', pref.paymentMethod || '');
+  formData.append('preferred_financing_option', pref.financingOption || '');
   formData.append('client_lat', document.getElementById('user_lat').value || '');
   formData.append('client_lng', document.getElementById('user_lng').value || '');
   formData.append('location_id', document.getElementById('location_id').value || '');
@@ -1950,7 +2597,7 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
     .then((data) => {
       if (data.success) {
         showUserMessageModal(
-          '✅ Reservation request submitted!\n\nYour request is pending agent approval.\n\n' +
+          'Reservation request submitted!\n\nYour request is pending agent approval.\n\n' +
           'The lot will be marked as Reserved only after agent approval.\n\nWe will reach out to you soon.',
           closeViewingModal
         );
@@ -1964,7 +2611,9 @@ document.getElementById('viewingForm').addEventListener('submit', function (e) {
 /* -------------------- CLICK OUTSIDE TO CLOSE MODAL -------------------- */
 window.addEventListener('click', function (event) {
   const modal = document.getElementById('viewingModal');
+  const lotDetailsModal = document.getElementById('lotDetailsModal');
   if (event.target === modal) closeViewingModal();
+  if (event.target === lotDetailsModal) closeLotDetailsModal();
 });
 
 // Load agent slots and populate dropdown
@@ -1984,10 +2633,16 @@ function loadAgentSlots(agentId) {
         if (!grouped[slot.available_date]) grouped[slot.available_date] = [];
         grouped[slot.available_date].push(slot);
       });
+      let slotCount = 0;
       Object.keys(grouped).forEach(date => {
+        // Strict UTC parsing for available_date
+        const dateObj = new Date(date + 'T00:00:00Z');
+        // Filter out past dates (compare in UTC)
+        const now = new Date();
+        const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        if (dateObj < today) return; // Skip past dates
         const optgroup = document.createElement('optgroup');
         // Format date as e.g. December 25, 2025
-        const dateObj = new Date(date);
         const dateLabel = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
         optgroup.label = dateLabel;
         grouped[date].forEach(slot => {
@@ -2010,10 +2665,14 @@ function loadAgentSlots(agentId) {
           }
           opt.textContent = label;
           optgroup.appendChild(opt);
+          slotCount++;
         });
         select.appendChild(optgroup);
       });
       select.disabled = false;
+      if (slotCount === 0) {
+        showUserMessageModal('No available slots for this agent. Please try another agent or check back later.');
+      }
     })
     .catch(err => {
       console.error('Error fetching agent slots:', err);
@@ -2043,7 +2702,9 @@ function fetchAllAgentsForSelect() {
       manualAgentCache.forEach(agent => {
         const dist = (typeof agent.distance_km === 'number') ? ` - ${agent.distance_km} km` : '';
         const avail = Number(agent.is_available) === 0 ? ' [Unavailable]' : '';
-        select.innerHTML += `<option value="${agent.id}">${agent.name}${dist}${avail}</option>`;
+        const avg = Number(agent.avg_rating || 0).toFixed(1);
+        const reviews = Number(agent.review_count || 0);
+        select.innerHTML += `<option value="${agent.id}">${agent.name} - ${avg}/5 (${reviews})${dist}${avail}</option>`;
       });
     });
 }
@@ -2174,4 +2835,3 @@ function closeUserMessageModal() {
 </style>
 </body>
 </html>
-

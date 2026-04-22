@@ -143,6 +143,7 @@ if ($selected_loc) {
     <?php endif; ?>
 </div>
 
+<script src="assets/js/alert-modal.js"></script>
 <script>
 let activeLotId = null;
 let isDrawing = false;

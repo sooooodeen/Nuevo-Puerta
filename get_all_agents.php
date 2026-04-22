@@ -19,6 +19,24 @@ while ($colCheck && $r = $colCheck->fetch_assoc()) {
 }
 $availSelect = $availCol ? ", IFNULL($availCol, 1) AS is_avail" : ", 1 AS is_avail";
 
+$hasReviewsTable = false;
+$reviewsCheck = $conn->query("SHOW TABLES LIKE 'agent_reviews'");
+if ($reviewsCheck && $reviewsCheck->num_rows > 0) {
+    $hasReviewsTable = true;
+}
+
+$reviewsSelect = $hasReviewsTable
+    ? ", IFNULL(ar.avg_rating, 0) AS avg_rating, IFNULL(ar.review_count, 0) AS review_count"
+    : ", 0 AS avg_rating, 0 AS review_count";
+
+$reviewsJoin = $hasReviewsTable
+    ? " LEFT JOIN (
+          SELECT agent_id, AVG(rating) AS avg_rating, COUNT(*) AS review_count
+          FROM agent_reviews
+          GROUP BY agent_id
+        ) ar ON ar.agent_id = aa.id"
+    : '';
+
 // Optional user coordinates for distance calculation
 $lat = isset($_GET['lat']) ? filter_var($_GET['lat'], FILTER_VALIDATE_FLOAT) : null;
 $lng = isset($_GET['lng']) ? filter_var($_GET['lng'], FILTER_VALIDATE_FLOAT) : null;
@@ -35,7 +53,10 @@ if ($lat !== null && $lat !== false && $lng !== null && $lng !== false) {
     $params = [$lat, $lng, $lat];
 }
 
-$sql = "SELECT id, first_name, last_name, email, mobile, city, address, profile_picture, latitude, longitude $availSelect $distSelect FROM agent_accounts ORDER BY $distOrder";
+$sql = "SELECT aa.id, aa.first_name, aa.last_name, aa.email, aa.mobile, aa.city, aa.address, aa.profile_picture, aa.latitude, aa.longitude $availSelect $reviewsSelect $distSelect
+    FROM agent_accounts aa
+    $reviewsJoin
+    ORDER BY $distOrder";
 
 $agents = [];
 if ($types) {
@@ -67,6 +88,8 @@ function formatAgent($row) {
         'address'     => $row['address'] ?? '',
         'photo'       => $row['profile_picture'] ?: 'assets/default-agent.png',
         'is_available'=> (int)($row['is_avail'] ?? 1),
+        'avg_rating'  => round((float)($row['avg_rating'] ?? 0), 1),
+        'review_count'=> (int)($row['review_count'] ?? 0),
         'distance_km' => isset($row['distance_km']) ? round($row['distance_km'], 2) : null
     ];
 }

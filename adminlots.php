@@ -341,6 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </form>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="assets/js/alert-modal.js"></script>
   <script>
   const map = L.map('map').setView([6.9214, 122.0790], 13);
 

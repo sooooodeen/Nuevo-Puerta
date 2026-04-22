@@ -45,6 +45,34 @@ if ($agentId === 0) {
   exit();
 }
 
+$agentUnreadNotifications = 0;
+$checkAgentNotifications = $conn->query("SHOW TABLES LIKE 'agent_notifications'");
+if ($checkAgentNotifications && $checkAgentNotifications->num_rows > 0) {
+  $hasIsReadColumn = false;
+  $colCheck = $conn->query("SHOW COLUMNS FROM agent_notifications LIKE 'is_read'");
+  if ($colCheck && $colCheck->num_rows > 0) {
+    $hasIsReadColumn = true;
+  }
+
+  if ($hasIsReadColumn && ($stmt = $conn->prepare("SELECT COUNT(*) AS c FROM agent_notifications WHERE agent_id=? AND COALESCE(is_read, 0)=0"))) {
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($row = $res->fetch_assoc()) {
+      $agentUnreadNotifications = (int)($row['c'] ?? 0);
+    }
+    $stmt->close();
+  } elseif ($stmt = $conn->prepare("SELECT COUNT(*) AS c FROM agent_notifications WHERE agent_id=?")) {
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($row = $res->fetch_assoc()) {
+      $agentUnreadNotifications = (int)($row['c'] ?? 0);
+    }
+    $stmt->close();
+  }
+}
+
 function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
 
 function hasAgentColumn(mysqli $conn, string $column): bool {
@@ -53,6 +81,121 @@ function hasAgentColumn(mysqli $conn, string $column): bool {
   if (!$res) return false;
   $row = $res->fetch_assoc();
   return ((int)($row['c'] ?? 0)) > 0;
+}
+
+function hasTableColumn(mysqli $conn, string $table, string $column): bool {
+  $tbl = $conn->real_escape_string($table);
+  $col = $conn->real_escape_string($column);
+  $res = $conn->query("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='$tbl' AND COLUMN_NAME='$col'");
+  if (!$res) return false;
+  $row = $res->fetch_assoc();
+  return ((int)($row['c'] ?? 0)) > 0;
+}
+
+function normalizeEmailKey(string $email): string {
+  return strtolower(trim($email));
+}
+
+function normalizePhoneKey(string $phone): string {
+  return preg_replace('/\D+/', '', $phone);
+}
+
+function countDueInstallments(?string $startDate, int $dueDay, ?DateTime $today = null): int {
+  $startDate = trim((string)$startDate);
+  if ($startDate === '') {
+    return 0;
+  }
+
+  try {
+    $start = new DateTime($startDate);
+  } catch (Throwable $e) {
+    return 0;
+  }
+
+  $today = $today ?? new DateTime('today');
+  if ($today < $start) {
+    return 0;
+  }
+
+  if ($dueDay < 1 || $dueDay > 31) {
+    $dueDay = (int)$start->format('j');
+  }
+
+  $cursor = new DateTime($start->format('Y-m-01'));
+  $daysInStartMonth = (int)$cursor->format('t');
+  $cursor->setDate((int)$cursor->format('Y'), (int)$cursor->format('m'), min($dueDay, $daysInStartMonth));
+  if ($cursor < $start) {
+    $cursor = clone $start;
+  }
+
+  $count = 0;
+  $guard = 0;
+  while ($cursor <= $today && $guard < 600) {
+    $count++;
+    $cursor->modify('first day of next month');
+    $daysInMonth = (int)$cursor->format('t');
+    $cursor->setDate((int)$cursor->format('Y'), (int)$cursor->format('m'), min($dueDay, $daysInMonth));
+    $guard++;
+  }
+
+  return $count;
+}
+
+function computeCollectionFollowup(array $record): array {
+  $lotStatus = strtolower(trim((string)($record['lot_status'] ?? '')));
+  $paymentType = strtolower(trim((string)($record['payment_type'] ?? '')));
+  $totalPaid = (float)($record['total_paid'] ?? 0);
+  $monthlyAmount = (float)($record['monthly_amount'] ?? 0);
+  $lotPrice = (float)($record['lot_price'] ?? 0);
+  $paymentDeadline = trim((string)($record['payment_deadline'] ?? ''));
+  $dueDay = (int)($record['payment_due_day'] ?? 0);
+
+  if ($lotStatus === 'fully paid' || $paymentType === 'fully paid' || ($lotPrice > 0 && $totalPaid >= $lotPrice)) {
+    return [
+      'health_label' => 'Current / Fully Paid',
+      'health_class' => 'bg-green-100 text-green-800',
+      'outstanding_amount' => max(0, $lotPrice - $totalPaid),
+      'needs_followup' => false,
+    ];
+  }
+
+  if ($monthlyAmount > 0 && $paymentDeadline !== '') {
+    $dueInstallments = countDueInstallments($paymentDeadline, $dueDay);
+    $paidInstallments = (int)floor(($totalPaid + 0.0001) / $monthlyAmount);
+    $overdueInstallments = max(0, $dueInstallments - $paidInstallments);
+
+    if ($overdueInstallments > 0) {
+      return [
+        'health_label' => 'Overdue (' . $overdueInstallments . ' month' . ($overdueInstallments > 1 ? 's' : '') . ')',
+        'health_class' => 'bg-red-100 text-red-800',
+        'outstanding_amount' => $overdueInstallments * $monthlyAmount,
+        'needs_followup' => true,
+      ];
+    }
+
+    return [
+      'health_label' => 'Current Installment',
+      'health_class' => 'bg-emerald-100 text-emerald-800',
+      'outstanding_amount' => max(0, $lotPrice - $totalPaid),
+      'needs_followup' => false,
+    ];
+  }
+
+  if ($totalPaid <= 0 && ($paymentType === 'down payment' || $lotStatus === 'down payment' || $lotStatus === 'reserved')) {
+    return [
+      'health_label' => 'No payment recorded yet',
+      'health_class' => 'bg-amber-100 text-amber-800',
+      'outstanding_amount' => max(0, $lotPrice),
+      'needs_followup' => true,
+    ];
+  }
+
+  return [
+    'health_label' => 'For follow-up',
+    'health_class' => 'bg-yellow-100 text-yellow-800',
+    'outstanding_amount' => max(0, $lotPrice - $totalPaid),
+    'needs_followup' => true,
+  ];
 }
 
 $hasAvailability = hasAgentColumn($conn, 'availability');
@@ -129,6 +272,21 @@ $conn->query("
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ");
 
+$conn->query("
+  CREATE TABLE IF NOT EXISTS agent_reviews (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id INT NOT NULL,
+    user_id INT NOT NULL,
+    rating TINYINT NOT NULL,
+    review_text TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_agent_user_review (agent_id, user_id),
+    INDEX idx_agent_reviews_agent (agent_id, created_at),
+    INDEX idx_agent_reviews_user (user_id, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+");
+
 // Removed table creation for messages to avoid conflicts with existing structure
 
 /* ---- POST actions (toggle availability / quick viewing status) ---- */
@@ -164,19 +322,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   /* Agent approves pending viewing (from Upcoming Viewings table) */
   if (isset($_POST['approve_viewing_id'])) {
     $vid = (int)$_POST['approve_viewing_id'];
+    // Ensure appointment_type column exists
+    $conn->query("ALTER TABLE viewings ADD COLUMN IF NOT EXISTS appointment_type VARCHAR(32) DEFAULT 'appointment'");
+    // Check if this is a reservation or just an appointment
+    $viewingType = 'appointment';
+    $typeRow = $conn->query("SELECT appointment_type FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
+    if ($typeRow && $typeData = $typeRow->fetch_assoc()) {
+      $viewingType = $typeData['appointment_type'] ?? 'appointment';
+    }
     if ($stmt = $conn->prepare("UPDATE viewings SET status='scheduled' WHERE id=? AND agent_id=? AND status='pending'")) {
       $stmt->bind_param('ii', $vid, $agentId);
       $stmt->execute();
       $stmt->close();
     }
-    // Reserve lot only after agent approval.
-    $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
-    if ($lotRow) {
-      $lr = $lotRow->fetch_assoc();
-      $lotId = (int)($lr['lot_id'] ?? 0);
-      if ($lotId > 0) {
-        $conn->query("UPDATE lots SET status='Reserved' WHERE id=$lotId AND COALESCE(NULLIF(status,''),'Available')='Available'");
-        $conn->query("UPDATE pin_locations SET pin_status='reserved' WHERE lot_id=$lotId AND LOWER(COALESCE(pin_status,'available'))='available'");
+    // Only reserve lot if this is a reservation, not an appointment
+    if ($viewingType === 'reservation') {
+      $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
+      if ($lotRow) {
+        $lr = $lotRow->fetch_assoc();
+        $lotId = (int)($lr['lot_id'] ?? 0);
+        if ($lotId > 0) {
+          $conn->query("UPDATE lots SET status='Reserved' WHERE id=$lotId AND COALESCE(NULLIF(status,''),'Available')='Available'");
+          $conn->query("UPDATE pin_locations SET pin_status='reserved' WHERE lot_id=$lotId AND LOWER(COALESCE(pin_status,'available'))='available'");
+        }
       }
     }
     header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
@@ -187,22 +355,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (isset($_POST['viewing_action'], $_POST['viewing_id'])) {
     $vid = (int)$_POST['viewing_id'];
     $action = $_POST['viewing_action'];
+    $cancelReason = trim($_POST['cancellation_reason'] ?? '');
     $allowed = ['completed','no_show_agent','no_show_client','cancelled','scheduled'];
     if (in_array($action, $allowed, true)) {
-      if ($stmt = $conn->prepare("UPDATE viewings SET status=? WHERE id=? AND agent_id=?")) {
-        $stmt->bind_param('sii', $action, $vid, $agentId);
-        $stmt->execute();
-        $stmt->close();
+      if ($action === 'cancelled' && $cancelReason !== '') {
+        // Save status + cancellation_reason together
+        // Ensure column exists first
+        $conn->query("ALTER TABLE viewings ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NULL");
+        if ($stmt = $conn->prepare("UPDATE viewings SET status=?, cancellation_reason=? WHERE id=? AND agent_id=?")) {
+          $stmt->bind_param('ssii', $action, $cancelReason, $vid, $agentId);
+          $stmt->execute();
+          $stmt->close();
+        }
+      } else {
+        if ($stmt = $conn->prepare("UPDATE viewings SET status=? WHERE id=? AND agent_id=?")) {
+          $stmt->bind_param('sii', $action, $vid, $agentId);
+          $stmt->execute();
+          $stmt->close();
+        }
       }
-      // If the viewing is cancelled, revert the lot status back to Available
+
+      // If the viewing is cancelled, revert lot + notify client
       if ($action === 'cancelled') {
-        $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid LIMIT 1");
-        if ($lotRow) {
-          $lr = $lotRow->fetch_assoc();
-          $lotId = (int)($lr['lot_id'] ?? 0);
+        $viewRow = $conn->query("SELECT lot_id, client_email, client_phone, client_first_name, client_last_name, lot_no FROM viewings WHERE id=$vid LIMIT 1");
+        if ($viewRow) {
+          $vr = $viewRow->fetch_assoc();
+          $lotId = (int)($vr['lot_id'] ?? 0);
           if ($lotId > 0) {
             $conn->query("UPDATE lots SET status='Available' WHERE id=$lotId AND status='Reserved'");
             $conn->query("UPDATE pin_locations SET pin_status='available' WHERE lot_id=$lotId AND LOWER(pin_status)='reserved'");
+          }
+
+          // Notify the client — find their user_id by email or phone
+          $clientUserId = 0;
+          $clientEmail = strtolower(trim((string)($vr['client_email'] ?? '')));
+          $clientPhone = preg_replace('/\D+/', '', (string)($vr['client_phone'] ?? ''));
+          if ($clientEmail !== '') {
+            $uStmt = $conn->prepare("SELECT id FROM user_accounts WHERE LOWER(TRIM(email))=? LIMIT 1");
+            if ($uStmt) {
+              $uStmt->bind_param('s', $clientEmail);
+              $uStmt->execute();
+              $uRes = $uStmt->get_result();
+              if ($uRow = $uRes->fetch_assoc()) $clientUserId = (int)$uRow['id'];
+              $uStmt->close();
+            }
+          }
+          if ($clientUserId === 0 && $clientPhone !== '') {
+            $phoneColExists = $conn->query("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_accounts' AND COLUMN_NAME IN ('phone_number','mobile_number') LIMIT 1");
+            $pcRow = $phoneColExists ? $phoneColExists->fetch_assoc() : null;
+            if ($pcRow && (int)$pcRow['c'] > 0) {
+              $phoneCol = $conn->query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_accounts' AND COLUMN_NAME IN ('phone_number','mobile_number') LIMIT 1");
+              $pcn = $phoneCol ? $phoneCol->fetch_assoc() : null;
+              $colName = $pcn ? $pcn['COLUMN_NAME'] : null;
+              if ($colName) {
+                $uStmt2 = $conn->prepare("SELECT id FROM user_accounts WHERE REGEXP_REPLACE($colName,'[^0-9]','')=? LIMIT 1");
+                if ($uStmt2) {
+                  $uStmt2->bind_param('s', $clientPhone);
+                  $uStmt2->execute();
+                  $uRes2 = $uStmt2->get_result();
+                  if ($uRow2 = $uRes2->fetch_assoc()) $clientUserId = (int)$uRow2['id'];
+                  $uStmt2->close();
+                }
+              }
+            }
+          }
+
+          if ($clientUserId > 0) {
+            // Fetch agent name
+            $agentNameRow = $conn->query("SELECT CONCAT(first_name,' ',last_name) AS name FROM agent_accounts WHERE id=$agentId LIMIT 1");
+            $agentName = ($agentNameRow && $r = $agentNameRow->fetch_assoc()) ? $r['name'] : 'Your agent';
+
+            $clientName = trim(($vr['client_first_name'] ?? '') . ' ' . ($vr['client_last_name'] ?? ''));
+            $lotRef = !empty($vr['lot_no']) ? ' for Lot ' . $vr['lot_no'] : '';
+            $notifTitle = 'Viewing Cancelled';
+            $notifMsg  = "Hi $clientName, your lot viewing$lotRef has been cancelled by $agentName.";
+            if ($cancelReason !== '') {
+              $notifMsg .= "\n\nReason: $cancelReason";
+            }
+
+            $conn->query("CREATE TABLE IF NOT EXISTS user_notifications (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              user_id INT NOT NULL,
+              title VARCHAR(180) NOT NULL,
+              message TEXT NOT NULL,
+              type VARCHAR(30) DEFAULT 'info',
+              is_read TINYINT(1) DEFAULT 0,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              INDEX idx_user_notifications_user (user_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $nStmt = $conn->prepare("INSERT INTO user_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, 'warning', 0, NOW())");
+            if ($nStmt) {
+              $nStmt->bind_param('iss', $clientUserId, $notifTitle, $notifMsg);
+              $nStmt->execute();
+              $nStmt->close();
+            }
           }
         }
       }
@@ -599,17 +846,158 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     echo json_encode($clients);
     exit;
   }
+
+  if ($_GET['fetch'] === 'agent_sales_auto') {
+    $salesRows = [];
+    $seenSales = [];
+
+    $hasSalesTable = false;
+    $checkSales = $conn->query("SHOW TABLES LIKE 'sales'");
+    if ($checkSales && $checkSales->num_rows > 0) {
+      $hasSalesTable = true;
+    }
+
+    $hasPaymentsTable = false;
+    $checkPayments = $conn->query("SHOW TABLES LIKE 'lot_payment_transactions'");
+    if ($checkPayments && $checkPayments->num_rows > 0) {
+      $hasPaymentsTable = true;
+    }
+
+    $paymentJoin = $hasPaymentsTable
+      ? "LEFT JOIN (\n          SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid, MAX(payment_date) AS last_payment_date\n          FROM lot_payment_transactions\n          GROUP BY lot_id\n        ) tx ON tx.lot_id = l.id"
+      : "LEFT JOIN (\n          SELECT NULL AS lot_id, 0 AS total_paid, NULL AS last_payment_date\n        ) tx ON tx.lot_id = l.id";
+
+    $lotSql = "
+      SELECT
+        CONCAT(
+          COALESCE(NULLIF(ll.location_name, ''), 'N/A'),
+          ' - Block ', COALESCE(CAST(l.block_number AS CHAR), 'N/A'),
+          ', Lot ', COALESCE(CAST(l.lot_number AS CHAR), 'N/A')
+        ) AS property,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+          NULLIF(TRIM(CONCAT(COALESCE(rv.client_first_name, ''), ' ', COALESCE(rv.client_last_name, ''))), ''),
+          NULLIF(TRIM(rv.client_email), ''),
+          'N/A'
+        ) AS buyer,
+        CASE
+          WHEN (CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END) = 'Paid' THEN IFNULL(l.lot_price, 0)
+          WHEN IFNULL(tx.total_paid, 0) > 0 THEN IFNULL(tx.total_paid, 0)
+          ELSE IFNULL(l.payment_amount, IFNULL(l.lot_price, 0))
+        END AS sale_price,
+        DATE_FORMAT(COALESCE(tx.last_payment_date, l.payment_deadline, rv.preferred_at, CURDATE()), '%Y-%m-%d') AS sale_date,
+        CASE
+          WHEN (CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END) = 'Paid' THEN 'Closed'
+          WHEN (CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END) = 'Installment' THEN 'Ongoing'
+          WHEN (CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END) = 'Reserved' THEN 'Reserved'
+          ELSE 'Recorded'
+        END AS source
+      FROM lots l
+      LEFT JOIN user_accounts u ON u.id = l.owner_id
+      LEFT JOIN lot_locations ll ON ll.id = l.location_id
+      LEFT JOIN (
+        SELECT v1.lot_id, v1.agent_id, v1.client_first_name, v1.client_last_name, v1.client_email, v1.preferred_at
+        FROM viewings v1
+        INNER JOIN (
+          SELECT lot_id, MAX(id) AS latest_id
+          FROM viewings
+          WHERE lot_id IS NOT NULL
+          GROUP BY lot_id
+        ) lv ON lv.latest_id = v1.id
+      ) rv ON rv.lot_id = l.id
+      $paymentJoin
+      WHERE (u.agent_id = ? OR rv.agent_id = ?)
+        AND (
+          (CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END) IN ('Paid', 'Installment', 'Reserved')
+          OR l.payment_type IN ('Fully Paid', 'Down Payment')
+          OR IFNULL(tx.total_paid, 0) > 0
+        )
+      ORDER BY COALESCE(tx.last_payment_date, l.payment_deadline, rv.preferred_at, CURDATE()) DESC
+    ";
+
+    if ($stmt = $conn->prepare($lotSql)) {
+      $stmt->bind_param('ii', $agentId, $agentId);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      while ($row = $res->fetch_assoc()) {
+        $entry = [
+          'id' => null,
+          'property' => $row['property'] ?? 'N/A',
+          'buyer' => trim((string)($row['buyer'] ?? '')) !== '' ? $row['buyer'] : 'N/A',
+          'sale_price' => (float)($row['sale_price'] ?? 0),
+          'sale_date' => $row['sale_date'] ?? date('Y-m-d'),
+          'source' => $row['source'] ?? 'Recorded',
+        ];
+
+        $dedupeKey = strtolower(trim(($entry['property'] ?? '') . '|' . ($entry['buyer'] ?? '') . '|' . ($entry['sale_date'] ?? '') . '|' . number_format((float)($entry['sale_price'] ?? 0), 2, '.', '')));
+        if (!isset($seenSales[$dedupeKey])) {
+          $seenSales[$dedupeKey] = true;
+          $salesRows[] = $entry;
+        }
+      }
+      $stmt->close();
+    }
+
+    if ($hasSalesTable && ($stmt = $conn->prepare("SELECT s.id, s.property, s.buyer, s.sale_price, s.sale_date
+      FROM sales s
+      LEFT JOIN user_accounts ue ON LOWER(TRIM(ue.email)) = LOWER(TRIM(s.buyer))
+      LEFT JOIN user_accounts un ON LOWER(TRIM(CONCAT(COALESCE(un.first_name,''), ' ', COALESCE(un.last_name,'')))) = LOWER(TRIM(s.buyer))
+      WHERE s.agent_id = ?
+         OR (COALESCE(s.agent_id, 0) = 0 AND (ue.agent_id = ? OR un.agent_id = ?))
+      ORDER BY s.sale_date DESC, s.id DESC"))) {
+      $stmt->bind_param('iii', $agentId, $agentId, $agentId);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      while ($row = $res->fetch_assoc()) {
+        $entry = [
+          'id' => (int)($row['id'] ?? 0),
+          'property' => $row['property'] ?? 'N/A',
+          'buyer' => $row['buyer'] ?? 'N/A',
+          'sale_price' => (float)($row['sale_price'] ?? 0),
+          'sale_date' => $row['sale_date'] ?? date('Y-m-d'),
+          'source' => 'Recorded',
+        ];
+
+        $dedupeKey = strtolower(trim(($entry['property'] ?? '') . '|' . ($entry['buyer'] ?? '') . '|' . ($entry['sale_date'] ?? '') . '|' . number_format((float)($entry['sale_price'] ?? 0), 2, '.', '')));
+        if (!isset($seenSales[$dedupeKey])) {
+          $seenSales[$dedupeKey] = true;
+          $salesRows[] = $entry;
+        }
+      }
+      $stmt->close();
+    }
+
+    usort($salesRows, static function ($a, $b) {
+      return strcmp((string)($b['sale_date'] ?? ''), (string)($a['sale_date'] ?? ''));
+    });
+
+    header('Content-Type: application/json');
+    echo json_encode($salesRows);
+    exit;
+  }
 }
 
 /* ---- KPIs ---- */
 $kpis = [
-  'total_sales' => 0,
-  'month_sales' => 0,
+  'closed_sales' => 0,
+  'ongoing_sales' => 0,
   'upcoming_viewings' => 0,
   'unread_messages' => 0,
+  'commission_lots' => 0,
+  'commission_premium_lots' => 0,
+  'commission_regular_lots' => 0,
+  'commission_total' => 0,
+  'avg_rating' => 0,
+  'review_count' => 0,
   'is_available' => 1,
   'full_name' => 'Agent',
 ];
+
+$commissionRegularRate = 5000;
+$commissionPremiumRate = 10000;
+
+$latestAgentReviews = [];
+$commissionRecords = [];
 
 // FIX: Check 'availability' column instead of 'is_available' if that is what your DB has.
 // Based on typical setups, let's look for 'availability' or 'is_available'.
@@ -629,11 +1017,320 @@ if ($stmt = $conn->prepare("SELECT first_name, last_name$availSelect FROM agent_
   $stmt->close();
 }
 
-$r = $conn->query("SELECT COUNT(*) c FROM sales");
-if ($r && $row = $r->fetch_assoc()) $kpis['total_sales'] = (int)$row['c'];
+$salesClassSql = "
+  SELECT
+    SUM(CASE
+      WHEN l.owner_id IS NOT NULL AND (
+        normalize_status.status = 'Paid'
+        OR l.payment_type = 'Fully Paid'
+        OR (IFNULL(tx.total_paid, 0) >= IFNULL(l.lot_price, 0) AND IFNULL(l.lot_price, 0) > 0)
+      ) THEN 1 ELSE 0 END) AS closed_sales,
+    SUM(CASE
+      WHEN l.owner_id IS NOT NULL AND (
+        normalize_status.status = 'Installment'
+        OR l.payment_type = 'Down Payment'
+        OR (
+          IFNULL(tx.total_paid, 0) > 0
+          AND IFNULL(l.lot_price, 0) > 0
+          AND IFNULL(tx.total_paid, 0) < IFNULL(l.lot_price, 0)
+        )
+      ) THEN 1 ELSE 0 END) AS ongoing_sales
+  FROM lots l
+  LEFT JOIN (
+    SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid
+    FROM lot_payment_transactions
+    GROUP BY lot_id
+  ) tx ON tx.lot_id = l.id
+  LEFT JOIN (
+    SELECT id,
+      CASE
+        WHEN status = 'Installments' THEN 'Installment'
+        WHEN status = 'Sold' THEN 'Paid'
+        WHEN status = '' OR status IS NULL THEN 'Available'
+        ELSE status
+      END AS status
+    FROM lots
+  ) normalize_status ON normalize_status.id = l.id
+";
+$salesClassRes = $conn->query($salesClassSql);
+if ($salesClassRes && ($salesClassRow = $salesClassRes->fetch_assoc())) {
+  $kpis['closed_sales'] = (int)($salesClassRow['closed_sales'] ?? 0);
+  $kpis['ongoing_sales'] = (int)($salesClassRow['ongoing_sales'] ?? 0);
+}
 
-$r = $conn->query("SELECT COUNT(*) c FROM sales WHERE YEAR(created_at)=YEAR(CURDATE()) AND MONTH(created_at)=MONTH(CURDATE())");
-if ($r && $row = $r->fetch_assoc()) $kpis['month_sales'] = (int)$row['c'];
+$hasPaymentsTableForCommission = false;
+$checkPaymentsForCommission = $conn->query("SHOW TABLES LIKE 'lot_payment_transactions'");
+if ($checkPaymentsForCommission && $checkPaymentsForCommission->num_rows > 0) {
+  $hasPaymentsTableForCommission = true;
+}
+
+if ($hasPaymentsTableForCommission) {
+  $ownerPhoneExpr = "''";
+  if (hasTableColumn($conn, 'user_accounts', 'phone_number')) {
+    $ownerPhoneExpr = 'u.phone_number';
+  } elseif (hasTableColumn($conn, 'user_accounts', 'mobile_number')) {
+    $ownerPhoneExpr = 'u.mobile_number';
+  } elseif (hasTableColumn($conn, 'user_accounts', 'mobile')) {
+    $ownerPhoneExpr = 'u.mobile';
+  }
+
+  $hasLotAgentColumn = hasTableColumn($conn, 'lots', 'agent_id');
+  $hasUserAgentColumn = hasTableColumn($conn, 'user_accounts', 'agent_id');
+  $hasViewingsTable = $conn->query("SHOW TABLES LIKE 'viewings'");
+  $hasViewingsAvailable = $hasViewingsTable && $hasViewingsTable->num_rows > 0;
+  $hasViewingsAgentColumn = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'agent_id');
+  $hasViewingsLotId = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'lot_id');
+  $hasViewingsLotNo = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'lot_no');
+  $hasLotsLotNumberColumn = hasTableColumn($conn, 'lots', 'lot_number');
+  $hasViewingStatusColumn = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'status');
+  $hasViewingAppointmentTypeColumn = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'appointment_type');
+  $hasViewingsClientFirstName = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'client_first_name');
+  $hasViewingsClientLastName = $hasViewingsAvailable && hasTableColumn($conn, 'viewings', 'client_last_name');
+
+  $viewingAgentJoinByLotId = ($hasViewingsAgentColumn && $hasViewingsLotId)
+    ? "LEFT JOIN (\n      SELECT v1.lot_id, v1.agent_id\n      FROM viewings v1\n      INNER JOIN (\n        SELECT lot_id, MAX(id) AS latest_id\n        FROM viewings\n        WHERE lot_id IS NOT NULL AND lot_id > 0 AND agent_id IS NOT NULL AND agent_id > 0\n        GROUP BY lot_id\n      ) lv ON lv.latest_id = v1.id\n    ) rv ON rv.lot_id = l.id"
+    : "LEFT JOIN (SELECT NULL AS lot_id, 0 AS agent_id) rv ON rv.lot_id = l.id";
+
+  $viewingAgentJoinByLotNo = ($hasViewingsAgentColumn && $hasViewingsLotNo && $hasLotsLotNumberColumn)
+    ? "LEFT JOIN (\n      SELECT LOWER(TRIM(v2.lot_no)) AS lot_no_key, v2.agent_id\n      FROM viewings v2\n      INNER JOIN (\n        SELECT LOWER(TRIM(lot_no)) AS lot_no_key, MAX(id) AS latest_id\n        FROM viewings\n        WHERE lot_no IS NOT NULL AND TRIM(lot_no) <> '' AND agent_id IS NOT NULL AND agent_id > 0\n        GROUP BY LOWER(TRIM(lot_no))\n      ) lv2 ON lv2.latest_id = v2.id\n    ) rvn ON (\n      rvn.lot_no_key = LOWER(TRIM(CAST(l.lot_number AS CHAR)))\n      OR rvn.lot_no_key LIKE CONCAT('%lot ', LOWER(TRIM(CAST(l.lot_number AS CHAR))), '%')\n    )"
+    : "LEFT JOIN (SELECT NULL AS lot_no_key, 0 AS agent_id) rvn ON rvn.lot_no_key = LOWER(TRIM(CAST(l.lot_number AS CHAR)))";
+
+  $viewingAgentJoin = $viewingAgentJoinByLotId . "\n      " . $viewingAgentJoinByLotNo;
+
+  $ownerNameJoinByLotId = ($hasViewingsLotId && $hasViewingsClientFirstName && $hasViewingsClientLastName)
+    ? "LEFT JOIN (\n      SELECT v3.lot_id, TRIM(CONCAT(COALESCE(v3.client_first_name, ''), ' ', COALESCE(v3.client_last_name, ''))) AS client_name\n      FROM viewings v3\n      INNER JOIN (\n        SELECT lot_id, MAX(id) AS latest_id\n        FROM viewings\n        WHERE lot_id IS NOT NULL AND lot_id > 0\n        GROUP BY lot_id\n      ) lv3 ON lv3.latest_id = v3.id\n    ) rvo ON rvo.lot_id = l.id"
+    : "LEFT JOIN (SELECT NULL AS lot_id, '' AS client_name) rvo ON rvo.lot_id = l.id";
+
+  $ownerNameJoinByLotNo = ($hasViewingsLotNo && $hasLotsLotNumberColumn && $hasViewingsClientFirstName && $hasViewingsClientLastName)
+    ? "LEFT JOIN (\n      SELECT LOWER(TRIM(v4.lot_no)) AS lot_no_key, TRIM(CONCAT(COALESCE(v4.client_first_name, ''), ' ', COALESCE(v4.client_last_name, ''))) AS client_name\n      FROM viewings v4\n      INNER JOIN (\n        SELECT LOWER(TRIM(lot_no)) AS lot_no_key, MAX(id) AS latest_id\n        FROM viewings\n        WHERE lot_no IS NOT NULL AND TRIM(lot_no) <> ''\n        GROUP BY LOWER(TRIM(lot_no))\n      ) lv4 ON lv4.latest_id = v4.id\n    ) rvon ON (\n      rvon.lot_no_key = LOWER(TRIM(CAST(l.lot_number AS CHAR)))\n      OR rvon.lot_no_key LIKE CONCAT('%lot ', LOWER(TRIM(CAST(l.lot_number AS CHAR))), '%')\n    )"
+    : "LEFT JOIN (SELECT NULL AS lot_no_key, '' AS client_name) rvon ON rvon.lot_no_key = LOWER(TRIM(CAST(l.lot_number AS CHAR)))";
+
+  $ownerNameJoin = $ownerNameJoinByLotId . "\n      " . $ownerNameJoinByLotNo;
+
+  $assignmentChecks = [];
+  if ($hasLotAgentColumn) {
+    $assignmentChecks[] = 'l.agent_id = ?';
+  }
+  if ($hasUserAgentColumn) {
+    $assignmentChecks[] = 'u.agent_id = ?';
+  }
+  $assignmentChecks[] = 'rv.agent_id = ?';
+  $assignmentChecks[] = 'rvn.agent_id = ?';
+  $assignmentWhere = implode(' OR ', $assignmentChecks);
+
+  $paramTypes = str_repeat('i', count($assignmentChecks));
+  $paramValues = array_fill(0, count($assignmentChecks), $agentId);
+
+  $approvedReservationClause = '0 = 1';
+  if ($hasViewingStatusColumn) {
+    $approvedByLotIdClause = ($hasViewingsLotId && $hasViewingsAgentColumn)
+      ? "EXISTS (
+          SELECT 1
+          FROM viewings v_ap
+          WHERE v_ap.lot_id = l.id
+            AND v_ap.agent_id = ?
+            AND LOWER(TRIM(COALESCE(v_ap.status, ''))) IN ('approved', 'scheduled')"
+      : '0 = 1';
+
+    if ($hasViewingsLotId && $hasViewingsAgentColumn) {
+      if ($hasViewingAppointmentTypeColumn) {
+        $approvedByLotIdClause .= "\n            AND LOWER(TRIM(COALESCE(v_ap.appointment_type, ''))) = 'reservation'";
+      }
+      $approvedByLotIdClause .= "\n          LIMIT 1\n        )";
+    }
+
+    $approvedByLotNoClause = ($hasViewingsLotNo && $hasViewingsAgentColumn && $hasLotsLotNumberColumn)
+      ? "EXISTS (
+          SELECT 1
+          FROM viewings v_apn
+          WHERE v_apn.agent_id = ?
+            AND (
+              LOWER(TRIM(COALESCE(v_apn.lot_no, ''))) = LOWER(TRIM(CAST(l.lot_number AS CHAR)))
+              OR LOWER(TRIM(COALESCE(v_apn.lot_no, ''))) LIKE CONCAT('%lot ', LOWER(TRIM(CAST(l.lot_number AS CHAR))), '%')
+            )
+            AND LOWER(TRIM(COALESCE(v_apn.status, ''))) IN ('approved', 'scheduled')"
+      : '0 = 1';
+
+    if ($hasViewingsLotNo && $hasViewingsAgentColumn && $hasLotsLotNumberColumn) {
+      if ($hasViewingAppointmentTypeColumn) {
+        $approvedByLotNoClause .= "\n            AND LOWER(TRIM(COALESCE(v_apn.appointment_type, ''))) = 'reservation'";
+      }
+      $approvedByLotNoClause .= "\n          LIMIT 1\n        )";
+    }
+
+    $approvedReservationClause = "($approvedByLotIdClause OR $approvedByLotNoClause)";
+
+    if ($hasViewingsLotId && $hasViewingsAgentColumn) {
+      $paramTypes .= 'i';
+      $paramValues[] = $agentId;
+    }
+    if ($hasViewingsLotNo && $hasViewingsAgentColumn && $hasLotsLotNumberColumn) {
+      $paramTypes .= 'i';
+      $paramValues[] = $agentId;
+    }
+  }
+
+  $commissionSql = "
+    SELECT
+      q.id,
+      q.property,
+      q.location_name,
+      q.owner_name,
+      q.lot_status,
+      q.payment_type,
+      q.sale_amount,
+      q.is_premium,
+      q.commission_amount,
+      q.collection_status,
+      q.last_payment_date,
+      q.total_paid,
+      q.monthly_amount,
+      q.lot_price,
+      q.payment_deadline,
+      q.payment_due_day,
+      q.owner_email,
+      q.owner_phone
+    FROM (
+      SELECT DISTINCT
+        l.id,
+        CONCAT(
+          COALESCE(NULLIF(ll.location_name, ''), 'N/A'),
+          ' - Block ', COALESCE(CAST(l.block_number AS CHAR), 'N/A'),
+          ', Lot ', COALESCE(CAST(l.lot_number AS CHAR), 'N/A')
+        ) AS property,
+        COALESCE(NULLIF(TRIM(ll.location_name), ''), 'N/A') AS location_name,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+          NULLIF(TRIM(COALESCE(rvo.client_name, '')), ''),
+          NULLIF(TRIM(COALESCE(rvon.client_name, '')), ''),
+          'Unassigned'
+        ) AS owner_name,
+        COALESCE(NULLIF(TRIM(u.email), ''), '') AS owner_email,
+        COALESCE(NULLIF(TRIM($ownerPhoneExpr), ''), '') AS owner_phone,
+        CASE
+          WHEN CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END = 'Paid' THEN 'Fully Paid'
+          WHEN CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END = 'Installment' THEN 'Down Payment'
+          WHEN CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END = 'Reserved' THEN 'Reserved'
+          WHEN CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END = 'Cancelled' THEN 'Cancelled'
+          ELSE COALESCE(NULLIF(l.payment_type, ''), 'Recorded')
+        END AS lot_status,
+        COALESCE(NULLIF(l.payment_type, ''), 'Recorded') AS payment_type,
+        CASE
+          WHEN IFNULL(tx.total_paid, 0) > 0 THEN IFNULL(tx.total_paid, 0)
+          WHEN IFNULL(l.payment_amount, 0) > 0 THEN IFNULL(l.payment_amount, 0)
+          ELSE IFNULL(l.lot_price, 0)
+        END AS sale_amount,
+        CASE
+          WHEN LOWER(TRIM(COALESCE(ll.location_name, ''))) IN ('barangay pasonanca', 'pasonanca', 'barangay mercedes', 'mercedes')
+            OR LOWER(COALESCE(ll.location_name, '')) LIKE '%pasonanca%'
+            OR LOWER(COALESCE(ll.location_name, '')) LIKE '%mercedes%'
+          THEN 1 ELSE 0
+        END AS is_premium,
+        CASE
+          WHEN IFNULL(l.commission_amount, 0) > 0 THEN IFNULL(l.commission_amount, 0)
+          WHEN LOWER(TRIM(COALESCE(ll.location_name, ''))) IN ('barangay pasonanca', 'pasonanca', 'barangay mercedes', 'mercedes')
+            OR LOWER(COALESCE(ll.location_name, '')) LIKE '%pasonanca%'
+            OR LOWER(COALESCE(ll.location_name, '')) LIKE '%mercedes%'
+          THEN $commissionPremiumRate
+          ELSE $commissionRegularRate
+        END AS commission_amount,
+        CASE
+          WHEN IFNULL(tx.total_paid, 0) > 0 THEN 'Collection recorded'
+          WHEN COALESCE(NULLIF(l.payment_type, ''), '') = 'Down Payment' AND IFNULL(l.down_payment_amount, 0) > 0 THEN 'Approved reservation with down payment'
+          WHEN COALESCE(NULLIF(l.payment_type, ''), '') = 'Down Payment' THEN 'Down payment'
+          WHEN COALESCE(NULLIF(l.payment_type, ''), '') = 'Fully Paid' THEN 'Fully paid'
+          ELSE 'Recorded'
+        END AS collection_status,
+        tx.last_payment_date,
+        IFNULL(tx.total_paid, 0) AS total_paid,
+        IFNULL(l.payment_amount, 0) AS monthly_amount,
+        IFNULL(l.lot_price, 0) AS lot_price,
+        l.payment_deadline,
+        IFNULL(l.payment_due_day, 0) AS payment_due_day
+      FROM lots l
+      LEFT JOIN user_accounts u ON u.id = l.owner_id
+      LEFT JOIN lot_locations ll ON ll.id = l.location_id
+      LEFT JOIN (
+        SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid, MAX(payment_date) AS last_payment_date
+        FROM lot_payment_transactions
+        GROUP BY lot_id
+      ) tx ON tx.lot_id = l.id
+      $viewingAgentJoin
+      $ownerNameJoin
+      WHERE ($assignmentWhere)
+        AND (
+          CASE
+            WHEN l.status = 'Installments' THEN 'Installment'
+            WHEN l.status = 'Sold' THEN 'Paid'
+            WHEN l.status = '' OR l.status IS NULL THEN 'Available'
+            ELSE l.status
+          END = 'Paid'
+          OR COALESCE(NULLIF(l.payment_type, ''), '') = 'Fully Paid'
+          OR (IFNULL(tx.total_paid, 0) >= IFNULL(l.lot_price, 0) AND IFNULL(l.lot_price, 0) > 0)
+          OR (
+            COALESCE(NULLIF(l.payment_type, ''), '') = 'Down Payment'
+            AND (IFNULL(l.down_payment_amount, 0) > 0 OR IFNULL(tx.total_paid, 0) > 0)
+            AND $approvedReservationClause
+          )
+        )
+    ) q
+    ORDER BY (q.last_payment_date IS NULL) ASC, q.last_payment_date DESC, q.property ASC
+  ";
+
+  if ($stmt = $conn->prepare($commissionSql)) {
+    $stmt->bind_param($paramTypes, ...$paramValues);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($row = $res->fetch_assoc()) {
+      // no-op here because the query is used below for record rows
+    }
+    $stmt->close();
+  }
+
+  if ($stmt = $conn->prepare($commissionSql)) {
+    $stmt->bind_param($paramTypes, ...$paramValues);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+      $saleAmount = (float)($row['sale_amount'] ?? 0);
+      $commissionAmount = (float)($row['commission_amount'] ?? 0);
+
+      $commissionRecords[] = [
+        'property' => (string)($row['property'] ?? 'N/A'),
+        'location_name' => (string)($row['location_name'] ?? 'N/A'),
+        'owner_name' => (string)($row['owner_name'] ?? 'Unassigned'),
+        'owner_email' => (string)($row['owner_email'] ?? ''),
+        'owner_phone' => (string)($row['owner_phone'] ?? ''),
+        'lot_status' => (string)($row['lot_status'] ?? 'Recorded'),
+        'payment_type' => (string)($row['payment_type'] ?? 'Recorded'),
+        'sale_amount' => $saleAmount,
+        'commission_amount' => $commissionAmount,
+        'commission_rate' => (int)($row['is_premium'] ?? 0) === 1 ? $commissionPremiumRate : $commissionRegularRate,
+        'last_payment_date' => !empty($row['last_payment_date']) ? $row['last_payment_date'] : null,
+        'total_paid' => (float)($row['total_paid'] ?? 0),
+        'monthly_amount' => (float)($row['monthly_amount'] ?? 0),
+        'lot_price' => (float)($row['lot_price'] ?? 0),
+        'payment_deadline' => (string)($row['payment_deadline'] ?? ''),
+        'payment_due_day' => (int)($row['payment_due_day'] ?? 0),
+      ];
+    }
+    $stmt->close();
+  }
+
+  $kpis['commission_premium_lots'] = 0;
+  $kpis['commission_regular_lots'] = 0;
+  $kpis['commission_lots'] = count($commissionRecords);
+  $kpis['commission_total'] = 0;
+
+  foreach ($commissionRecords as $record) {
+    $kpis['commission_total'] += (float)($record['commission_amount'] ?? 0);
+    if ((int)($record['commission_rate'] ?? 0) === $commissionPremiumRate) {
+      $kpis['commission_premium_lots']++;
+    } else {
+      $kpis['commission_regular_lots']++;
+    }
+  }
+}
 
 if ($stmt = $conn->prepare("
   SELECT COUNT(*) c FROM viewings
@@ -652,6 +1349,30 @@ if ($stmt = $conn->prepare("SELECT COUNT(*) c FROM messages WHERE agent_id=?")) 
   $stmt->execute();
   $r = $stmt->get_result();
   if ($row = $r->fetch_assoc()) $kpis['unread_messages'] = (int)$row['c'];
+  $stmt->close();
+}
+
+if ($stmt = $conn->prepare("SELECT IFNULL(AVG(rating), 0) AS avg_rating, COUNT(*) AS review_count FROM agent_reviews WHERE agent_id = ?")) {
+  $stmt->bind_param('i', $agentId);
+  $stmt->execute();
+  $r = $stmt->get_result();
+  if ($row = $r->fetch_assoc()) {
+    $kpis['avg_rating'] = (float)($row['avg_rating'] ?? 0);
+    $kpis['review_count'] = (int)($row['review_count'] ?? 0);
+  }
+  $stmt->close();
+}
+
+if ($stmt = $conn->prepare("SELECT ar.rating, ar.review_text, ar.updated_at, ua.first_name, ua.last_name
+                            FROM agent_reviews ar
+                            LEFT JOIN user_accounts ua ON ua.id = ar.user_id
+                            WHERE ar.agent_id = ?
+                            ORDER BY ar.updated_at DESC
+                            LIMIT 5")) {
+  $stmt->bind_param('i', $agentId);
+  $stmt->execute();
+  $r = $stmt->get_result();
+  if ($r) $latestAgentReviews = $r->fetch_all(MYSQLI_ASSOC);
   $stmt->close();
 }
 
@@ -694,6 +1415,56 @@ if ($stmt = $conn->prepare("SELECT * FROM agent_accounts WHERE id=? LIMIT 1")) {
   $stmt->close();
 }
 
+/* ---- Build client account lookup index (email/phone) ---- */
+$clientAccountByEmail = [];
+$clientAccountByPhone = [];
+
+$userPhoneColumn = hasTableColumn($conn, 'user_accounts', 'phone_number')
+  ? 'phone_number'
+  : (hasTableColumn($conn, 'user_accounts', 'mobile_number') ? 'mobile_number' : null);
+
+if ($userPhoneColumn !== null) {
+  $sql = "SELECT id, first_name, middle_name, last_name, username, email, $userPhoneColumn AS phone_number, created_at FROM user_accounts ORDER BY id DESC";
+} else {
+  $sql = "SELECT id, first_name, middle_name, last_name, username, email, '' AS phone_number, created_at FROM user_accounts ORDER BY id DESC";
+}
+
+$userAccountResult = $conn->query($sql);
+if ($userAccountResult) {
+  while ($u = $userAccountResult->fetch_assoc()) {
+    $emailKey = normalizeEmailKey((string)($u['email'] ?? ''));
+    if ($emailKey !== '' && !isset($clientAccountByEmail[$emailKey])) {
+      $clientAccountByEmail[$emailKey] = $u;
+    }
+
+    $phoneKey = normalizePhoneKey((string)($u['phone_number'] ?? ''));
+    if ($phoneKey !== '' && !isset($clientAccountByPhone[$phoneKey])) {
+      $clientAccountByPhone[$phoneKey] = $u;
+    }
+  }
+}
+
+$attachClientMatch = static function(array $viewingRow) use ($clientAccountByEmail, $clientAccountByPhone): array {
+  $emailKey = normalizeEmailKey((string)($viewingRow['client_email'] ?? ''));
+  $phoneKey = normalizePhoneKey((string)($viewingRow['client_phone'] ?? ''));
+
+  $matched = null;
+  if ($emailKey !== '' && isset($clientAccountByEmail[$emailKey])) {
+    $matched = $clientAccountByEmail[$emailKey];
+  } elseif ($phoneKey !== '' && isset($clientAccountByPhone[$phoneKey])) {
+    $matched = $clientAccountByPhone[$phoneKey];
+  }
+
+  $viewingRow['is_existing_client'] = $matched ? 1 : 0;
+  $viewingRow['matched_user_id'] = $matched ? (int)($matched['id'] ?? 0) : 0;
+  $viewingRow['matched_username'] = $matched['username'] ?? '';
+  return $viewingRow;
+};
+
+if (!empty($viewings)) {
+  $viewings = array_map($attachClientMatch, $viewings);
+}
+
 /* ---- Fetch ALL viewings for this agent (for the viewings section) ---- */
 $all_viewings = [];
 if ($stmt = $conn->prepare("
@@ -709,6 +1480,10 @@ if ($stmt = $conn->prepare("
   $res = $stmt->get_result();
   if ($res) $all_viewings = $res->fetch_all(MYSQLI_ASSOC);
   $stmt->close();
+}
+
+if (!empty($all_viewings)) {
+  $all_viewings = array_map($attachClientMatch, $all_viewings);
 }
 
 /* ---- Fetch assigned leads for this agent ---- */
@@ -766,6 +1541,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
     }
   } else {
     $slot_error = implode(' ', $errors);
+  }
+}
+
+// Handle agent time slot update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_time_slot'])) {
+  csrf_check();
+  $slot_id = (int)($_POST['slot_id'] ?? 0);
+  $avail_date = $_POST['avail_date'] ?? '';
+  $time_slot = $_POST['time_slot'] ?? '';
+  $max_clients = (int)($_POST['max_clients'] ?? 1);
+  $errors = [];
+
+  if ($slot_id < 1 || !$avail_date || !$time_slot || $max_clients < 1) {
+    $errors[] = 'A valid date, time slot, and max clients value are required.';
+  }
+
+  if (empty($errors)) {
+    $stmt = $conn->prepare("UPDATE agent_time_slots SET available_date=?, time_slot=?, max_clients=? WHERE id=? AND agent_id=?");
+    if ($stmt === false) {
+      $slot_error = 'Prepare failed: ' . $conn->error;
+    } else {
+      $stmt->bind_param('ssiii', $avail_date, $time_slot, $max_clients, $slot_id, $agentId);
+      if (!$stmt->execute()) {
+        $slot_error = 'Execute failed: ' . $stmt->error;
+      } elseif ($stmt->affected_rows >= 0) {
+        $slot_success = 'Time slot updated successfully!';
+      }
+      $stmt->close();
+    }
+  } else {
+    $slot_error = implode(' ', $errors);
+  }
+}
+
+// Handle agent time slot delete
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_time_slot'])) {
+  csrf_check();
+  $slot_id = (int)($_POST['slot_id'] ?? 0);
+
+  if ($slot_id < 1) {
+    $slot_error = 'Invalid time slot selected.';
+  } else {
+    $stmt = $conn->prepare("DELETE FROM agent_time_slots WHERE id=? AND agent_id=?");
+    if ($stmt === false) {
+      $slot_error = 'Prepare failed: ' . $conn->error;
+    } else {
+      $stmt->bind_param('ii', $slot_id, $agentId);
+      if (!$stmt->execute()) {
+        $slot_error = 'Execute failed: ' . $stmt->error;
+      } elseif ($stmt->affected_rows > 0) {
+        $slot_success = 'Time slot deleted successfully!';
+      } else {
+        $slot_error = 'Time slot not found.';
+      }
+      $stmt->close();
+    }
   }
 }
 
@@ -914,8 +1745,8 @@ input[type="submit"]:hover,
 </head>
 <body class="bg-gray-50 min-h-screen">
 <div class="flex min-h-screen">
-  <aside class="bg-green-900 text-white flex flex-col items-center py-8 sidebar" style="width:280px; height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow: hidden;">
-    <div class="flex items-center gap-3 mb-8">
+  <aside class="bg-green-900 text-white flex flex-col items-center py-4 sidebar" style="width:280px; height: 100vh; position: fixed; left: 0; top: 0; bottom: 0; z-index: 10; overflow-y: auto; overflow-x: hidden;">
+    <div class="flex items-center gap-3 mb-4">
       <img src="logo.png" alt="Logo" class="w-16 h-16 rounded-full bg-white/10 object-contain" />
       <div>
         <h2 class="font-bold text-lg tracking-wide whitespace-nowrap leading-tight">NUEVO PUERTA</h2>
@@ -923,7 +1754,7 @@ input[type="submit"]:hover,
       </div>
     </div>
 
-    <div class="bg-white/10 rounded-xl px-4 py-3 mb-8 w-56 mx-auto flex items-center">
+    <div class="bg-white/10 rounded-xl px-4 py-2 mb-4 w-56 mx-auto flex items-center">
       <div class="mr-3">
         <?php if (!empty($agent['profile_picture'])): ?>
           <img src="<?php echo h($agent['profile_picture']); ?>" alt="Profile" class="w-10 h-10 rounded-full object-cover bg-white" onerror="this.style.display='none'">
@@ -939,8 +1770,8 @@ input[type="submit"]:hover,
       </div>
     </div>
 
-    <nav class="w-full">
-      <ul class="space-y-1 w-full" id="spa-nav">
+    <nav class="w-full flex flex-col h-full" style="min-height:0; flex:1 1 0%;">
+      <ul class="space-y-0.5 w-full flex-1" id="spa-nav" style="min-height:0; overflow:visible;">
         <li>
           <a href="#dashboard" data-target="section-dashboard"
              class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
@@ -984,6 +1815,11 @@ input[type="submit"]:hover,
               <path d="M12 22a2 2 0 002-2H10a2 2 0 002 2zm6-6V9a6 6 0 10-12 0v7L4 18v1h16v-1l-2-2z"/>
             </svg>
             Notifications
+            <?php if ($agentUnreadNotifications > 0): ?>
+              <span id="agent-notifications-badge" style="margin-left:10px; min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:#ef4444; color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; line-height:1;">
+                <?php echo $agentUnreadNotifications > 99 ? '99+' : (int)$agentUnreadNotifications; ?>
+              </span>
+            <?php endif; ?>
           </a>
         </li>
         <li>
@@ -1022,8 +1858,10 @@ input[type="submit"]:hover,
             Leads
           </a>
         </li>
-        <li>
-          <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800 logout-link">
+      </ul>
+      <ul class="w-full" style="margin-top:4px; margin-bottom:8px;">
+        <li style="margin-top:8px;">
+          <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800 logout-link" style="margin-top:0;">
             <svg class="w-5 h-5 mr-3 text-white logout-icon" viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 13v-2H7V8l-5 4 5 4v-3zM20 3h-8v2h8v14h-8v2h8a2 2 0 002-2V5a2 2 0 00-2-2z"/>
             </svg>
@@ -1055,22 +1893,22 @@ input[type="submit"]:hover,
         </form>
       </div>
 
-      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mt-6">
+      <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-5 mt-6">
         <div class="bg-white rounded-2xl border shadow p-5">
           <div class="flex items-center gap-3 text-green-900 font-semibold">
             <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h6v8H3zM9 3h6v18H9zM15 9h6v12h-6z"/></svg>
-            Total Sales
+            Sales (Closed)
           </div>
-          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['total_sales']); ?></div>
-          <div class="text-xs text-gray-500 mt-1">All time</div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['closed_sales']); ?></div>
+          <div class="text-xs text-gray-500 mt-1">Fully paid lots only</div>
         </div>
         <div class="bg-white rounded-2xl border shadow p-5">
           <div class="flex items-center gap-3 text-green-900 font-semibold">
             <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#fff">M</text></svg>
-            Sales (This Month)
+            Sales (Ongoing)
           </div>
-          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['month_sales']); ?></div>
-          <div class="text-xs text-gray-500 mt-1"><?php echo date('F Y'); ?></div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['ongoing_sales']); ?></div>
+          <div class="text-xs text-gray-500 mt-1">Installment / down payment lots</div>
         </div>
         <div class="bg-white rounded-2xl border shadow p-5">
           <div class="flex items-center gap-3 text-green-900 font-semibold">
@@ -1088,19 +1926,143 @@ input[type="submit"]:hover,
           <div class="text-4xl font-extrabold mt-2"><?php echo number_format($kpis['unread_messages']); ?></div>
           <div class="text-xs text-gray-500 mt-1">Needs attention</div>
         </div>
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21 16.54 13.97 22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+            Client Rating
+          </div>
+          <div class="text-4xl font-extrabold mt-2"><?php echo number_format((float)$kpis['avg_rating'], 1); ?></div>
+          <div class="text-xs text-gray-500 mt-1"><?php echo (int)$kpis['review_count']; ?> review<?php echo ((int)$kpis['review_count'] === 1 ? '' : 's'); ?></div>
+        </div>
+        <div class="bg-white rounded-2xl border shadow p-5">
+          <div class="flex items-center gap-3 text-green-900 font-semibold">
+            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1l3 6 6 .9-4.5 4.2 1.1 6-5.6-3-5.6 3 1.1-6L3 7.9 9 7l3-6zm0 11a2 2 0 100 4 2 2 0 000-4z"/></svg>
+            Agent Commission
+          </div>
+          <div class="text-3xl font-extrabold mt-2">PHP <?php echo number_format((float)$kpis['commission_total'], 2); ?></div>
+          <div class="text-xs text-gray-500 mt-1"><?php echo (int)$kpis['commission_premium_lots']; ?> lot<?php echo ((int)$kpis['commission_premium_lots'] === 1 ? '' : 's'); ?> (Pasonanca/Mercedes) x PHP <?php echo number_format((float)$commissionPremiumRate, 0); ?></div>
+          <div class="text-xs text-gray-500 mt-1"><?php echo (int)$kpis['commission_regular_lots']; ?> other lot<?php echo ((int)$kpis['commission_regular_lots'] === 1 ? '' : 's'); ?> x PHP <?php echo number_format((float)$commissionRegularRate, 0); ?></div>
+        </div>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6">
         <div class="bg-white rounded-2xl border shadow p-6">
-          <div class="font-semibold text-gray-800 mb-4">Recent Activities</div>
-          <ul class="text-sm text-gray-700 space-y-2">
-            <li>
-              <span style="display:inline-flex;align-items:center;margin-right:6px;">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="18" height="18" rx="4" fill="#2ecc71"/><path d="M5 10l4 4 6-6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
-              No recent activities yet.
-            </li>
-          </ul>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h3 class="text-xl font-bold text-gray-900">Collection Records</h3>
+              <p class="text-sm text-gray-500">Line-by-line records of lots with recorded payments, status, amount, and commission.</p>
+            </div>
+            <div class="text-sm text-gray-600">
+              <?php echo count($commissionRecords); ?> record<?php echo count($commissionRecords) === 1 ? '' : 's'; ?>
+            </div>
+          </div>
+
+          <?php if (empty($commissionRecords)): ?>
+            <div class="text-sm text-gray-500">No collection records found yet.</div>
+          <?php else: ?>
+            <div class="overflow-x-auto" style="max-height:420px; overflow-y:auto;">
+              <table class="min-w-full border rounded-lg text-sm">
+                <thead>
+                  <tr class="bg-gray-50 text-gray-700">
+                    <th class="py-3 px-4 text-left">Property</th>
+                    <th class="py-3 px-4 text-left">Location</th>
+                    <th class="py-3 px-4 text-left">Property Owner</th>
+                    <th class="py-3 px-4 text-left">Status</th>
+                    <th class="py-3 px-4 text-left">Collection Health</th>
+                    <th class="py-3 px-4 text-left">Outstanding</th>
+                    <th class="py-3 px-4 text-left">Sale Amount</th>
+                    <th class="py-3 px-4 text-left">Commission</th>
+                    <th class="py-3 px-4 text-left">Last Payment</th>
+                    <th class="py-3 px-4 text-left">Follow-up Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($commissionRecords as $record): ?>
+                    <?php
+                      $statusLabel = (string)($record['lot_status'] ?? 'Recorded');
+                      $statusClass = 'bg-gray-100 text-gray-700';
+                      if (stripos($statusLabel, 'Fully Paid') !== false) {
+                        $statusClass = 'bg-green-100 text-green-800';
+                      } elseif (stripos($statusLabel, 'Down Payment') !== false) {
+                        $statusClass = 'bg-yellow-100 text-yellow-800';
+                      } elseif (stripos($statusLabel, 'Reserved') !== false) {
+                        $statusClass = 'bg-blue-100 text-blue-800';
+                      } elseif (stripos($statusLabel, 'Cancelled') !== false) {
+                        $statusClass = 'bg-red-100 text-red-800';
+                      }
+
+                      $healthInfo = computeCollectionFollowup($record);
+                      $healthLabel = (string)($healthInfo['health_label'] ?? 'For follow-up');
+                      $healthClass = (string)($healthInfo['health_class'] ?? 'bg-yellow-100 text-yellow-800');
+                      $outstandingAmount = (float)($healthInfo['outstanding_amount'] ?? 0);
+                      $needsFollowup = !empty($healthInfo['needs_followup']);
+                      $ownerEmail = trim((string)($record['owner_email'] ?? ''));
+                      $ownerPhone = trim((string)($record['owner_phone'] ?? ''));
+                      $ownerPhoneDigits = preg_replace('/\D+/', '', $ownerPhone);
+                    ?>
+                    <tr class="border-t">
+                      <td class="py-3 px-4 text-gray-800"><?php echo h((string)$record['property']); ?></td>
+                      <td class="py-3 px-4 text-gray-700"><?php echo h((string)$record['location_name']); ?></td>
+                      <td class="py-3 px-4 text-gray-700"><?php echo h((string)($record['owner_name'] ?? 'Unassigned')); ?></td>
+                      <td class="py-3 px-4"><span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold <?php echo $statusClass; ?>"><?php echo h($statusLabel); ?></span></td>
+                      <td class="py-3 px-4"><span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold <?php echo h($healthClass); ?>"><?php echo h($healthLabel); ?></span></td>
+                      <td class="py-3 px-4 text-gray-800"><?php echo $outstandingAmount > 0 ? ('PHP ' . number_format($outstandingAmount, 2)) : 'PHP 0.00'; ?></td>
+                      <td class="py-3 px-4 text-gray-800">PHP <?php echo number_format((float)$record['sale_amount'], 2); ?></td>
+                      <td class="py-3 px-4 text-green-800 font-semibold">PHP <?php echo number_format((float)$record['commission_amount'], 2); ?></td>
+                      <td class="py-3 px-4 text-gray-600"><?php echo !empty($record['last_payment_date']) ? h(date('M d, Y', strtotime((string)$record['last_payment_date']))) : 'N/A'; ?></td>
+                      <td class="py-3 px-4 text-gray-700">
+                        <div class="flex flex-col gap-1">
+                          <?php if ($needsFollowup): ?>
+                            <span class="text-xs font-semibold text-red-700">Needs follow-up</span>
+                          <?php else: ?>
+                            <span class="text-xs font-semibold text-emerald-700">On track</span>
+                          <?php endif; ?>
+                          <div class="flex flex-wrap gap-2">
+                            <?php if ($ownerEmail !== ''): ?>
+                              <a href="mailto:<?php echo h($ownerEmail); ?>" class="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-100 text-blue-800 hover:bg-blue-200">Email</a>
+                            <?php endif; ?>
+                            <?php if ($ownerPhoneDigits !== ''): ?>
+                              <a href="tel:<?php echo h($ownerPhoneDigits); ?>" class="inline-flex items-center px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800 hover:bg-emerald-200">Call</a>
+                            <?php endif; ?>
+                            <?php if ($ownerEmail === '' && $ownerPhoneDigits === ''): ?>
+                              <span class="text-xs text-gray-500">No contact info</span>
+                            <?php endif; ?>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          <?php endif; ?>
+        </div>
+      </section>
+
+      <section class="mt-6">
+        <div class="bg-white rounded-2xl border shadow p-6">
+          <div class="font-semibold text-gray-800 mb-4">Latest Client Reviews</div>
+          <?php if (empty($latestAgentReviews)): ?>
+            <div class="text-sm text-gray-500">No reviews yet.</div>
+          <?php else: ?>
+            <div class="space-y-3" style="max-height:360px; overflow-y:auto; padding-right:6px;">
+              <?php foreach ($latestAgentReviews as $rv): ?>
+                <?php
+                  $reviewer = trim((string)($rv['first_name'] ?? '') . ' ' . (string)($rv['last_name'] ?? ''));
+                  if ($reviewer === '') $reviewer = 'Client';
+                  $rating = max(1, min(5, (int)($rv['rating'] ?? 0)));
+                ?>
+                <div class="border rounded-xl p-4 bg-gray-50">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="text-sm font-semibold text-gray-900"><?php echo h($reviewer); ?></div>
+                    <div class="text-sm text-amber-600"><?php echo str_repeat('★', $rating) . str_repeat('☆', 5 - $rating); ?></div>
+                  </div>
+                  <div class="text-sm text-gray-700 mt-2"><?php echo h((string)($rv['review_text'] ?? 'No written review.')); ?></div>
+                  <div class="text-xs text-gray-500 mt-2"><?php echo !empty($rv['updated_at']) ? h(date('M d, Y h:i A', strtotime((string)$rv['updated_at']))) : ''; ?></div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
         </div>
       </section>
 
@@ -1111,23 +2073,42 @@ input[type="submit"]:hover,
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="12" rx="9" ry="6" fill="#2e7d32"/><circle cx="12" cy="12" r="2.5" fill="#fff"/></svg>
             </span> Set Your Availability
           </div>
+          <div style="max-height:520px; overflow-y:auto; padding-right:6px;">
           <?php if (!empty($availability_success)): ?>
             <div class="mb-3 p-2 rounded bg-green-100 text-green-800 text-sm">Availability saved!</div>
           <?php elseif (!empty($availability_error)): ?>
             <div class="mb-3 p-2 rounded bg-red-100 text-red-800 text-sm"><?php echo h($availability_error); ?></div>
           <?php endif; ?>
-          <?php if (!empty($slot_success)): ?>
-            <div id="slot-success-msg" class="mb-3 p-2 rounded bg-green-100 text-green-800 text-sm">Time slot added successfully!</div>
-          <?php elseif (!empty($slot_error)): ?>
-            <div id="slot-error-msg" class="mb-3 p-2 rounded bg-red-100 text-red-800 text-sm"><?php echo h($slot_error); ?></div>
+          <?php if (!empty($slot_success) || !empty($slot_error)): ?>
+            <script>
+              document.addEventListener('DOMContentLoaded', function() {
+                var msg = <?php echo json_encode(!empty($slot_success) ? (is_string($slot_success) ? $slot_success : 'Time slot added successfully!') : $slot_error, JSON_UNESCAPED_UNICODE); ?>;
+                var title = <?php echo json_encode(!empty($slot_success) ? 'Success' : 'Unable to Save', JSON_UNESCAPED_UNICODE); ?>;
+                if (typeof showAlertModal === 'function') {
+                  showAlertModal(msg, title);
+                } else {
+                  alert(msg);
+                }
+              });
+            </script>
           <?php endif; ?>
           <script>
-            setTimeout(function() {
-              var msg = document.getElementById('slot-success-msg');
-              if (msg) msg.style.display = 'none';
-              var err = document.getElementById('slot-error-msg');
-              if (err) err.style.display = 'none';
-            }, 3000);
+            function confirmSlotDelete(event, form) {
+              if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+              }
+              if (!form) return false;
+
+              if (typeof showConfirmModal === 'function') {
+                showConfirmModal('Delete this time slot?', 'Confirm Action', 'Delete', 'Cancel')
+                  .then(function(ok) {
+                    if (ok) form.submit();
+                  });
+                return false;
+              }
+
+              return confirm('Delete this time slot?');
+            }
           </script>
           <form method="post" class="flex flex-wrap gap-4 items-end">
             <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
@@ -1156,6 +2137,7 @@ input[type="submit"]:hover,
                       <th class="py-2 px-4 text-left border">Date</th>
                       <th class="py-2 px-4 text-left border">Time Slot</th>
                       <th class="py-2 px-4 text-left border">Max Clients</th>
+                      <th class="py-2 px-4 text-left border">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1163,7 +2145,42 @@ input[type="submit"]:hover,
                       <tr class="border-t">
                         <td class="py-2 px-4 border"><?php echo h(date('M d, Y', strtotime($slot['available_date']))); ?></td>
                         <td class="py-2 px-4 border"><?php echo h(date('h:i A', strtotime($slot['time_slot']))); ?></td>
-                        <td class="py-2 px-4 border"><?php echo h($slot['max_clients']); ?></td>
+                        <td class="py-2 px-4 border"><?php echo h((string)$slot['max_clients']); ?></td>
+                        <td class="py-2 px-4 border">
+                          <div class="flex flex-wrap gap-2">
+                            <button type="button" class="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700" onclick="toggleSlotEdit(<?php echo (int)$slot['id']; ?>, true)">Edit</button>
+                            <form method="post" class="inline-block m-0">
+                              <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                              <input type="hidden" name="slot_id" value="<?php echo (int)$slot['id']; ?>">
+                              <input type="hidden" name="delete_time_slot" value="1">
+                              <button type="submit" class="px-4 py-2 rounded font-semibold" style="background:#dc3545 !important; color:#fff !important; border:1px solid #dc3545 !important;" onclick="return confirmSlotDelete(event, this.form);">Delete</button>
+                            </form>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr id="slot-edit-row-<?php echo (int)$slot['id']; ?>" class="border-t bg-gray-50 hidden">
+                        <td colspan="4" class="py-3 px-4 border">
+                          <form method="post" class="flex flex-wrap gap-3 items-end">
+                            <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                            <input type="hidden" name="slot_id" value="<?php echo (int)$slot['id']; ?>">
+                            <div>
+                              <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                              <input type="date" name="avail_date" class="border rounded px-3 py-2" value="<?php echo h($slot['available_date']); ?>" required>
+                            </div>
+                            <div>
+                              <label class="block text-sm font-medium text-gray-700 mb-1">Time Slot</label>
+                              <input type="time" name="time_slot" class="border rounded px-3 py-2" value="<?php echo h(date('H:i', strtotime($slot['time_slot']))); ?>" required>
+                            </div>
+                            <div>
+                              <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients</label>
+                              <input type="number" name="max_clients" class="border rounded px-3 py-2 w-28" min="1" value="<?php echo h((string)$slot['max_clients']); ?>" required>
+                            </div>
+                            <div class="flex gap-2">
+                              <button type="submit" name="update_time_slot" value="1" class="bg-green-700 text-white px-4 py-2 rounded font-semibold hover:bg-green-800">Update</button>
+                              <button type="button" class="bg-gray-500 text-white px-4 py-2 rounded font-semibold hover:bg-gray-600" onclick="toggleSlotEdit(<?php echo (int)$slot['id']; ?>, false)">Cancel</button>
+                            </div>
+                          </form>
+                        </td>
                       </tr>
                     <?php endforeach; ?>
                   </tbody>
@@ -1171,7 +2188,26 @@ input[type="submit"]:hover,
               </div>
             </div>
           <?php endif; ?>
+          </div>
         </div>
+        <script>
+          function toggleSlotEdit(slotId, shouldOpen) {
+            document.querySelectorAll('[id^="slot-edit-row-"]').forEach(function(row) {
+              if (!shouldOpen || row.id !== 'slot-edit-row-' + slotId) {
+                row.classList.add('hidden');
+              }
+            });
+
+            var targetRow = document.getElementById('slot-edit-row-' + slotId);
+            if (!targetRow) return;
+
+            if (shouldOpen) {
+              targetRow.classList.remove('hidden');
+            } else {
+              targetRow.classList.add('hidden');
+            }
+          }
+        </script>
         
         <div class="bg-white rounded-2xl border shadow p-6">
           <div class="flex items-center gap-2 font-semibold text-gray-800 mb-4">
@@ -1185,7 +2221,7 @@ input[type="submit"]:hover,
               No upcoming viewings.
             </div>
           <?php else: ?>
-            <div class="space-y-3">
+            <div class="space-y-3" style="max-height:420px; overflow-y:auto; padding-right:6px;">
               <?php foreach ($viewings as $v):
                 $st = $v['status'];
                 $statusCfg = [
@@ -1219,6 +2255,12 @@ input[type="submit"]:hover,
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-1">
                     <span class="font-semibold text-gray-900 text-sm"><?php echo h($v['client_first_name'].' '.$v['client_last_name']); ?></span>
+                    <?php if (!empty($v['is_existing_client'])): ?>
+                      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200" title="Matched registered account<?php echo !empty($v['matched_username']) ? ': ' . h($v['matched_username']) : ''; ?>">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        Existing Client
+                      </span>
+                    <?php endif; ?>
                     <span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full <?php echo $cfg['bg']; ?> <?php echo $cfg['text']; ?> border <?php echo $cfg['border']; ?>">
                       <span class="w-1.5 h-1.5 rounded-full <?php echo $cfg['dot']; ?>"></span>
                       <?php echo $cfg['label']; ?>
@@ -1377,7 +2419,7 @@ input[type="submit"]:hover,
       </div>
     </section>
 
-    <section id="section-sales" class="hidden">
+    <section id="section-sales" class="hidden" data-auto-sales="1">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Manage Sales</h2>
       <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review your property sales and transaction history</p>
       <div class="bg-white rounded-2xl border shadow p-6">
@@ -1411,8 +2453,7 @@ input[type="submit"]:hover,
         </div>
 
         <div class="mt-6 flex gap-4">
-          <button id="add-sale-btn" class="bg-green-800 text-white px-5 py-2 rounded hover:bg-green-900">Add New Sale</button>
-          <button id="save-all-sales-btn" class="bg-green-800 text-white px-5 py-2 rounded hover:bg-green-900">Save All Changes</button>
+          <span id="sales-auto-note" class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded">Auto sync enabled: sales are generated from your actual handled lots and transactions.</span>
         </div>
       </div>
     </section>
@@ -1508,7 +2549,7 @@ input[type="submit"]:hover,
 
     <section id="section-audit-logs" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Audit Logs</h2>
-      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review system audit logs for security and compliance</p>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Track your recent actions, outcomes, and timestamps.</p>
       <div class="bg-white rounded-2xl border shadow p-6">
         <div id="audit-logs-container">
           <p class="text-gray-600">Loading audit logs...</p>
@@ -1518,7 +2559,7 @@ input[type="submit"]:hover,
 
     <section id="section-documents" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">Document Review</h2>
-      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Review and manage your documents</p>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Prioritize pending client requirements and update statuses quickly.</p>
       <div class="bg-white rounded-2xl border shadow p-6">
         <div id="documents-container">
           <p class="text-gray-600">Loading documents...</p>
@@ -1529,7 +2570,7 @@ input[type="submit"]:hover,
     <section id="section-viewings" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-1">Viewing Requests</h2>
       <p class="text-gray-500 text-sm mb-5">Manage and track your assigned viewing requests</p>
-      <div class="bg-white rounded-2xl border shadow">
+      <div class="bg-white rounded-2xl border shadow vw-theme">
         <?php if (empty($all_viewings)): ?>
           <div class="border border-dashed rounded-xl p-8 text-gray-500 text-sm text-center m-6">
             No viewing requests assigned to you yet.
@@ -1544,7 +2585,7 @@ input[type="submit"]:hover,
                 $s = $vv['status'];
                 $statusCounts[$s] = ($statusCounts[$s] ?? 0) + 1;
               }
-              $tabOrder = ['pending','scheduled','rescheduled','completed','cancelled'];
+              $tabOrder = ['pending','scheduled','completed','cancelled'];
               foreach ($tabOrder as $tab):
                 if (($statusCounts[$tab] ?? 0) > 0):
             ?>
@@ -1552,7 +2593,32 @@ input[type="submit"]:hover,
             <?php endif; endforeach; ?>
           </div>
 
-          <div class="divide-y">
+          <div class="vw-calendar-layout p-4 md:p-5">
+            <div class="vw-calendar-pane">
+              <div class="vw-calendar-head">
+                <button type="button" class="vw-cal-nav" onclick="changeViewingMonth(-1)" aria-label="Previous month">&#10094;</button>
+                <div id="vw-month-label" class="vw-month-label">Month</div>
+                <button type="button" class="vw-cal-nav" onclick="changeViewingMonth(1)" aria-label="Next month">&#10095;</button>
+              </div>
+              <div class="vw-calendar-tools">
+                <button type="button" class="vw-cal-tool-btn" onclick="jumpViewingToToday()">Today</button>
+                <button type="button" class="vw-cal-tool-btn" onclick="clearViewingDateFilter()">Clear Date</button>
+              </div>
+              <div class="vw-weekdays">
+                <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+              </div>
+              <div class="vw-calendar-legend">
+                <span class="vw-legend-item"><span class="vw-legend-dot pending"></span>Pending</span>
+                <span class="vw-legend-item"><span class="vw-legend-dot scheduled"></span>Scheduled</span>
+                <span class="vw-legend-item"><span class="vw-legend-dot completed"></span>Completed</span>
+                <span class="vw-legend-item"><span class="vw-legend-dot cancelled"></span>Cancelled</span>
+              </div>
+              <div id="vw-calendar-grid" class="vw-calendar-grid"></div>
+            </div>
+          </div>
+
+          <!-- Hidden event data container — used by calendar JS for dots & counts -->
+          <div id="vw-events-list" style="display:none;">
             <?php foreach ($all_viewings as $v):
               $st = $v['status'];
               $statusCfg = [
@@ -1578,8 +2644,9 @@ input[type="submit"]:hover,
                 $locParts[] = 'Lot ' . $v['lot_no'];
               }
               $locText = $locParts ? implode(' — ', $locParts) : 'N/A';
+              $viewingDateKey = !empty($v['preferred_at']) ? date('Y-m-d', strtotime($v['preferred_at'])) : '';
             ?>
-            <div class="vw-row p-5 hover:bg-gray-50/50 transition" data-status="<?php echo h($st); ?>">
+            <div class="vw-row vw-event-card p-5 hover:bg-gray-50/50 transition" data-status="<?php echo h($st); ?>" data-date="<?php echo h($viewingDateKey); ?>">
               <div class="flex items-start gap-4">
                 <!-- Date badge -->
                 <div class="flex-shrink-0 text-center bg-white rounded-xl border shadow-sm px-3 py-2 min-w-[58px]">
@@ -1597,6 +2664,12 @@ input[type="submit"]:hover,
                   <!-- Top row: Name + Status -->
                   <div class="flex flex-wrap items-center gap-2 mb-1.5">
                     <span class="font-semibold text-gray-900"><?php echo h($v['client_first_name'] . ' ' . $v['client_last_name']); ?></span>
+                    <?php if (!empty($v['is_existing_client'])): ?>
+                      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200" title="Matched registered account<?php echo !empty($v['matched_username']) ? ': ' . h($v['matched_username']) : ''; ?>">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        Existing Client
+                      </span>
+                    <?php endif; ?>
                     <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full <?php echo $cfg['bg']; ?> <?php echo $cfg['text']; ?> border <?php echo $cfg['border']; ?>">
                       <span class="w-1.5 h-1.5 rounded-full <?php echo $cfg['dot']; ?>"></span>
                       <?php echo $cfg['label']; ?>
@@ -1638,8 +2711,20 @@ input[type="submit"]:hover,
 
                 <!-- Right: Action buttons -->
                 <div class="flex-shrink-0 flex flex-col items-end gap-1.5">
-                  <?php if (in_array($st, ['pending', 'requested', 'scheduled'])): ?>
-                    <?php if ($st === 'pending'): ?>
+                  <?php if ($st === 'completed'): ?>
+                    <!-- Static completed badge -->
+                    <span class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                      Completed
+                    </span>
+                  <?php elseif (in_array($st, ['cancelled', 'no_show_agent', 'no_show_client'])): ?>
+                    <!-- Static cancelled badge -->
+                    <span class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-red-50 text-red-700 border border-red-200">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                      <?php echo ($st === 'no_show_agent') ? 'No Show (Agent)' : (($st === 'no_show_client') ? 'No Show (Client)' : 'Cancelled'); ?>
+                    </span>
+                  <?php elseif (in_array($st, ['pending', 'requested', 'scheduled', 'rescheduled'])): ?>
+                    <?php if ($st === 'pending' || $st === 'requested'): ?>
                       <form method="post">
                         <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                         <input type="hidden" name="approve_viewing_id" value="<?php echo (int)$v['id']; ?>">
@@ -1660,22 +2745,11 @@ input[type="submit"]:hover,
                       <input type="hidden" name="redirect_to" value="viewings">
                       <textarea name="cancellation_reason" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs mt-1 focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none resize-none" placeholder="Reason for cancellation (required)" required></textarea>
                       <div class="flex gap-1.5 mt-1.5">
-                        <button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel" style="font-size:11px;">Submit</button>
-                        <button type="button" class="vw-btn vw-btn-secondary" style="font-size:11px;" onclick="hideCancelReason(<?php echo (int)$v['id']; ?>)">Back</button>
+                        <button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel">Submit</button>
+                        <button type="button" class="vw-btn vw-btn-secondary" onclick="hideCancelReason(<?php echo (int)$v['id']; ?>)">Back</button>
                       </div>
                     </form>
                   <?php endif; ?>
-
-                  <!-- Delete button (always visible) -->
-                  <form method="post" onsubmit="return confirm('Are you sure you want to permanently delete this viewing record?');">
-                    <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
-                    <input type="hidden" name="delete_viewing_id" value="<?php echo (int)$v['id']; ?>">
-                    <input type="hidden" name="redirect_to" value="viewings">
-                    <button type="submit" class="vw-btn vw-btn-delete">
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                      Delete
-                    </button>
-                  </form>
                 </div>
               </div>
             </div>
@@ -1684,58 +2758,887 @@ input[type="submit"]:hover,
         <?php endif; ?>
       </div>
 
+      <!-- Date detail modal -->
+      <div id="vw-date-modal" onclick="if(event.target===this)closeDateModal()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9000;align-items:flex-start;justify-content:center;background:rgba(15,23,42,0.55);padding:40px 16px;box-sizing:border-box;overflow-y:auto;">
+        <div id="vw-date-modal-box" style="background:#fff;border-radius:20px;width:100%;max-width:700px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.18);overflow:hidden;margin:auto;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid #e2efe7;background:#fbfefc;flex-shrink:0;">
+            <div>
+              <h3 id="vw-modal-title" style="margin:0;font-size:19px;font-weight:800;color:#166534;"></h3>
+              <p id="vw-modal-subtitle" style="margin:4px 0 0;font-size:13px;color:#64748b;"></p>
+            </div>
+            <button onclick="closeDateModal()" style="width:36px;height:36px;border-radius:10px;border:1px solid #bfe7cf!important;background:#eaf8f0!important;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#2f9e66;flex-shrink:0;">&#x2715;</button>
+          </div>
+          <div id="vw-modal-body" style="padding:16px 20px 24px;">
+          </div>
+        </div>
+      </div>
+
       <style>
+        .vw-theme {
+          --vw-primary: #53b583;
+          --vw-primary-strong: #419f70;
+          --vw-primary-soft: #f4fcf7;
+          --vw-primary-border: #d3ecdf;
+          --vw-surface: #ffffff;
+          --vw-surface-soft: #fbfefc;
+          --vw-border: #e2efe7;
+          --vw-text: #1f2937;
+          --vw-muted: #64748b;
+        }
+
+        .vw-calendar-layout {
+          display: block;
+          background: linear-gradient(180deg, #edfaf3 0%, #f2fbf6 100%);
+          border-radius: 16px;
+        }
+
+        .vw-calendar-pane {
+          border: 1px solid #b2dcc7;
+          border-radius: 14px;
+          padding: 20px 24px;
+          background: #ffffff;
+        }
+
+        .vw-calendar-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #edfaf3;
+          border-radius: 10px;
+          padding: 6px 10px;
+          margin-bottom: 12px;
+        }
+
+        .vw-month-label {
+          font-size: 20px;
+          font-weight: 800;
+          color: var(--vw-primary-strong);
+          letter-spacing: 0.01em;
+        }
+
+        .vw-cal-nav {
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          border: 1px solid var(--vw-border) !important;
+          background: var(--vw-surface) !important;
+          color: #334155 !important;
+          font-size: 15px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+
+        .vw-cal-nav:hover {
+          border-color: var(--vw-primary-border) !important;
+          background: var(--vw-primary-soft) !important;
+          color: var(--vw-primary-strong) !important;
+        }
+
+        .vw-weekdays {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 8px;
+          margin-bottom: 10px;
+          background: #d6f5e5;
+          border-radius: 8px;
+          padding: 2px 4px;
+        }
+
+        .vw-calendar-tools {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+
+        .vw-cal-tool-btn {
+          border: 1px solid var(--vw-border) !important;
+          background: var(--vw-surface) !important;
+          color: #334155 !important;
+          border-radius: 8px;
+          padding: 6px 11px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .vw-cal-tool-btn:hover {
+          border-color: var(--vw-primary-border) !important;
+          background: var(--vw-primary-soft) !important;
+          color: var(--vw-primary-strong) !important;
+        }
+
+        .vw-calendar-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px 10px;
+          margin-bottom: 10px;
+          background: #edfaf3;
+          border-radius: 8px;
+          padding: 7px 10px;
+        }
+
+        .vw-legend-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 10px;
+          font-weight: 700;
+          color: var(--vw-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+
+        .vw-legend-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+
+        .vw-legend-dot.pending { background: #f59e0b; }
+        .vw-legend-dot.scheduled { background: #22c55e; }
+        .vw-legend-dot.rescheduled { background: #3b82f6; }
+        .vw-legend-dot.completed { background: #0d9488; }
+        .vw-legend-dot.cancelled { background: #ef4444; }
+
+        .vw-weekdays span {
+          text-align: center;
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--vw-muted);
+          text-transform: uppercase;
+          padding: 6px 0;
+        }
+
+        .vw-calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .vw-day {
+          position: relative;
+          border: 1px solid #cce8d9 !important;
+          border-radius: 12px;
+          min-height: 120px;
+          background: #f9fefb !important;
+          padding: 10px;
+          display: grid;
+          grid-template-columns: 1fr auto;
+          justify-content: space-between;
+          cursor: pointer;
+          color: #334155 !important;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+        }
+
+        .vw-day:hover {
+          border-color: var(--vw-primary-border) !important;
+          background: #f8fdf9 !important;
+          box-shadow: 0 4px 12px rgba(83, 181, 131, 0.12);
+        }
+
+        .vw-day.is-muted {
+          visibility: hidden;
+          pointer-events: none;
+        }
+
+        .vw-day.is-today {
+          border-color: var(--vw-primary) !important;
+          background: #f7fdf9 !important;
+        }
+
+        .vw-day.is-selected {
+          border-color: var(--vw-primary) !important;
+          background: var(--vw-primary-soft) !important;
+          box-shadow: 0 5px 12px rgba(83, 181, 131, 0.16);
+        }
+
+        .vw-day-num {
+          font-size: 15px;
+          font-weight: 700;
+          color: #334155 !important;
+        }
+
+        .vw-day-count {
+          font-size: 12px;
+          font-weight: 700;
+          min-width: 22px;
+          height: 22px;
+          border-radius: 9px;
+          padding: 0 6px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #eaf8f0;
+          color: var(--vw-primary-strong);
+        }
+
+        .vw-day-statuses {
+          grid-column: 1 / -1;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          margin-top: 5px;
+          min-height: 8px;
+        }
+
+        .vw-day-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+
+        .vw-day-dot.pending { background: #f59e0b; }
+        .vw-day-dot.scheduled { background: #22c55e; }
+        .vw-day-dot.rescheduled { background: #3b82f6; }
+        .vw-day-dot.completed { background: #0d9488; }
+        .vw-day-dot.cancelled { background: #ef4444; }
+
+        .vw-more-status {
+          font-size: 9px;
+          font-weight: 700;
+          color: var(--vw-muted);
+          line-height: 1;
+        }
+
+        .vw-events-pane {
+          border: 1px solid var(--vw-border);
+          border-radius: 16px;
+          overflow: hidden;
+          background: var(--vw-surface);
+        }
+
+        .vw-events-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 14px 16px;
+          border-bottom: 1px solid var(--vw-border);
+          background: var(--vw-surface-soft);
+        }
+
+        .vw-events-title {
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--vw-text);
+          margin: 0;
+        }
+
+        #vw-events-list {
+          max-height: 720px;
+          overflow-y: auto;
+        }
+
+        #vw-events-list::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        #vw-events-list::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 999px;
+        }
+
+        #vw-events-list::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+
+        .vw-clear-date {
+          border: 1px solid var(--vw-border) !important;
+          background: var(--vw-surface) !important;
+          color: #475569 !important;
+          font-size: 12px;
+          font-weight: 700;
+          border-radius: 8px;
+          padding: 7px 12px;
+          cursor: pointer;
+        }
+
+        .vw-clear-date:hover {
+          background: var(--vw-primary-soft) !important;
+          border-color: var(--vw-primary-border) !important;
+          color: var(--vw-primary-strong) !important;
+        }
+
+        .vw-event-card {
+          padding: 20px;
+        }
+
+        @media (max-width: 768px) {
+          .vw-day {
+            min-height: 80px;
+            padding: 7px;
+          }
+          .vw-day-num { font-size: 13px; }
+        }
+
+        /* Date modal card styles */
+        .vwm-card {
+          border: 1px solid #e2efe7;
+          border-radius: 14px;
+          padding: 16px 18px;
+          margin-bottom: 12px;
+          background: #fff;
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+        }
+        .vwm-card:last-child { margin-bottom: 0; }
+        .vwm-date-badge {
+          flex-shrink: 0;
+          text-align: center;
+          background: #f8fdf9;
+          border: 1px solid #e2efe7;
+          border-radius: 12px;
+          padding: 8px 12px;
+          min-width: 56px;
+        }
+        .vwm-date-badge .mn { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+        .vwm-date-badge .dy { font-size: 22px; font-weight: 800; color: #166534; line-height: 1.1; }
+        .vwm-date-badge .tm { font-size: 10px; color: #94a3b8; font-weight: 500; }
+        .vwm-body { flex: 1; min-width: 0; }
+        .vwm-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 7px; }
+        .vwm-name { font-size: 15px; font-weight: 700; color: #1f2937; }
+        .vwm-badge {
+          display: inline-flex; align-items: center; gap: 5px;
+          font-size: 11px; font-weight: 600;
+          padding: 2px 9px; border-radius: 999px;
+          border: 1px solid;
+        }
+        .vwm-price { font-size: 12px; color: #64748b; font-weight: 500; margin-left: auto; white-space: nowrap; }
+        .vwm-info-row { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-bottom: 5px; }
+        .vwm-info-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #64748b; }
+        .vwm-info-item a { color: #419f70; text-decoration: none; }
+        .vwm-info-item a:hover { text-decoration: underline; }
+        .vwm-note { font-size: 12px; color: #64748b; font-style: italic; margin-top: 6px; display: flex; gap: 5px; align-items: flex-start; }
+        .vwm-cancel-reason { font-size: 12px; color: #dc2626; margin-top: 5px; }
+        .vwm-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+        .vwm-group-header {
+          font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+          color: #94a3b8; margin: 14px 0 8px; display: flex; align-items: center; gap: 8px;
+        }
+        .vwm-group-header::after { content: ''; flex: 1; height: 1px; background: #e2efe7; }
+        .vwm-empty { text-align: center; padding: 36px 20px; color: #94a3b8; font-size: 14px; }
+        .vwm-action-btn { font-size: 12px !important; min-width: 80px !important; min-height: 30px !important; padding: 6px 12px !important; }
+
         /* Viewing Button System */
         .vw-btn {
-          display: inline-flex; align-items: center; gap: 5px;
-          padding: 5px 14px; border-radius: 8px;
-          font-size: 12px; font-weight: 600;
-          border: none; cursor: pointer;
-          transition: all 0.15s ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          min-width: 104px;
+          min-height: 36px;
+          padding: 8px 14px;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 700;
+          border: 1px solid transparent;
+          cursor: pointer;
+          transition: transform 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
           white-space: nowrap;
-          line-height: 1.5;
+          line-height: 1;
+          letter-spacing: 0.01em;
         }
-        .vw-btn:hover { transform: translateY(-1px); }
-        .vw-btn-approve { background: #2563eb; color: #fff; }
-        .vw-btn-approve:hover { background: #1d4ed8; box-shadow: 0 2px 8px rgba(37,99,235,0.25); }
-        .vw-btn-complete { background: #16a34a; color: #fff; }
-        .vw-btn-complete:hover { background: #15803d; box-shadow: 0 2px 8px rgba(22,163,74,0.25); }
-        .vw-btn-cancel { background: #ef4444; color: #fff; }
-        .vw-btn-cancel:hover { background: #dc2626; box-shadow: 0 2px 8px rgba(239,68,68,0.25); }
-        .vw-btn-delete { background: #fff; color: #9ca3af; border: 1.5px solid #e5e7eb; }
-        .vw-btn-delete:hover { color: #ef4444; border-color: #fca5a5; background: #fef2f2; box-shadow: 0 2px 8px rgba(239,68,68,0.1); }
-        .vw-btn-secondary { background: #f1f5f9; color: #475569; border: 1.5px solid #e2e8f0; }
-        .vw-btn-secondary:hover { background: #e2e8f0; }
+
+        .vw-btn:hover {
+          transform: translateY(-1px);
+        }
+
+        /* Strong specificity + !important to beat global button rules above */
+        .vw-row .vw-btn-approve {
+          background: var(--vw-primary) !important;
+          color: #fff !important;
+          border-color: var(--vw-primary) !important;
+          box-shadow: 0 5px 12px rgba(83, 181, 131, 0.18);
+        }
+
+        .vw-row .vw-btn-approve:hover {
+          background: var(--vw-primary-strong) !important;
+          border-color: var(--vw-primary-strong) !important;
+          box-shadow: 0 7px 14px rgba(65, 159, 112, 0.2);
+        }
+
+        .vw-row .vw-btn-cancel {
+          background: #fff7ed !important;
+          color: #9a3412 !important;
+          border-color: #fdba74 !important;
+        }
+
+        .vw-row .vw-btn-cancel:hover {
+          background: #ffedd5 !important;
+          border-color: #fb923c !important;
+          color: #7c2d12 !important;
+          box-shadow: 0 6px 12px rgba(251, 146, 60, 0.2);
+        }
+
+        .vw-row .vw-btn-secondary {
+          background: #f8fafc !important;
+          color: #475569 !important;
+          border-color: #cbd5e1 !important;
+        }
+
+        .vw-row .vw-btn-secondary:hover {
+          background: #f1f5f9 !important;
+          border-color: #94a3b8 !important;
+          color: #334155 !important;
+        }
 
         /* Filter Tabs */
         .vw-filter-tab {
           display: inline-flex; align-items: center; gap: 5px;
-          padding: 6px 14px; border-radius: 8px;
+          padding: 7px 14px; border-radius: 9px;
           font-size: 13px; font-weight: 500;
-          border: 1.5px solid #e2e8f0;
-          background: #fff; color: #64748b;
+          border: 1.5px solid var(--vw-border) !important;
+          background: var(--vw-surface) !important; color: #64748b !important;
           cursor: pointer; transition: all 0.15s;
         }
-        .vw-filter-tab:hover { background: #f1f5f9; color: #334155; }
-        .vw-filter-tab.active { background: #14532d; color: #fff; border-color: #14532d; }
-        .vw-filter-tab.active .vw-count { background: rgba(255,255,255,0.2); color: #fff; }
+        .vw-filter-tab:hover { background: var(--vw-primary-soft) !important; color: #334155 !important; border-color: var(--vw-primary-border) !important; }
+        .vw-filter-tab.active { background: #e9f8f0 !important; color: #1f6a47 !important; border-color: #bfe7d1 !important; }
+        .vw-filter-tab.active .vw-count { background: #d5efdf; color: #1f6a47; }
         .vw-count {
           display: inline-flex; align-items: center; justify-content: center;
           min-width: 20px; height: 20px;
           padding: 0 6px; border-radius: 10px;
           font-size: 11px; font-weight: 700;
-          background: #f1f5f9; color: #64748b;
+          background: #f0f5f2; color: #64748b;
         }
       </style>
 
       <script>
-        function filterViewings(status) {
-          document.querySelectorAll('.vw-filter-tab').forEach(t => t.classList.remove('active'));
-          document.querySelector('.vw-filter-tab[data-filter="' + status + '"]').classList.add('active');
-          document.querySelectorAll('.vw-row').forEach(row => {
-            row.style.display = (status === 'all' || row.dataset.status === status) ? '' : 'none';
+        const vwData = <?php echo json_encode(array_map(function($v) {
+          return [
+            'id'                  => (int)($v['id'] ?? 0),
+            'status'              => (string)($v['status'] ?? ''),
+            'preferred_at'        => (function($d) {
+              $s = (string)($d ?? '');
+              // Reject zero/invalid MySQL datetime placeholders
+              return (!$s || str_starts_with($s, '0000')) ? '' : $s;
+            })($v['preferred_at'] ?? null),
+            'client_first_name'   => (string)($v['client_first_name'] ?? ''),
+            'client_middle_name'  => (string)($v['client_middle_name'] ?? ''),
+            'client_last_name'    => (string)($v['client_last_name'] ?? ''),
+            'client_email'        => (string)($v['client_email'] ?? ''),
+            'client_phone'        => (string)($v['client_phone'] ?? ''),
+            'lot_price'           => $v['lot_price'] !== null ? (float)$v['lot_price'] : null,
+            'location_name'       => (string)($v['location_name'] ?? ''),
+            'block_number'        => (string)($v['block_number'] ?? ''),
+            'lot_number'          => (string)($v['lot_number'] ?? ''),
+            'lot_size'            => $v['lot_size'] !== null ? (float)$v['lot_size'] : null,
+            'lot_no'              => (string)($v['lot_no'] ?? ''),
+            'notes'               => (string)($v['notes'] ?? ''),
+            'cancellation_reason' => (string)($v['cancellation_reason'] ?? ''),
+            'is_existing_client'  => !empty($v['is_existing_client']),
+            'matched_username'    => (string)($v['matched_username'] ?? ''),
+            'created_at'          => (string)($v['created_at'] ?? ''),
+          ];
+        }, $all_viewings ?? []), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+
+        const vwCsrfToken = <?php echo json_encode($_SESSION['csrf_token'] ?? ''); ?>;
+
+        let viewingCalendarMonth = null;
+        let viewingSelectedDate = null;
+        let viewingActiveStatus = 'all';
+
+        function getViewingRows() {
+          return Array.from(document.querySelectorAll('.vw-event-card'));
+        }
+
+        // Returns the best available date string for a viewing, empty string if none.
+        function getViewingDate(v) {
+          const pa = (v.preferred_at || '').trim();
+          if (pa && !pa.startsWith('0000')) return pa;
+          const ca = (v.created_at || '').trim();
+          if (ca && !ca.startsWith('0000')) return ca;
+          return '';
+        }
+
+        function getMonthKey(dateObj) {
+          return dateObj.getFullYear() + '-' + String(dateObj.getMonth() + 1).padStart(2, '0');
+        }
+
+        function getMonthKeyFromRaw(rawDate) {
+          if (!rawDate) return '';
+          const dt = new Date(String(rawDate).replace(' ', 'T'));
+          if (isNaN(dt.getTime())) return '';
+          return getMonthKey(dt);
+        }
+
+        function refreshStatusTabsForCurrentMonth() {
+          if (!viewingCalendarMonth) return;
+
+          const monthKey = getMonthKey(viewingCalendarMonth);
+          const counts = {
+            all: 0,
+            pending: 0,
+            scheduled: 0,
+            completed: 0,
+            cancelled: 0
+          };
+
+          vwData.forEach(function(v) {
+            const rawDate = getViewingDate(v);
+            const rowMonthKey = getMonthKeyFromRaw(rawDate);
+            if (!rowMonthKey || rowMonthKey !== monthKey) return;
+
+            const normalized = normalizeCalendarStatus(v.status || '');
+            counts.all += 1;
+            if (Object.prototype.hasOwnProperty.call(counts, normalized)) {
+              counts[normalized] += 1;
+            }
+          });
+
+          const tabs = Array.from(document.querySelectorAll('.vw-filter-tab'));
+          tabs.forEach(function(tab) {
+            const status = tab.dataset.filter || 'all';
+            const countEl = tab.querySelector('.vw-count');
+            const count = counts[status] ?? 0;
+
+            if (countEl) {
+              countEl.textContent = String(count);
+            }
+
+            if (status !== 'all') {
+              tab.style.display = count > 0 ? '' : 'none';
+            } else {
+              tab.style.display = '';
+            }
+          });
+
+          const activeTabVisible = tabs.some(function(tab) {
+            return tab.dataset.filter === viewingActiveStatus && tab.style.display !== 'none';
+          });
+
+          if (!activeTabVisible) {
+            viewingActiveStatus = 'all';
+          }
+
+          tabs.forEach(function(tab) {
+            tab.classList.toggle('active', tab.dataset.filter === viewingActiveStatus);
           });
         }
+
+        function getMonthName(dateObj) {
+          return dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        }
+
+        function toLocalDateKey(dateObj) {
+          const y = dateObj.getFullYear();
+          const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const d = String(dateObj.getDate()).padStart(2, '0');
+          return y + '-' + m + '-' + d;
+        }
+
+        function normalizeCalendarStatus(status) {
+          if (status === 'pending' || status === 'requested') return 'pending';
+          if (status === 'scheduled') return 'scheduled';
+          if (status === 'rescheduled') return 'rescheduled';
+          if (status === 'completed') return 'completed';
+          if (status === 'cancelled' || status === 'no_show_agent' || status === 'no_show_client') return 'cancelled';
+          return 'pending';
+        }
+
+        function formatSelectedDateLabel(dateKey) {
+          if (!dateKey) return 'All requests';
+          const dateObj = new Date(dateKey + 'T00:00:00');
+          return 'Requests on ' + dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        function updateViewingHeader() {
+          const title = document.getElementById('vw-events-title');
+          if (!title) return;
+
+          const statusLabel = viewingActiveStatus === 'all'
+            ? ''
+            : (' - ' + viewingActiveStatus.charAt(0).toUpperCase() + viewingActiveStatus.slice(1));
+          title.textContent = formatSelectedDateLabel(viewingSelectedDate) + statusLabel;
+
+          const clearBtn = document.getElementById('vw-clear-date');
+          if (clearBtn) clearBtn.style.display = viewingSelectedDate ? '' : 'none';
+        }
+
+        function renderViewingCalendar() {
+          const grid = document.getElementById('vw-calendar-grid');
+          const label = document.getElementById('vw-month-label');
+          if (!grid || !label || !viewingCalendarMonth) return;
+
+          refreshStatusTabsForCurrentMonth();
+
+          const year = viewingCalendarMonth.getFullYear();
+          const month = viewingCalendarMonth.getMonth();
+          const firstDay = new Date(year, month, 1).getDay();
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const todayKey = toLocalDateKey(new Date());
+
+          label.textContent = getMonthName(viewingCalendarMonth);
+          grid.innerHTML = '';
+
+          const countByDate = {};
+          const statusByDate = {};
+          vwData.forEach(function(v) {
+            const rawDate = getViewingDate(v);
+            const dateKey = rawDate ? rawDate.slice(0, 10) : '';
+            const status = v.status || '';
+            if (!dateKey) return;
+            if (viewingActiveStatus !== 'all' && status !== viewingActiveStatus) return;
+            countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
+            if (!statusByDate[dateKey]) statusByDate[dateKey] = new Set();
+            statusByDate[dateKey].add(normalizeCalendarStatus(status));
+          });
+
+          for (let i = 0; i < firstDay; i++) {
+            const filler = document.createElement('div');
+            filler.className = 'vw-day is-muted';
+            grid.appendChild(filler);
+          }
+
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dateKey = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'vw-day';
+            if (dateKey === todayKey) btn.classList.add('is-today');
+            if (viewingSelectedDate === dateKey) btn.classList.add('is-selected');
+
+            const count = countByDate[dateKey] || 0;
+            const statuses = statusByDate[dateKey] ? Array.from(statusByDate[dateKey]) : [];
+            const dots = statuses.slice(0, 3).map(function(st) {
+              return '<span class="vw-day-dot ' + st + '"></span>';
+            }).join('');
+            const moreText = statuses.length > 3 ? '<span class="vw-more-status">+' + (statuses.length - 3) + '</span>' : '';
+
+            btn.innerHTML = '<span class="vw-day-num">' + d + '</span>'
+              + (count > 0 ? '<span class="vw-day-count">' + count + '</span>' : '')
+              + '<span class="vw-day-statuses">' + dots + moreText + '</span>';
+            btn.onclick = function() {
+              viewingSelectedDate = dateKey;
+              applyViewingFilters();
+              renderViewingCalendar();
+              openDateModal(dateKey);
+            };
+            grid.appendChild(btn);
+          }
+        }
+
+        function applyViewingFilters() {
+          let visible = 0;
+          getViewingRows().forEach(function(row) {
+            const statusMatch = (viewingActiveStatus === 'all' || row.dataset.status === viewingActiveStatus);
+            const dateMatch = (!viewingSelectedDate || row.dataset.date === viewingSelectedDate);
+            const isVisible = statusMatch && dateMatch;
+            row.style.display = isVisible ? '' : 'none';
+            if (isVisible) visible++;
+          });
+
+          const emptyState = document.getElementById('vw-empty-state');
+          if (emptyState) emptyState.style.display = visible === 0 ? '' : 'none';
+          updateViewingHeader();
+        }
+
+        function filterViewings(status) {
+          viewingActiveStatus = status;
+          viewingSelectedDate = null;
+
+          document.querySelectorAll('.vw-filter-tab').forEach(t => t.classList.remove('active'));
+          const selectedTab = document.querySelector('.vw-filter-tab[data-filter="' + status + '"]');
+          if (selectedTab) selectedTab.classList.add('active');
+          applyViewingFilters();
+          renderViewingCalendar();
+        }
+
+        function changeViewingMonth(offset) {
+          if (!viewingCalendarMonth) return;
+          viewingCalendarMonth = new Date(viewingCalendarMonth.getFullYear(), viewingCalendarMonth.getMonth() + offset, 1);
+          viewingSelectedDate = null;
+          applyViewingFilters();
+          renderViewingCalendar();
+        }
+
+        function clearViewingDateFilter() {
+          viewingSelectedDate = null;
+          applyViewingFilters();
+          renderViewingCalendar();
+        }
+
+        function jumpViewingToToday() {
+          const now = new Date();
+          viewingCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          viewingSelectedDate = toLocalDateKey(now);
+          applyViewingFilters();
+          renderViewingCalendar();
+        }
+
+        (function initViewingCalendar() {
+          if (!vwData.length) return;
+
+          const now = new Date();
+          viewingCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+          applyViewingFilters();
+          renderViewingCalendar();
+        })();
+
+        /* ---- Date detail modal ---- */
+        const vwStatusCfg = {
+          pending:          { label: 'Pending',           bg: '#fffbeb', color: '#92400e', border: '#fcd34d', dot: '#f59e0b' },
+          requested:        { label: 'Requested',         bg: '#fffbeb', color: '#92400e', border: '#fcd34d', dot: '#f59e0b' },
+          scheduled:        { label: 'Scheduled',         bg: '#f0fdf4', color: '#166534', border: '#86efac', dot: '#22c55e' },
+          rescheduled:      { label: 'Rescheduled',       bg: '#eff6ff', color: '#1e40af', border: '#93c5fd', dot: '#3b82f6' },
+          completed:        { label: 'Completed',         bg: '#ecfeff', color: '#115e59', border: '#5eead4', dot: '#0d9488' },
+          cancelled:        { label: 'Cancelled',         bg: '#fef2f2', color: '#991b1b', border: '#fca5a5', dot: '#ef4444' },
+          no_show_agent:    { label: 'No Show (Agent)',   bg: '#fef2f2', color: '#991b1b', border: '#fca5a5', dot: '#ef4444' },
+          no_show_client:   { label: 'No Show (Client)',  bg: '#fef2f2', color: '#991b1b', border: '#fca5a5', dot: '#ef4444' },
+        };
+        const vwStatusOrder = ['pending','requested','scheduled','rescheduled','completed','cancelled','no_show_agent','no_show_client'];
+
+        function esc(str) {
+          return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function buildModalCard(v) {
+          const cfg = vwStatusCfg[v.status] || vwStatusCfg['pending'];
+          const locParts = [];
+          if (v.location_name) locParts.push(v.location_name);
+          if (v.block_number && v.lot_number) {
+            let lbl = 'Block ' + v.block_number + ', Lot ' + v.lot_number;
+            if (v.lot_size) lbl += ' (' + parseFloat(v.lot_size).toFixed(2) + ' sqm)';
+            locParts.push(lbl);
+          } else if (v.lot_no) {
+            locParts.push('Lot ' + v.lot_no);
+          }
+          const locText = locParts.join(' — ') || 'N/A';
+
+          let dateBadge = '<div style="font-size:12px;color:#94a3b8;">TBD</div>';
+          const dateSource = getViewingDate(v);
+          if (dateSource) {
+            const dt = new Date(dateSource.replace(' ', 'T'));
+            const mon = dt.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+            const dy  = dt.getDate();
+            const tm  = v.preferred_at && !v.preferred_at.startsWith('0000')
+              ? dt.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+              : 'Requested';
+            dateBadge = '<div class="mn">' + mon + '</div><div class="dy">' + dy + '</div><div class="tm">' + esc(tm) + '</div>';
+          }
+
+          const existingBadge = v.is_existing_client
+            ? '<span class="vwm-badge" style="background:#ecfdf5;color:#065f46;border-color:#6ee7b7;"><span style="width:6px;height:6px;border-radius:999px;background:#10b981;display:inline-block;"></span>Existing Client</span>'
+            : '';
+          const statusBadge = '<span class="vwm-badge" style="background:' + cfg.bg + ';color:' + cfg.color + ';border-color:' + cfg.border + ';"><span style="width:6px;height:6px;border-radius:999px;background:' + cfg.dot + ';display:inline-block;"></span>' + esc(cfg.label) + '</span>';
+          const priceHtml = v.lot_price ? '<span class="vwm-price">&#8369;' + parseFloat(v.lot_price).toLocaleString('en-PH', {minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' : '';
+
+          const notesHtml = v.notes
+            ? '<div class="vwm-note"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg><span>' + esc(v.notes) + '</span></div>'
+            : '';
+          const cancelReasonHtml = v.cancellation_reason
+            ? '<div class="vwm-cancel-reason"><strong>Cancellation reason:</strong> ' + esc(v.cancellation_reason) + '</div>'
+            : '';
+
+          let actionsHtml = '';
+          const actionable = ['pending','requested','scheduled','rescheduled'];
+          if (actionable.includes(v.status)) {
+            let approveBtnHtml = '';
+            if (v.status === 'pending' || v.status === 'requested') {
+              approveBtnHtml = '<form method="post" style="display:inline;">' +
+                '<input type="hidden" name="csrf_token" value="' + esc(vwCsrfToken) + '">' +
+                '<input type="hidden" name="approve_viewing_id" value="' + v.id + '">' +
+                '<input type="hidden" name="redirect_to" value="viewings">' +
+                '<button type="submit" class="vw-btn vw-btn-approve vwm-action-btn">&#10003; Approve</button></form>';
+            }
+            const cancelBtnHtml = '<button type="button" class="vw-btn vw-btn-cancel vwm-action-btn" onclick="showModalCancelForm(' + v.id + ')" id="vwm-cancel-init-' + v.id + '">&#x2715; Cancel</button>' +
+              '<form method="post" id="vwm-cancel-form-' + v.id + '" style="display:none;width:100%;">' +
+              '<input type="hidden" name="csrf_token" value="' + esc(vwCsrfToken) + '">' +
+              '<input type="hidden" name="viewing_id" value="' + v.id + '">' +
+              '<input type="hidden" name="redirect_to" value="viewings">' +
+              '<textarea name="cancellation_reason" rows="2" style="width:100%;border:1px solid #fca5a5;border-radius:8px;padding:8px 10px;font-size:12px;resize:none;outline:none;margin-top:6px;box-sizing:border-box;" placeholder="Reason for cancellation (required)" required></textarea>' +
+              '<div style="display:flex;gap:6px;margin-top:6px;">' +
+              '<button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel vwm-action-btn">Submit</button>' +
+              '<button type="button" class="vw-btn vw-btn-secondary vwm-action-btn" onclick="hideModalCancelForm(' + v.id + ')">Back</button>' +
+              '</div></form>';
+            actionsHtml = '<div class="vwm-actions">' + approveBtnHtml + cancelBtnHtml + '</div>';
+          }
+
+          return '<div class="vwm-card">' +
+            '<div class="vwm-date-badge">' + dateBadge + '</div>' +
+            '<div class="vwm-body">' +
+              '<div class="vwm-name-row">' +
+                '<span class="vwm-name">' + esc(v.client_first_name + ' ' + v.client_last_name) + '</span>' +
+                existingBadge + statusBadge + priceHtml +
+              '</div>' +
+              '<div class="vwm-info-row">' +
+                '<span class="vwm-info-item"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' + esc(locText) + '</span>' +
+                (v.client_email ? '<span class="vwm-info-item"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg><a href="mailto:' + esc(v.client_email) + '">' + esc(v.client_email) + '</a></span>' : '') +
+                (v.client_phone ? '<span class="vwm-info-item"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg><a href="tel:' + esc(v.client_phone) + '">' + esc(v.client_phone) + '</a></span>' : '') +
+              '</div>' +
+              notesHtml + cancelReasonHtml + actionsHtml +
+            '</div>' +
+          '</div>';
+        }
+
+        function openDateModal(dateKey) {
+          const modal = document.getElementById('vw-date-modal');
+          const body  = document.getElementById('vw-modal-body');
+          const title = document.getElementById('vw-modal-title');
+          const subtitle = document.getElementById('vw-modal-subtitle');
+          if (!modal || !body) return;
+
+          const dateObj = new Date(dateKey + 'T00:00:00');
+          title.textContent = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+          // Group events by status order
+          const grouped = {};
+          vwData.forEach(function(v) {
+            const rawDate = getViewingDate(v);
+            if (!rawDate) return;
+            const dKey = rawDate.slice(0, 10);
+            if (dKey !== dateKey) return;
+            if (viewingActiveStatus !== 'all' && v.status !== viewingActiveStatus) return;
+            if (!grouped[v.status]) grouped[v.status] = [];
+            grouped[v.status].push(v);
+          });
+
+          const statusGroups = vwStatusOrder.filter(s => grouped[s] && grouped[s].length > 0);
+          const total = statusGroups.reduce((acc, s) => acc + grouped[s].length, 0);
+          subtitle.textContent = total + ' viewing request' + (total !== 1 ? 's' : '');
+
+          if (total === 0) {
+            body.innerHTML = '<div class="vwm-empty">No viewings for this date.</div>';
+          } else {
+            let html = '';
+            statusGroups.forEach(function(status) {
+              const cfg = vwStatusCfg[status] || {};
+              html += '<div class="vwm-group-header"><span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:999px;background:' + (cfg.dot||'#94a3b8') + ';display:inline-block;"></span>' + esc(cfg.label || status) + '</span></div>';
+              grouped[status].forEach(function(v) { html += buildModalCard(v); });
+            });
+            body.innerHTML = html;
+          }
+
+          modal.style.display = 'flex';
+          document.body.style.overflow = 'hidden';
+        }
+
+        function closeDateModal() {
+          const modal = document.getElementById('vw-date-modal');
+          if (modal) modal.style.display = 'none';
+          document.body.style.overflow = '';
+        }
+
+        function showModalCancelForm(id) {
+          document.getElementById('vwm-cancel-init-' + id).style.display = 'none';
+          document.getElementById('vwm-cancel-form-' + id).style.display = 'block';
+        }
+        function hideModalCancelForm(id) {
+          document.getElementById('vwm-cancel-form-' + id).style.display = 'none';
+          document.getElementById('vwm-cancel-init-' + id).style.display = '';
+        }
+
+        document.addEventListener('keydown', function(e) {
+          if (e.key === 'Escape') closeDateModal();
+        });
+
         function showCancelReason(btn, id) {
           document.querySelectorAll('.cancel-reason-form').forEach(f => f.style.display = 'none');
           document.querySelectorAll('.cancel-init-btn').forEach(b => b.style.display = '');
@@ -1755,34 +3658,54 @@ input[type="submit"]:hover,
 
     <section id="section-leads" class="hidden">
       <h2 class="text-3xl font-bold text-green-900 mb-4">My Assigned Leads</h2>
-      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Manage and track your assigned leads</p>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">Track pipeline stage, follow up, and move leads forward to viewing and reservation.</p>
       <div class="bg-white rounded-2xl border shadow p-6">
         <?php if (empty($leads)): ?>
-          <div class="border border-dashed rounded-xl p-6 text-gray-500 text-sm">
-            No leads assigned to you yet.
+          <div class="border border-dashed rounded-xl p-6 text-gray-500 text-sm text-center">
+            No leads assigned yet.
+            <div class="mt-2 text-xs text-gray-400">New website inquiries and assigned prospects will appear here.</div>
           </div>
         <?php else: ?>
           <div class="overflow-x-auto">
             <table class="min-w-full border rounded text-sm">
               <thead>
                 <tr class="bg-gray-50 text-gray-700">
-                  <th class="py-2 px-4 text-left border">Name</th>
-                  <th class="py-2 px-4 text-left border">Email</th>
-                  <th class="py-2 px-4 text-left border">Phone</th>
-                  <th class="py-2 px-4 text-left border">Status</th>
-                  <th class="py-2 px-4 text-left border">Actions</th>
+                  <th class="py-2 px-4 text-left border">Lead</th>
+                  <th class="py-2 px-4 text-left border">Contact</th>
+                  <th class="py-2 px-4 text-left border">Stage</th>
+                  <th class="py-2 px-4 text-left border">Last Update</th>
+                  <th class="py-2 px-4 text-left border">Action</th>
                 </tr>
               </thead>
               <tbody>
               <?php foreach ($leads as $lead): ?>
                 <tr class="border-t">
-                  <td class="py-2 px-4 border"><?php echo h($lead['first_name'] . ' ' . $lead['last_name']); ?></td>
-                  <td class="py-2 px-4 border"><?php echo h($lead['email']); ?></td>
-                  <td class="py-2 px-4 border"><?php echo h($lead['phone']); ?></td>
-                  <td class="py-2 px-4 border"><?php echo h($lead['status']); ?></td>
+                  <td class="py-2 px-4 border font-semibold text-gray-900"><?php echo h(trim(($lead['first_name'] ?? '') . ' ' . ($lead['last_name'] ?? '')) ?: 'N/A'); ?></td>
                   <td class="py-2 px-4 border">
-                    <a href="lead_timeline.php?id=<?php echo (int)$lead['id']; ?>" class="text-blue-600 hover:underline">
-                      Timeline
+                    <div class="text-gray-800"><?php echo h($lead['email'] ?? 'N/A'); ?></div>
+                    <div class="text-xs text-gray-500"><?php echo h($lead['phone'] ?? 'N/A'); ?></div>
+                  </td>
+                  <td class="py-2 px-4 border">
+                    <?php
+                      $leadStatus = strtolower(trim((string)($lead['status'] ?? 'new')));
+                      $statusMap = [
+                        'new' => 'bg-blue-100 text-blue-800',
+                        'contacted' => 'bg-indigo-100 text-indigo-800',
+                        'scheduled' => 'bg-emerald-100 text-emerald-800',
+                        'reservation' => 'bg-amber-100 text-amber-800',
+                        'installment' => 'bg-purple-100 text-purple-800',
+                        'paid' => 'bg-green-100 text-green-800',
+                        'closed' => 'bg-green-100 text-green-800',
+                        'lost' => 'bg-red-100 text-red-800',
+                      ];
+                      $badgeClass = $statusMap[$leadStatus] ?? 'bg-gray-100 text-gray-700';
+                    ?>
+                    <span class="px-2 py-1 rounded-full text-xs font-semibold <?php echo $badgeClass; ?>"><?php echo h(ucwords(str_replace('_', ' ', $leadStatus))); ?></span>
+                  </td>
+                  <td class="py-2 px-4 border text-gray-700"><?php echo !empty($lead['created_at']) ? h(date('M d, Y h:i A', strtotime($lead['created_at']))) : 'N/A'; ?></td>
+                  <td class="py-2 px-4 border">
+                    <a href="lead_timeline.php?id=<?php echo (int)$lead['id']; ?>" class="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded bg-green-700 text-white hover:bg-green-800">
+                      Open Timeline
                     </a>
                   </td>
                 </tr>
@@ -1831,6 +3754,11 @@ function showSection(id) {
   const target = sections.find(s => s && s.id === id);
 
   links.forEach(a => a.classList.toggle('nav-active', a.dataset.target === id));
+
+  if (id === 'section-notifications') {
+    const badge = document.getElementById('agent-notifications-badge');
+    if (badge) badge.style.display = 'none';
+  }
 
   function triggerLoads(sectionId) {
     if (sectionId === 'section-notifications') loadAgentNotifications();
@@ -1937,8 +3865,8 @@ function loadAgentNotifications() {
           <div class="text-gray-700 mb-2">${n.message}</div>
           <div class="text-xs text-gray-500">${new Date(n.created_at).toLocaleString()}</div>
           <div class="mt-2 flex gap-2">
-            ${!n.is_read ? `<button class="px-3 py-1 text-xs bg-green-700 text-white rounded" onclick="markNotificationRead(${n.id})">Mark as Read</button>` : ''}
-            <button class="px-3 py-1 text-xs bg-red-600 text-white rounded" onclick="deleteNotification(${n.id})">Delete</button>
+            ${!n.is_read ? `<button class=\"px-3 py-1 text-xs\" style=\"background:#22c55e !important; color:#fff !important; border:1px solid #16a34a !important;\" onclick=\"markNotificationRead(${n.id})\">Approved</button>` : ''}
+            <button class="px-3 py-1 text-xs" style="background:#dc2626 !important; color:#fff !important; border:1px solid #dc2626 !important;" onclick="deleteNotification(${n.id})">Decline</button>
           </div>
         </div>
       `).join('');
@@ -1958,8 +3886,9 @@ function markNotificationRead(id) {
   .then(() => loadAgentNotifications());
 }
 
-function deleteNotification(id) {
-  if (!confirm('Delete this notification?')) return;
+async function deleteNotification(id) {
+  const proceed = await showConfirmModal('Delete this notification?');
+  if (!proceed) return;
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -2009,8 +3938,8 @@ function loadAgentMessages() {
               <span style="font-size:12px; color:#9ca3af;">${dateStr}</span>
               <div style="display:flex; gap:8px;">
                 <button onclick="viewMessage('${escapedName}','${escapedEmail}','${escapedPhone}','${escapedDate}','${escapedMsg}', ${m.id}, ${isUnread})" style="padding:6px 14px; font-size:13px; font-weight:600; background:#14532d; color:#fff; border:none; border-radius:7px; cursor:pointer; transition:0.2s;" onmouseover="this.style.background='#0f4223'" onmouseout="this.style.background='#14532d'">View Message</button>
-                ${isUnread ? `<button onclick="markMessageRead(${m.id})" style="padding:6px 14px; font-size:13px; font-weight:600; background:#2563eb; color:#fff; border:none; border-radius:7px; cursor:pointer;">Mark Read</button>` : ''}
-                <button onclick="deleteMessage(${m.id})" style="padding:6px 14px; font-size:13px; font-weight:600; background:#dc2626; color:#fff; border:none; border-radius:7px; cursor:pointer;">Delete</button>
+                ${isUnread ? `<button onclick=\"markMessageRead(${m.id})\" style=\"padding:6px 14px; font-size:13px; font-weight:600; background:#b3e0ff !important; color:#0369a1 !important; border:1px solid #38bdf8 !important; border-radius:7px; cursor:pointer;\">Mark Read</button>` : ''}
+                <button onclick="deleteMessage(${m.id})" style="padding:6px 14px; font-size:13px; font-weight:600; background:#dc3545 !important; color:#fff !important; border:1px solid #dc3545 !important; border-radius:7px; cursor:pointer;">Delete</button>
               </div>
             </div>
           </div>
@@ -2064,8 +3993,9 @@ function markMessageRead(id) {
   .then(() => loadAgentMessages());
 }
 
-function deleteMessage(id) {
-  if (!confirm('Delete this message?')) return;
+async function deleteMessage(id) {
+  const proceed = await showConfirmModal('Delete this message?');
+  if (!proceed) return;
   fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -2084,16 +4014,42 @@ function loadAgentAuditLogs() {
     .then(response => response.json())
     .then(logs => {
       if (!logs.length) {
-        container.innerHTML = '<p class="text-gray-600">No audit logs found.</p>';
+        container.innerHTML = '<div class="text-center py-8 text-gray-500">No activity yet.<div class="text-xs text-gray-400 mt-1">Your actions like profile updates, document decisions, and viewing updates will appear here.</div></div>';
         return;
       }
-      container.innerHTML = logs.map(log => `
-        <div class="mb-4 p-4 rounded border bg-gray-50">
-          <div class="font-semibold text-green-900">${log.action}</div>
-          <div class="text-gray-700 mb-2">${log.details}</div>
-          <div class="text-xs text-gray-500">${new Date(log.created_at).toLocaleString()}</div>
+
+      const toResultBadge = (details) => {
+        const text = String(details || '').toLowerCase();
+        if (text.includes('fail') || text.includes('error')) {
+          return '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">Failed</span>';
+        }
+        return '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">Success</span>';
+      };
+
+      container.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="min-w-full border rounded text-sm">
+            <thead>
+              <tr class="bg-gray-50 text-gray-700">
+                <th class="py-2 px-4 text-left border">Action</th>
+                <th class="py-2 px-4 text-left border">Target / Details</th>
+                <th class="py-2 px-4 text-left border">Result</th>
+                <th class="py-2 px-4 text-left border">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logs.map(log => `
+                <tr>
+                  <td class="py-2 px-4 border font-semibold text-gray-900">${log.action || 'N/A'}</td>
+                  <td class="py-2 px-4 border text-gray-700">${log.details || 'N/A'}</td>
+                  <td class="py-2 px-4 border">${toResultBadge(log.details)}</td>
+                  <td class="py-2 px-4 border text-gray-600">${log.created_at ? new Date(log.created_at).toLocaleString() : 'N/A'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
         </div>
-      `).join('');
+      `;
     })
     .catch(() => {
       container.innerHTML = '<p class="text-red-600">Failed to load audit logs.</p>';
@@ -2109,20 +4065,37 @@ function loadAgentDocuments() {
     .then(response => response.json())
     .then(docs => {
       if (!docs.length) {
-        container.innerHTML = '<p class="text-gray-600">No user documents found.</p>';
+        container.innerHTML = '<div class="text-center py-8 text-gray-500">No documents to review.<div class="text-xs text-gray-400 mt-1">Once clients upload requirements, they will appear here with review actions.</div></div>';
         return;
       }
+
+      const statusPriority = {
+        pending_review: 1,
+        under_review: 2,
+        requires_revision: 3,
+        approved: 4,
+        rejected: 5
+      };
+
+      docs.sort((a, b) => {
+        const pa = statusPriority[a.status] || 99;
+        const pb = statusPriority[b.status] || 99;
+        if (pa !== pb) return pa - pb;
+        const ta = a.uploaded_at ? new Date(a.uploaded_at).getTime() : 0;
+        const tb = b.uploaded_at ? new Date(b.uploaded_at).getTime() : 0;
+        return tb - ta;
+      });
+
       container.innerHTML = `
         <div class="overflow-x-auto">
           <table class="min-w-full border rounded text-sm">
             <thead>
               <tr class="bg-gray-50 text-gray-700">
                 <th class="py-2 px-4 text-left">Client</th>
-                <th class="py-2 px-4 text-left">Document Type</th>
-                <th class="py-2 px-4 text-left">File</th>
+                <th class="py-2 px-4 text-left">Document</th>
                 <th class="py-2 px-4 text-left">Status</th>
                 <th class="py-2 px-4 text-left">Uploaded</th>
-                <th class="py-2 px-4 text-left">Actions</th>
+                <th class="py-2 px-4 text-left">Review</th>
               </tr>
             </thead>
             <tbody>
@@ -2135,11 +4108,12 @@ function loadAgentDocuments() {
                   'requires_revision': 'bg-orange-100 text-orange-800'
                 };
                 const statusColor = statusColors[doc.status] || 'bg-gray-100 text-gray-800';
+                const actionLabel = (doc.status === 'pending_review' || doc.status === 'under_review') ? 'Review Now' : 'Update Status';
                 return `
                   <tr>
                     <td class="py-2 px-4 border">${(doc.first_name || '') + ' ' + (doc.last_name || '')}</td>
-                    <td class="py-2 px-4 border">${doc.doc_type}</td>
                     <td class="py-2 px-4 border">
+                      <div class="font-medium text-gray-800">${doc.doc_type || 'N/A'}</div>
                       <a href="${doc.file_path}" target="_blank" class="text-blue-600 hover:text-blue-800 underline">${doc.file_name}</a>
                     </td>
                     <td class="py-2 px-4 border">
@@ -2147,7 +4121,7 @@ function loadAgentDocuments() {
                     </td>
                     <td class="py-2 px-4 border">${new Date(doc.uploaded_at).toLocaleDateString()}</td>
                     <td class="py-2 px-4 border">
-                      <button onclick="updateDocumentStatus(${doc.id}, '${doc.status}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">Update Status</button>
+                      <button onclick="updateDocumentStatus(${doc.id}, '${doc.status}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">${actionLabel}</button>
                     </td>
                   </tr>
                 `;
@@ -2198,6 +4172,7 @@ function clearAgentLocation() {
 }
 </script>
 
+<script src="assets/js/alert-modal.js"></script>
 <script src="agentdb/js/main.js"></script>
 
 <script>

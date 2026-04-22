@@ -37,12 +37,13 @@ if ($lead['agent_id']) {
   <p>Assigned Agent: <strong><?= $agent_name ?></strong></p>
 <?php endif; ?>
 <?php if ($lead['status'] !== 'cancelled'): ?>
+  <script src="assets/js/alert-modal.js"></script>
   <form method="POST" action="track_lead_update.php?ref=<?= $ref ?>&token=<?= urlencode($token) ?>">
     <label>Update Notes or Preferred Date:</label><br>
     <textarea name="note"><?= htmlspecialchars($lead['note']) ?></textarea><br>
     <input type="date" name="preferred_date" value="<?= htmlspecialchars($lead['preferred_date']) ?>"><br>
     <button type="submit" name="action" value="update">Update Request</button>
-    <button type="submit" name="action" value="cancel" onclick="return confirm('Are you sure you want to cancel this request?');">Cancel Request</button>
+    <button type="submit" name="action" value="cancel" onclick="return confirmFormSubmit(event, this.form, 'Are you sure you want to cancel this request?');">Cancel Request</button>
   </form>
 <?php else: ?>
   <p>This request has been cancelled.</p>

@@ -1,5 +1,10 @@
 <?php
-require_once 'dbconn.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+require_once __DIR__ . '/db_connection.php';
+require_once __DIR__ . '/includes/user_helpers.php';
 header('Content-Type: text/html; charset=utf-8');
 
 /* ============================================================
@@ -118,6 +123,23 @@ if ($chkAvailability) {
   $row = $chkAvailability->fetch_assoc();
   $hasAvailability = ((int)$row['c'] >= 1);
 }
+$hasReviewsTable = false;
+$chkReviews = $conn->query("SHOW TABLES LIKE 'agent_reviews'");
+if ($chkReviews && $chkReviews->num_rows > 0) {
+  $hasReviewsTable = true;
+}
+
+$reviewsSelect = $hasReviewsTable
+  ? "IFNULL(ar.avg_rating, 0) AS avg_rating, IFNULL(ar.review_count, 0) AS review_count"
+  : "0 AS avg_rating, 0 AS review_count";
+
+$reviewsJoin = $hasReviewsTable
+  ? "LEFT JOIN (
+      SELECT agent_id, AVG(rating) AS avg_rating, COUNT(*) AS review_count
+      FROM agent_reviews
+      GROUP BY agent_id
+    ) ar ON ar.agent_id = aa.id"
+  : "";
 
 /* ============================================================
    Distinct cities
@@ -180,8 +202,10 @@ if ($useDistance) {
   $types   .= 'ddd';
 }
 $sql .= ",
+  $reviewsSelect,
     ag.photo AS photo_fallback
   FROM agent_accounts aa
+  $reviewsJoin
   LEFT JOIN agents ag ON aa.id = ag.login_agent_id
   WHERE 1
 ";
@@ -257,6 +281,7 @@ $stmt->close();
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="assets/js/alert-modal.js"></script>
 <style>
 :root { --green:#2d4e1e; --ink:#222; --muted:#6b7280; --bg:#e3e2e2; --navH: 88px; }
 *{ box-sizing:border-box; }
@@ -533,22 +558,28 @@ select, .chk {
   color:#fff; text-decoration:none; font-size:1rem; font-weight:500;
   padding:8px 0; position:relative; transition:color 0.18s;
 }
-.nav-links a:hover { color:#f4d03f; }
+.nav-links a:hover { color:#b8c9a7; }
 .nav-links a::after {
   content:''; position:absolute; width:0; height:2px; bottom:-5px; left:0;
-  background-color:#f4d03f; transition:width 0.3s ease-out;
+  background-color:#b8c9a7; transition:width 0.3s ease-out;
 }
 .nav-links a:hover::after { width:100%; }
 .login-btn {
-  background:#ffffff; color:#2d4e1e; font-weight:600;
-  border-radius:20px; padding:10px 25px;
-  text-decoration:none; font-size:1rem;
-  transition:all 0.2s ease; border:none;
-  box-shadow:0 4px 12px rgba(44,62,80,0.1);
+  background: #2d4e1e;
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: 20px;
+  padding: 10px 25px;
+  text-decoration: none;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  border: none;
+  box-shadow: 0 4px 12px rgba(44,62,80,0.1);
 }
 .login-btn:hover {
-  background:#f4d03f; color:#2d4e1e;
-  box-shadow:0 6px 15px rgba(244, 208, 63, 0.4);
+  background: #3a6c28;
+  color: #ffffff;
+  box-shadow: 0 6px 15px rgba(58, 108, 40, 0.35);
 }
 .nav-links li.active a {
   color:#f4d03f; font-weight:600;
@@ -611,12 +642,16 @@ select, .chk {
     <li><a href="index.php">Home</a></li>
     <li><a href="userlot.php">View Lots</a></li>
     <li class="active"><a href="findagent.php">Find Agent</a></li>
-    <li><a href="about.html">About</a></li>
-    <li><a href="faqs.html">FAQs</a></li>
-    <li><a href="contact.html">Contact</a></li>
+    <li><a href="about.php">About</a></li>
+    <li><a href="faqs.php">FAQs</a></li>
+    <li><a href="contact.php">Contact</a></li>
   </ul>
   <div class="nav-right">
-    <a href="Login/login.php" class="login-btn">Login</a>
+    <?php if (function_exists('userHasAccount') ? userHasAccount() : (isset($_SESSION['user_id']))): ?>
+        <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
+    <?php else: ?>
+        <a href="Login/login.php" class="login-btn">Login</a>
+    <?php endif; ?>
   </div>
 </nav>
 
@@ -664,12 +699,22 @@ select, .chk {
         elseif(!empty($a['photo_fallback']) && file_exists('uploads/'.$a['photo_fallback'])) $photo='uploads/'.$a['photo_fallback'];
         $name = trim(($a['first_name']??'').' '.($a['last_name']??''));
         $addr = $a['address'] ?: $a['city'];
+        $avgRating = (float)($a['avg_rating'] ?? 0);
+        $reviewCount = (int)($a['review_count'] ?? 0);
+        $starsFilled = (int)round($avgRating);
+        $starsFilled = max(0, min(5, $starsFilled));
+        $stars = str_repeat('★', $starsFilled) . str_repeat('☆', 5 - $starsFilled);
       ?>
         <div class="agent-card">
           <div class="agent-avatar">
             <img src="<?php echo h($photo); ?>" alt="Agent Photo">
           </div>
           <div class="agent-name"><?php echo h($name); ?></div>
+          <div class="agent-meta" style="margin-bottom:8px; color:#b45309; font-weight:700;">
+            <?php echo h($stars); ?>
+            <span style="color:#374151; font-weight:600;"><?php echo number_format($avgRating, 1); ?>/5</span>
+            <span style="color:#6b7280; font-weight:500;">(<?php echo $reviewCount; ?>)</span>
+          </div>
           <div class="agent-meta">
             <?php echo h($a['mobile']); ?> &bull;
             <?php echo h($a['total_sales']); ?> Sales &bull;

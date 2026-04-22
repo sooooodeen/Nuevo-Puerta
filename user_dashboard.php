@@ -2,6 +2,10 @@
 // filepath: user_dashboard.php
 session_start();
 
+require_once __DIR__ . '/vendor/phpmailer/src/PHPMailer.php';
+require_once __DIR__ . '/vendor/phpmailer/src/SMTP.php';
+require_once __DIR__ . '/vendor/phpmailer/src/Exception.php';
+
 // 1. LOGIN CHECK
 if (!isset($_SESSION['user_id'])) {
     header("Location: Login/login.php");
@@ -27,6 +31,133 @@ try {
 /* ---------------- HELPER FUNCTIONS ---------------- */
 function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
 
+function resolveSystemEmailLogoPath(): ?string {
+    $candidates = [
+        __DIR__ . '/assets/f.png',
+        __DIR__ . '/assets/logo.png',
+        __DIR__ . '/logo.png',
+        __DIR__ . '/Login/img/Logo.png',
+    ];
+
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return null;
+}
+
+function buildSystemEmailHtml(string $bodyText, ?string $logoSrc = null): string {
+    $safeBody = nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8'));
+    $year = date('Y');
+    $logoHtml = '';
+
+    if ($logoSrc !== null && $logoSrc !== '') {
+        $safeLogo = htmlspecialchars($logoSrc, ENT_QUOTES, 'UTF-8');
+        $logoHtml = "<div style=\"margin-bottom:16px;\"><div style=\"display:inline-block;background:#1f3b2d;border-radius:14px;padding:10px 12px;\"><img src=\"{$safeLogo}\" alt=\"Nuevo Puerta Logo\" style=\"display:block;max-width:190px;height:auto;\"></div></div>";
+    }
+
+    return '<!DOCTYPE html>'
+        . '<html><body style="margin:0;padding:0;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">'
+        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;background:#f6f8fb;">'
+        . '<tr><td align="center">'
+        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
+        . '<tr><td style="padding:22px 24px 14px 24px;">'
+        . $logoHtml
+        . '<div style="font-size:15px;line-height:1.65;">' . $safeBody . '</div>'
+        . '</td></tr>'
+        . '<tr><td style="padding:14px 24px 20px 24px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">'
+        . '&copy; ' . $year . ' Nuevo Puerta Real Estate. All rights reserved.'
+        . '</td></tr>'
+        . '</table>'
+        . '</td></tr>'
+        . '</table>'
+        . '</body></html>';
+}
+
+function sendSystemEmailSimple(string $toEmail, string $toName, string $subject, string $body, ?string &$errorInfo = null): bool {
+    $systemSmtpUser = trim((string)(getenv('SYSTEM_SMTP_USER') ?: ''));
+    $systemSmtpPass = trim((string)(getenv('SYSTEM_SMTP_PASS') ?: ''));
+    $legacySmtpHost = trim((string)(getenv('SMTP_HOST') ?: 'smtp.gmail.com'));
+    $legacySmtpUser = trim((string)(getenv('SMTP_USER') ?: 'carlomallari01471@gmail.com'));
+    $legacySmtpPass = trim((string)(getenv('SMTP_PASS') ?: 'rsmv pipf ijxf phha'));
+
+    $useSystemCredentials = ($systemSmtpUser !== '' && $systemSmtpPass !== '');
+    $smtpHost = trim((string)(getenv('SYSTEM_SMTP_HOST') ?: $legacySmtpHost));
+    $smtpUser = $useSystemCredentials ? $systemSmtpUser : $legacySmtpUser;
+    $smtpPass = $useSystemCredentials ? $systemSmtpPass : $legacySmtpPass;
+    $smtpPort = (int)(getenv('SYSTEM_SMTP_PORT') ?: getenv('SMTP_PORT') ?: 587);
+    $smtpSecure = trim((string)(getenv('SYSTEM_SMTP_SECURE') ?: getenv('SMTP_SECURE') ?: 'tls'));
+    $fromEmail = trim((string)(getenv('SYSTEM_SMTP_FROM_EMAIL') ?: $smtpUser));
+    $fromName = trim((string)(getenv('SYSTEM_SMTP_FROM_NAME') ?: 'Nuevo Puerta Real Estate'));
+    $logoPath = resolveSystemEmailLogoPath();
+
+    if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+        $errorInfo = 'Invalid recipient email.';
+        return false;
+    }
+
+    $useSmtp = ($smtpHost !== '' && $smtpUser !== '' && $smtpPass !== '');
+
+    if (!$useSmtp) {
+        $headers = "From: {$fromName} <{$fromEmail}>\r\n";
+        $headers .= "Reply-To: {$fromEmail}\r\n";
+        $headers .= "MIME-Version: 1.0\r\n";
+        $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
+        $headers .= 'X-Mailer: PHP/' . phpversion();
+
+        $inlineLogoSrc = null;
+        if ($logoPath !== null) {
+            $logoData = @file_get_contents($logoPath);
+            if ($logoData !== false) {
+                $ext = strtolower((string)pathinfo($logoPath, PATHINFO_EXTENSION));
+                $mime = $ext === 'png' ? 'image/png' : (($ext === 'jpg' || $ext === 'jpeg') ? 'image/jpeg' : 'application/octet-stream');
+                $inlineLogoSrc = 'data:' . $mime . ';base64,' . base64_encode($logoData);
+            }
+        }
+
+        $htmlBody = buildSystemEmailHtml($body, $inlineLogoSrc);
+        $ok = mail($toEmail, $subject, $htmlBody, $headers);
+        if (!$ok) {
+            $errorInfo = 'mail() failed. Configure SMTP_* environment variables for reliable delivery.';
+        }
+        return $ok;
+    }
+
+    for ($attempt = 1; $attempt <= 2; $attempt++) {
+        $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host = $smtpHost;
+            $mail->SMTPAuth = true;
+            $mail->Username = $smtpUser;
+            $mail->Password = $smtpPass;
+            $mail->SMTPSecure = $smtpSecure;
+            $mail->Port = $smtpPort;
+
+            $mail->setFrom($fromEmail, $fromName);
+            $mail->addAddress($toEmail, $toName !== '' ? $toName : $toEmail);
+            $logoSrc = null;
+            if ($logoPath !== null) {
+                $mail->addEmbeddedImage($logoPath, 'nuevo_puerta_logo', basename($logoPath));
+                $logoSrc = 'cid:nuevo_puerta_logo';
+            }
+
+            $mail->isHTML(true);
+            $mail->Subject = $subject;
+            $mail->Body = buildSystemEmailHtml($body, $logoSrc);
+            $mail->AltBody = $body . "\n\nCopyright (c) " . date('Y') . " Nuevo Puerta Real Estate. All rights reserved.";
+            $mail->send();
+            return true;
+        } catch (\PHPMailer\PHPMailer\Exception $e) {
+            $errorInfo = $mail->ErrorInfo;
+            error_log('User dashboard email send failed: ' . $mail->ErrorInfo);
+        }
+    }
+    return false;
+}
+
 // Check if a column exists to prevent crashes
 function hasColumn(mysqli $conn, string $table, string $column): bool {
     $safeTable = $conn->real_escape_string($table);
@@ -41,6 +172,42 @@ function hasTable(mysqli $conn, string $table): bool {
     return $res && $res->num_rows > 0;
 }
 
+function ensureAgentReviewsTable(mysqli $conn): bool {
+    $sql = "CREATE TABLE IF NOT EXISTS agent_reviews (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        agent_id INT NOT NULL,
+        user_id INT NOT NULL,
+        rating TINYINT NOT NULL,
+        review_text TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_agent_user_review (agent_id, user_id),
+        INDEX idx_agent_reviews_agent (agent_id, created_at),
+        INDEX idx_agent_reviews_user (user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+    return (bool)$conn->query($sql);
+}
+
+function formatLotLocationLabel(array $lot): string {
+    $locationName = trim((string)($lot['location_name'] ?? $lot['barangay_name'] ?? $lot['barangay'] ?? ''));
+    $blockNumber = trim((string)($lot['block_number'] ?? ''));
+    $lotNumber = trim((string)($lot['lot_number'] ?? ''));
+    $parts = [];
+
+    if ($locationName !== '') {
+        $parts[] = 'Barangay ' . $locationName;
+    }
+    if ($blockNumber !== '') {
+        $parts[] = 'Block ' . $blockNumber;
+    }
+    if ($lotNumber !== '') {
+        $parts[] = 'Lot ' . $lotNumber;
+    }
+
+    return !empty($parts) ? implode(', ', $parts) : 'N/A';
+}
+
 // Wrapper to prepare SQL and catch errors
 function prepOrDie(mysqli $conn, string $sql) {
     $stmt = $conn->prepare($sql);
@@ -53,8 +220,21 @@ function prepOrDie(mysqli $conn, string $sql) {
 // >>> PAYMENTS AJAX HANDLER (Handles Pay Now & History) >>>
 if (isset($_GET['action'])) {
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     $action = $_GET['action'];
     $uid = (int)($_SESSION['user_id'] ?? 0);
+    $userEmailForAccess = '';
+
+    if (hasTable($conn, 'user_accounts') && hasColumn($conn, 'user_accounts', 'email')) {
+        $stmtEmail = prepOrDie($conn, "SELECT email FROM user_accounts WHERE id = ? LIMIT 1");
+        $stmtEmail->bind_param('i', $uid);
+        $stmtEmail->execute();
+        $emailRow = $stmtEmail->get_result()->fetch_assoc();
+        $stmtEmail->close();
+        $userEmailForAccess = trim((string)($emailRow['email'] ?? ''));
+    }
     
     if (!$uid) { echo json_encode(['success'=>false,'message'=>'Not authenticated']); exit; }
 
@@ -96,7 +276,62 @@ if (isset($_GET['action'])) {
         $stmt->bind_param('iidss', $uid, $lot_id, $amount, $method, $remarks);
         
         if ($stmt->execute()) {
-            echo json_encode(['success'=>true,'message'=>'Payment submitted successfully']);
+            $emailSent = false;
+            $emailError = '';
+
+            if ($userEmailForAccess === '') {
+                $userEmailForAccess = trim((string)($_SESSION['email'] ?? ''));
+            }
+
+            if ($userEmailForAccess !== '') {
+                $lotLabel = 'Lot #' . $lot_id;
+                if ($lot_id > 0 && hasTable($conn, 'lots')) {
+                    $hasLocationJoin = hasTable($conn, 'lot_locations')
+                        && hasColumn($conn, 'lots', 'location_id')
+                        && hasColumn($conn, 'lot_locations', 'location_name');
+
+                    $lotSql = "SELECT l.block_number, l.lot_number" . ($hasLocationJoin ? ", ll.location_name" : "") . "
+                               FROM lots l" . ($hasLocationJoin ? " LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+                               WHERE l.id = ? LIMIT 1";
+                    $lotStmt = prepOrDie($conn, $lotSql);
+                    $lotStmt->bind_param('i', $lot_id);
+                    $lotStmt->execute();
+                    $lotRow = $lotStmt->get_result()->fetch_assoc();
+                    $lotStmt->close();
+
+                    if ($lotRow) {
+                        $lotLabel = 'Block ' . (string)($lotRow['block_number'] ?? 'N/A') . ', Lot ' . (string)($lotRow['lot_number'] ?? 'N/A');
+                        $locationName = trim((string)($lotRow['location_name'] ?? ''));
+                        if ($locationName !== '') {
+                            $lotLabel .= ' (' . $locationName . ')';
+                        }
+                    }
+                }
+
+                $recipientName = trim((string)($_SESSION['first_name'] ?? '') . ' ' . (string)($_SESSION['last_name'] ?? ''));
+                $subject = 'Payment Submission Received';
+                $body = "Hello " . ($recipientName !== '' ? $recipientName : 'Client') . ",\n\n"
+                    . "We received your payment submission in Nuevo Puerta.\n"
+                    . "Property: {$lotLabel}\n"
+                    . "Amount: PHP " . number_format($amount, 2) . "\n"
+                    . "Method: {$method}\n"
+                    . "Submitted on: " . date('F j, Y g:i A') . "\n"
+                    . "Remarks: " . ($remarks !== '' ? $remarks : '-') . "\n\n"
+                    . "Status: Pending verification by admin\n\n"
+                    . "Please keep this email as your transaction record.\n\n"
+                    . "Thank you,\nNuevo Puerta";
+
+                $emailSent = sendSystemEmailSimple($userEmailForAccess, $recipientName, $subject, $body, $emailError);
+            } else {
+                $emailError = 'No recipient email found for this account.';
+            }
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Payment submitted successfully',
+                'email_sent' => $emailSent,
+                'email_error' => $emailSent ? null : ($emailError !== '' ? $emailError : null)
+            ]);
         } else {
             echo json_encode(['success'=>false,'message'=>'Database error']);
         }
@@ -205,21 +440,109 @@ if (isset($_GET['action'])) {
         exit;
     }
 
+    if ($action === 'submit_agent_review') {
+        try {
+            $raw = file_get_contents('php://input');
+            $data = json_decode($raw, true);
+
+            $agentId = (int)($data['agent_id'] ?? 0);
+            $rating = (int)($data['rating'] ?? 0);
+            $reviewText = trim((string)($data['review'] ?? ''));
+
+            if ($agentId <= 0 || $rating < 1 || $rating > 5) {
+                echo json_encode(['success' => false, 'message' => 'Please select a valid rating (1 to 5).']);
+                exit;
+            }
+
+            if (mb_strlen($reviewText) > 2000) {
+                echo json_encode(['success' => false, 'message' => 'Review is too long (max 2000 characters).']);
+                exit;
+            }
+
+            $userOwnsLotForAgent = false;
+            if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'owner_id') && hasColumn($conn, 'lots', 'agent_id')) {
+                $stmtLot = prepOrDie($conn, "SELECT 1 FROM lots WHERE owner_id = ? AND agent_id = ? LIMIT 1");
+                $stmtLot->bind_param('ii', $uid, $agentId);
+                $stmtLot->execute();
+                $userOwnsLotForAgent = (bool)$stmtLot->get_result()->fetch_assoc();
+                $stmtLot->close();
+            }
+
+            $userViewedWithAgent = false;
+            if (!$userOwnsLotForAgent && $userEmailForAccess !== '' && hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'agent_id') && hasColumn($conn, 'viewings', 'client_email')) {
+                $stmtView = prepOrDie($conn, "SELECT 1 FROM viewings WHERE agent_id = ? AND LOWER(TRIM(client_email)) = LOWER(TRIM(?)) LIMIT 1");
+                $stmtView->bind_param('is', $agentId, $userEmailForAccess);
+                $stmtView->execute();
+                $userViewedWithAgent = (bool)$stmtView->get_result()->fetch_assoc();
+                $stmtView->close();
+            }
+
+            if (!$userOwnsLotForAgent && !$userViewedWithAgent) {
+                echo json_encode(['success' => false, 'message' => 'You can only review your assigned/engaged agent.']);
+                exit;
+            }
+
+            if (!ensureAgentReviewsTable($conn)) {
+                echo json_encode(['success' => false, 'message' => 'Could not prepare reviews table.']);
+                exit;
+            }
+
+            $stmtExists = prepOrDie($conn, "SELECT id FROM agent_reviews WHERE agent_id = ? AND user_id = ? LIMIT 1");
+            $stmtExists->bind_param('ii', $agentId, $uid);
+            $stmtExists->execute();
+            $existingRow = $stmtExists->get_result()->fetch_assoc();
+            $stmtExists->close();
+
+            if ($existingRow) {
+                $stmtUpdate = prepOrDie($conn, "UPDATE agent_reviews SET rating = ?, review_text = ?, updated_at = NOW() WHERE id = ?");
+                $reviewId = (int)$existingRow['id'];
+                $stmtUpdate->bind_param('isi', $rating, $reviewText, $reviewId);
+                $ok = $stmtUpdate->execute();
+                $stmtUpdate->close();
+            } else {
+                $stmtInsert = prepOrDie($conn, "INSERT INTO agent_reviews (agent_id, user_id, rating, review_text, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())");
+                $stmtInsert->bind_param('iiis', $agentId, $uid, $rating, $reviewText);
+                $ok = $stmtInsert->execute();
+                $stmtInsert->close();
+            }
+
+            if ($ok) {
+                echo json_encode(['success' => true, 'message' => 'Thank you. Your review has been saved.']);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Failed to save review.']);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
     // Fetch payment transactions for user's own lots
     if ($action === 'lot_payments') {
         $rows = [];
         if (hasTable($conn, 'lot_payment_transactions')) {
+            $hasLocationJoin = hasTable($conn, 'lot_locations')
+                && hasColumn($conn, 'lots', 'location_id')
+                && hasColumn($conn, 'lot_locations', 'location_name');
+
             $sql = "SELECT t.id, t.lot_id, t.amount, t.payment_date, t.payment_method, t.remarks,
-                           l.block_number, l.lot_number, l.lot_price,
+                           l.block_number, l.lot_number" . ($hasLocationJoin ? ", ll.location_name" : "") . ", l.lot_price,
                            IFNULL(l.payment_amount, 0) AS amount_paid_so_far,
                            l.payment_deadline, l.payment_type, l.status
                     FROM lot_payment_transactions t
-                    INNER JOIN lots l ON l.id = t.lot_id
-                    WHERE l.owner_id = ?
+                    INNER JOIN lots l ON l.id = t.lot_id" . ($hasLocationJoin ? "\n                    LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+                    WHERE (
+                        l.owner_id = ?
+                        OR EXISTS (
+                            SELECT 1
+                            FROM viewings v
+                            WHERE v.lot_id = l.id AND v.client_email = ?
+                        )
+                    )
                     ORDER BY t.payment_date ASC, t.id ASC
                     LIMIT 200";
             $stmt = prepOrDie($conn, $sql);
-            $stmt->bind_param('i', $uid);
+            $stmt->bind_param('is', $uid, $userEmailForAccess);
             $stmt->execute();
             $res = $stmt->get_result();
             if ($res) $rows = $res->fetch_all(MYSQLI_ASSOC);
@@ -237,15 +560,23 @@ if (isset($_GET['action'])) {
         }
 
         $lotSql = "SELECT id, block_number, lot_number, lot_price,
-                          IFNULL(payment_amount, 0) AS payment_amount,
-                          IFNULL(down_payment_amount, 0) AS down_payment_amount,
-                          payment_deadline, payment_term_years, payment_due_day,
-                          payment_type, status
-                   FROM lots
-                   WHERE id = ? AND owner_id = ?
-                   LIMIT 1";
+                     IFNULL(payment_amount, 0) AS payment_amount,
+                     IFNULL(down_payment_amount, 0) AS down_payment_amount,
+                     payment_deadline, payment_term_years, payment_due_day,
+                     payment_type, status
+                 FROM lots
+                          WHERE id = ?
+                              AND (
+                                  owner_id = ?
+                                  OR EXISTS (
+                                    SELECT 1
+                                    FROM viewings v
+                                    WHERE v.lot_id = lots.id AND v.client_email = ?
+                                  )
+                              )
+                 LIMIT 1";
         $stmt = prepOrDie($conn, $lotSql);
-        $stmt->bind_param('ii', $lotId, $uid);
+                $stmt->bind_param('iis', $lotId, $uid, $userEmailForAccess);
         $stmt->execute();
         $res = $stmt->get_result();
         $plan = $res ? $res->fetch_assoc() : null;
@@ -260,10 +591,10 @@ if (isset($_GET['action'])) {
         if (hasTable($conn, 'lot_payment_transactions')) {
             $txSql = "SELECT id, amount, payment_date, payment_method, remarks
                       FROM lot_payment_transactions
-                      WHERE lot_id = ? AND (user_id = ? OR user_id IS NULL)
+                      WHERE lot_id = ?
                       ORDER BY payment_date ASC, id ASC";
             $stmt = prepOrDie($conn, $txSql);
-            $stmt->bind_param('ii', $lotId, $uid);
+            $stmt->bind_param('i', $lotId);
             $stmt->execute();
             $res = $stmt->get_result();
             if ($res) {
@@ -437,29 +768,254 @@ $lotsOwned = 0;
 $reservedLots = 0;
 
 if (hasTable($conn,'lots') && hasColumn($conn,'lots','owner_id')) {
-    $cols = "id, block_number, lot_number, lot_size, lot_price";
-    if (hasColumn($conn,'lots','payment_type'))    $cols .= ", payment_type";
-    if (hasColumn($conn,'lots','status'))         $cols .= ", status";
-    if (hasColumn($conn,'lots','agent_id'))      $cols .= ", agent_id";
-    if (hasColumn($conn,'lots','payment_amount')) $cols .= ", payment_amount";
-    if (hasColumn($conn,'lots','down_payment_amount')) $cols .= ", down_payment_amount";
-    if (hasColumn($conn,'lots','payment_deadline')) $cols .= ", payment_deadline";
-    if (hasColumn($conn,'lots','payment_term_years')) $cols .= ", payment_term_years";
-    if (hasColumn($conn,'lots','payment_due_day')) $cols .= ", payment_due_day";
-    
-    $stmt = prepOrDie($conn, "SELECT $cols FROM lots WHERE owner_id = ?");
-    $stmt->bind_param("i", $user_id);
+    $hasLocationJoin = hasTable($conn, 'lot_locations')
+        && hasColumn($conn, 'lots', 'location_id')
+        && hasColumn($conn, 'lot_locations', 'location_name');
+
+    $cols = "l.id, l.block_number, l.lot_number, l.lot_size, l.lot_price";
+    if ($hasLocationJoin) {
+        $cols .= ", ll.location_name";
+    }
+    if (hasColumn($conn,'lots','payment_type'))    $cols .= ", l.payment_type";
+    if (hasColumn($conn,'lots','status'))         $cols .= ", l.status";
+    if (hasColumn($conn,'lots','agent_id'))      $cols .= ", l.agent_id";
+    if (hasColumn($conn,'lots','payment_amount')) $cols .= ", l.payment_amount";
+    if (hasColumn($conn,'lots','down_payment_amount')) $cols .= ", l.down_payment_amount";
+    if (hasColumn($conn,'lots','payment_deadline')) $cols .= ", l.payment_deadline";
+    if (hasColumn($conn,'lots','payment_term_years')) $cols .= ", l.payment_term_years";
+    if (hasColumn($conn,'lots','payment_due_day')) $cols .= ", l.payment_due_day";
+
+    $hasViewingLink = hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'client_email');
+    $hasViewingUserLink = hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'user_id');
+    $hasViewingPhoneLink = hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'client_phone');
+    $hasViewingNameLink = hasTable($conn, 'viewings')
+        && hasColumn($conn, 'viewings', 'client_first_name')
+        && hasColumn($conn, 'viewings', 'client_last_name');
+    $hasSalesLink = hasTable($conn, 'sales') && hasColumn($conn, 'sales', 'buyer') && hasColumn($conn, 'sales', 'property');
+    $hasSalesLotNo = hasTable($conn, 'sales') && hasColumn($conn, 'sales', 'buyer') && hasColumn($conn, 'sales', 'lot_no');
+    $hasPaymentOwnershipLink = hasTable($conn, 'lot_payment_transactions')
+        && hasColumn($conn, 'lot_payment_transactions', 'lot_id')
+        && hasColumn($conn, 'lot_payment_transactions', 'user_id');
+    $hasLegacyPaymentsLink = hasTable($conn, 'payments')
+        && hasColumn($conn, 'payments', 'lot_id')
+        && hasColumn($conn, 'payments', 'user_id');
+
+    $userEmail = trim((string)($user['email'] ?? ''));
+    $userFullName = trim((string)(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')));
+    $userFirstName = trim((string)($user['first_name'] ?? ''));
+    $userLastName = trim((string)($user['last_name'] ?? ''));
+    $userMobileDigits = preg_replace('/\D+/', '', (string)($user['mobile'] ?? ''));
+
+    // Repair orphan payment links: admin payment entry can save user_id as NULL when owner_id was not set yet.
+    if ($hasPaymentOwnershipLink) {
+        $txRepairConditions = ["l.owner_id = ?"];
+        $txRepairBindTypes = 'i';
+        $txRepairBindValues = [$user_id];
+
+        if ($hasViewingUserLink) {
+            $txRepairConditions[] = "EXISTS (
+                SELECT 1
+                FROM viewings vru
+                WHERE vru.lot_id = l.id AND vru.user_id = ?
+            )";
+            $txRepairBindTypes .= 'i';
+            $txRepairBindValues[] = $user_id;
+        }
+        if ($hasViewingLink && $userEmail !== '') {
+            $txRepairConditions[] = "EXISTS (
+                SELECT 1
+                FROM viewings vre
+                WHERE vre.lot_id = l.id AND LOWER(TRIM(vre.client_email)) = LOWER(TRIM(?))
+            )";
+            $txRepairBindTypes .= 's';
+            $txRepairBindValues[] = $userEmail;
+        }
+        if ($hasViewingPhoneLink && $userMobileDigits !== '') {
+            $txRepairConditions[] = "EXISTS (
+                SELECT 1
+                FROM viewings vrp
+                WHERE vrp.lot_id = l.id
+                  AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(vrp.client_phone), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') = ?
+            )";
+            $txRepairBindTypes .= 's';
+            $txRepairBindValues[] = $userMobileDigits;
+        }
+        if ($hasViewingNameLink && $userFirstName !== '' && $userLastName !== '') {
+            $txRepairConditions[] = "EXISTS (
+                SELECT 1
+                FROM viewings vrn
+                WHERE vrn.lot_id = l.id
+                  AND LOWER(TRIM(vrn.client_first_name)) = LOWER(TRIM(?))
+                  AND LOWER(TRIM(vrn.client_last_name)) = LOWER(TRIM(?))
+            )";
+            $txRepairBindTypes .= 'ss';
+            $txRepairBindValues[] = $userFirstName;
+            $txRepairBindValues[] = $userLastName;
+        }
+
+        $txRepairWhereSql = '(' . implode(' OR ', $txRepairConditions) . ')';
+        $txRepairSql = "UPDATE lot_payment_transactions t
+            INNER JOIN lots l ON l.id = t.lot_id
+            SET t.user_id = ?
+            WHERE (t.user_id IS NULL OR t.user_id = 0)
+              AND $txRepairWhereSql";
+        $stmt = prepOrDie($conn, $txRepairSql);
+        $stmt->bind_param('i' . $txRepairBindTypes, $user_id, ...$txRepairBindValues);
+        $stmt->execute();
+        $stmt->close();
+
+        $ownerRepairSql = "UPDATE lots l
+            SET l.owner_id = ?
+            WHERE (l.owner_id IS NULL OR l.owner_id = 0)
+              AND EXISTS (
+                SELECT 1
+                FROM lot_payment_transactions t
+                WHERE t.lot_id = l.id AND t.user_id = ?
+            )";
+        $stmt = prepOrDie($conn, $ownerRepairSql);
+        $stmt->bind_param('ii', $user_id, $user_id);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    $visibilityConditions = ["l.owner_id = ?"];
+    if ($hasViewingLink) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM viewings v
+            WHERE v.lot_id = l.id AND v.client_email = ?
+        )";
+    }
+    if ($hasViewingUserLink) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM viewings vu
+            WHERE vu.lot_id = l.id AND vu.user_id = ?
+        )";
+    }
+    if ($hasViewingPhoneLink && $userMobileDigits !== '') {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM viewings vp
+            WHERE vp.lot_id = l.id
+              AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(vp.client_phone), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') = ?
+        )";
+    }
+    if ($hasViewingNameLink && $userFirstName !== '' && $userLastName !== '') {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM viewings vn
+            WHERE vn.lot_id = l.id
+              AND LOWER(TRIM(vn.client_first_name)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(vn.client_last_name)) = LOWER(TRIM(?))
+        )";
+    }
+    if ($hasPaymentOwnershipLink) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM lot_payment_transactions t
+            WHERE t.lot_id = l.id AND t.user_id = ?
+        )";
+    }
+    if ($hasLegacyPaymentsLink) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.lot_id = l.id AND p.user_id = ?
+        )";
+    }
+    if ($hasSalesLink) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM sales s
+            WHERE (
+                LOWER(TRIM(s.buyer)) = LOWER(TRIM(?))
+                OR LOWER(TRIM(s.buyer)) = LOWER(TRIM(?))
+                OR (LOWER(TRIM(s.buyer)) LIKE LOWER(CONCAT('%', TRIM(?), '%'))
+                    AND LOWER(TRIM(s.buyer)) LIKE LOWER(CONCAT('%', TRIM(?), '%')))
+            )
+            AND (
+                CAST(l.id AS CHAR) = TRIM(s.property)
+                OR LOWER(REPLACE(TRIM(s.property), ',', '')) = LOWER(CONCAT('block ', l.block_number, ' lot ', l.lot_number))
+                OR LOWER(REPLACE(TRIM(s.property), ',', '')) = LOWER(CONCAT('lot ', l.lot_number, ' block ', l.block_number))
+                OR LOWER(TRIM(s.property)) = LOWER(CONCAT(l.block_number, '-', l.lot_number))
+                OR LOWER(REPLACE(TRIM(s.property), ',', '')) LIKE LOWER(CONCAT('%block ', l.block_number, '%lot ', l.lot_number, '%'))
+                OR LOWER(REPLACE(TRIM(s.property), ',', '')) LIKE LOWER(CONCAT('%lot ', l.lot_number, '%block ', l.block_number, '%'))
+            )
+        )";
+    }
+    if ($hasSalesLotNo) {
+        $visibilityConditions[] = "EXISTS (
+            SELECT 1
+            FROM sales s2
+            WHERE (
+                LOWER(TRIM(s2.buyer)) = LOWER(TRIM(?))
+                OR LOWER(TRIM(s2.buyer)) = LOWER(TRIM(?))
+            )
+            AND TRIM(CAST(s2.lot_no AS CHAR)) = TRIM(CAST(l.lot_number AS CHAR))
+        )";
+    }
+
+    $visibilityWhereSql = '(' . implode(' OR ', $visibilityConditions) . ')';
+
+    $sql = "SELECT DISTINCT $cols FROM lots l" . ($hasLocationJoin ? "\n        LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+        WHERE $visibilityWhereSql";
+
+    $stmt = prepOrDie($conn, $sql);
+    $visibilityBindTypes = 'i';
+    $visibilityBindValues = [$user_id];
+    if ($hasViewingLink) {
+        $visibilityBindTypes .= 's';
+        $visibilityBindValues[] = $userEmail;
+    }
+    if ($hasViewingUserLink) {
+        $visibilityBindTypes .= 'i';
+        $visibilityBindValues[] = $user_id;
+    }
+    if ($hasViewingPhoneLink && $userMobileDigits !== '') {
+        $visibilityBindTypes .= 's';
+        $visibilityBindValues[] = $userMobileDigits;
+    }
+    if ($hasViewingNameLink && $userFirstName !== '' && $userLastName !== '') {
+        $visibilityBindTypes .= 'ss';
+        $visibilityBindValues[] = $userFirstName;
+        $visibilityBindValues[] = $userLastName;
+    }
+    if ($hasPaymentOwnershipLink) {
+        $visibilityBindTypes .= 'i';
+        $visibilityBindValues[] = $user_id;
+    }
+    if ($hasLegacyPaymentsLink) {
+        $visibilityBindTypes .= 'i';
+        $visibilityBindValues[] = $user_id;
+    }
+    if ($hasSalesLink) {
+        $visibilityBindTypes .= 'ssss';
+        $visibilityBindValues[] = $userEmail;
+        $visibilityBindValues[] = $userFullName;
+        $visibilityBindValues[] = $userFirstName;
+        $visibilityBindValues[] = $userLastName;
+    }
+    if ($hasSalesLotNo) {
+        $visibilityBindTypes .= 'ss';
+        $visibilityBindValues[] = $userEmail;
+        $visibilityBindValues[] = $userFullName;
+    }
+    $stmt->bind_param($visibilityBindTypes, ...$visibilityBindValues);
     $stmt->execute();
     $res = $stmt->get_result();
-    if ($res) { 
-        $listings = $res->fetch_all(MYSQLI_ASSOC); 
+    if ($res) {
+        $listings = $res->fetch_all(MYSQLI_ASSOC);
         $lotsOwned = count($listings);
     }
     $stmt->close();
 
+    // Count reserved lots (owned or reserved by this user)
     if (hasColumn($conn,'lots','status')) {
-        $stmt = prepOrDie($conn, "SELECT COUNT(*) as c FROM lots WHERE owner_id = ? AND status = 'Reserved'");
-        $stmt->bind_param("i", $user_id);
+        $sql = "SELECT COUNT(DISTINCT l.id) as c FROM lots l
+            WHERE $visibilityWhereSql AND l.status = 'Reserved'";
+        $stmt = prepOrDie($conn, $sql);
+        $stmt->bind_param($visibilityBindTypes, ...$visibilityBindValues);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $reservedLots = $row['c'] ?? 0;
@@ -546,6 +1102,7 @@ if (empty($systemNotifications) && hasTable($conn, 'user_notifications')) {
     if (hasColumn($conn, 'user_notifications', 'title')) $selectCols[] = 'title';
     if (hasColumn($conn, 'user_notifications', 'message')) $selectCols[] = 'message';
     if (hasColumn($conn, 'user_notifications', 'type')) $selectCols[] = 'type';
+    if (hasColumn($conn, 'user_notifications', 'is_read')) $selectCols[] = 'is_read';
     if (hasColumn($conn, 'user_notifications', 'created_at')) $selectCols[] = 'created_at';
 
     if (!empty($selectCols) && hasColumn($conn, 'user_notifications', 'user_id')) {
@@ -562,13 +1119,25 @@ if (empty($systemNotifications) && hasTable($conn, 'user_notifications')) {
     }
 }
 
+$unreadNotificationCount = 0;
+if (!empty($systemNotifications)) {
+    $hasReadFlag = false;
+    foreach ($systemNotifications as $notification) {
+        if (array_key_exists('is_read', $notification)) {
+            $hasReadFlag = true;
+            if ((int)($notification['is_read'] ?? 0) === 0) {
+                $unreadNotificationCount++;
+            }
+        }
+    }
+
+    if (!$hasReadFlag) {
+        $unreadNotificationCount = count($systemNotifications);
+    }
+}
+
 /* ---------------- 4. CALCULATE OUTSTANDING BALANCE ---------------- */
 $outstandingBalance = 0.0;
-foreach ($listings as $lot) {
-    $price = (float)($lot['lot_price'] ?? 0);
-    $paid  = (float)($lot['payment_amount'] ?? 0);
-    $outstandingBalance += max(0, $price - $paid);
-}
 
 /* ---------------- 5. DASHBOARD ADD-ONS: AGENT MESSAGING + DOC PROGRESS + PAYMENT DEADLINE ---------------- */
 $userAgents = [];
@@ -621,7 +1190,14 @@ $documentStats = [
 
 $documentItems = [];
 $contractDocs = [];
+$approvedContractDocs = [];
+$approvedContractsByLot = [];
+$approvedGeneralContracts = [];
 $agreementDocs = [];
+$approvedAgreementDocs = [];
+$approvedAgreementsByLot = [];
+$approvedGeneralAgreements = [];
+$approvedLegalDocsByLot = [];
 
 $previousPayments = [];
 
@@ -661,8 +1237,11 @@ if (hasTable($conn, 'user_documents') && hasColumn($conn, 'user_documents', 'use
         $documentStats['progress_percent'] = (int)round(($documentStats['approved'] / $documentStats['total']) * 100);
     }
 
+    // Ensure lot_id column exists
+    $conn->query("ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS lot_id INT NULL");
+
     // Full document list for Contracts and Agreements copies
-    $docSql = "SELECT id, file_name, file_path, uploaded_at, doc_type, status
+    $docSql = "SELECT id, file_name, file_path, uploaded_at, doc_type, status, lot_id
                FROM user_documents
                WHERE user_id = ?
                ORDER BY uploaded_at DESC
@@ -678,27 +1257,79 @@ if (hasTable($conn, 'user_documents') && hasColumn($conn, 'user_documents', 'use
 
     foreach ($documentItems as $doc) {
         $docType = strtolower(trim((string)($doc['doc_type'] ?? '')));
+        $status = strtolower(trim((string)($doc['status'] ?? '')));
+        $lotId = $doc['lot_id'] ?? null;
         if (str_contains($docType, 'contract')) {
             $contractDocs[] = $doc;
+            if ($status === 'approved') {
+                $approvedContractDocs[] = $doc;
+                if ($lotId !== null) {
+                    $approvedContractsByLot[$lotId][] = $doc;
+                    $lotKey = (int)$lotId;
+                    if (!isset($approvedLegalDocsByLot[$lotKey])) {
+                        $approvedLegalDocsByLot[$lotKey] = [];
+                    }
+                    $approvedLegalDocsByLot[$lotKey][] = [
+                        'id' => (int)($doc['id'] ?? 0),
+                        'doc_type' => (string)($doc['doc_type'] ?? 'Copy of Contract'),
+                        'file_name' => (string)($doc['file_name'] ?? 'Contract File'),
+                        'file_path' => (string)($doc['file_path'] ?? ''),
+                        'uploaded_at' => (string)($doc['uploaded_at'] ?? ''),
+                    ];
+                } else {
+                    $approvedGeneralContracts[] = $doc;
+                }
+            }
         }
         if (str_contains($docType, 'agreement') || str_contains($docType, 'waiver') || str_contains($docType, 'terms')) {
             $agreementDocs[] = $doc;
+            if ($status === 'approved') {
+                $approvedAgreementDocs[] = $doc;
+                if ($lotId !== null) {
+                    $approvedAgreementsByLot[$lotId][] = $doc;
+                    $lotKey = (int)$lotId;
+                    if (!isset($approvedLegalDocsByLot[$lotKey])) {
+                        $approvedLegalDocsByLot[$lotKey] = [];
+                    }
+                    $approvedLegalDocsByLot[$lotKey][] = [
+                        'id' => (int)($doc['id'] ?? 0),
+                        'doc_type' => (string)($doc['doc_type'] ?? 'Copy of Agreement'),
+                        'file_name' => (string)($doc['file_name'] ?? 'Agreement File'),
+                        'file_path' => (string)($doc['file_path'] ?? ''),
+                        'uploaded_at' => (string)($doc['uploaded_at'] ?? ''),
+                    ];
+                } else {
+                    $approvedGeneralAgreements[] = $doc;
+                }
+            }
         }
     }
 }
 
 // Previous payments history for user-owned lots
 if (hasTable($conn, 'lot_payment_transactions') && hasTable($conn, 'lots')) {
+    $hasLocationJoin = hasTable($conn, 'lot_locations')
+        && hasColumn($conn, 'lots', 'location_id')
+        && hasColumn($conn, 'lot_locations', 'location_name');
+
     $paySql = "SELECT t.payment_date, t.amount, t.payment_method, t.remarks,
                       t.lot_id,
-                      l.block_number, l.lot_number
+                      l.block_number, l.lot_number" . ($hasLocationJoin ? ", ll.location_name" : "") . "
                FROM lot_payment_transactions t
-               INNER JOIN lots l ON l.id = t.lot_id
-               WHERE (t.user_id = ? OR l.owner_id = ?)
+               INNER JOIN lots l ON l.id = t.lot_id" . ($hasLocationJoin ? "\n               LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+               WHERE (
+                    t.user_id = ?
+                    OR l.owner_id = ?
+                    OR EXISTS (
+                        SELECT 1
+                        FROM viewings v
+                        WHERE v.lot_id = l.id AND v.client_email = ?
+                    )
+               )
                ORDER BY t.payment_date ASC, t.id ASC
                LIMIT 120";
     $stmt = prepOrDie($conn, $paySql);
-    $stmt->bind_param('ii', $user_id, $user_id);
+    $stmt->bind_param('iis', $user_id, $user_id, $user_email);
     $stmt->execute();
     $res = $stmt->get_result();
     if ($res) {
@@ -708,6 +1339,7 @@ if (hasTable($conn, 'lot_payment_transactions') && hasTable($conn, 'lots')) {
 }
 
 $paymentsByLot = [];
+$paymentRowsByLot = [];
 $paidMonthsByLot = [];
 foreach ($previousPayments as $paymentRow) {
     $paymentLotId = (int)($paymentRow['lot_id'] ?? 0);
@@ -715,6 +1347,10 @@ foreach ($previousPayments as $paymentRow) {
         continue;
     }
     $paymentsByLot[$paymentLotId] = ($paymentsByLot[$paymentLotId] ?? 0.0) + (float)($paymentRow['amount'] ?? 0);
+    if (!isset($paymentRowsByLot[$paymentLotId])) {
+        $paymentRowsByLot[$paymentLotId] = [];
+    }
+    $paymentRowsByLot[$paymentLotId][] = $paymentRow;
 
     $paymentDateRaw = trim((string)($paymentRow['payment_date'] ?? ''));
     if ($paymentDateRaw !== '') {
@@ -726,6 +1362,34 @@ foreach ($previousPayments as $paymentRow) {
             $paidMonthsByLot[$paymentLotId][$monthKey] = true;
         }
     }
+}
+
+$paidTotalsByLot = [];
+foreach ($listings as $lot) {
+    $lotId = (int)($lot['id'] ?? 0);
+    if ($lotId <= 0) {
+        continue;
+    }
+
+    $txPaid = (float)($paymentsByLot[$lotId] ?? 0);
+    $downPaymentAmount = (float)($lot['down_payment_amount'] ?? 0);
+
+    $downPaymentAlreadyRecorded = false;
+    if ($downPaymentAmount > 0 && !empty($paymentRowsByLot[$lotId])) {
+        foreach ($paymentRowsByLot[$lotId] as $txRow) {
+            $txAmount = (float)($txRow['amount'] ?? 0);
+            if (abs($txAmount - $downPaymentAmount) < 0.01) {
+                $downPaymentAlreadyRecorded = true;
+                break;
+            }
+        }
+    }
+
+    $paidTotal = $txPaid + (($downPaymentAmount > 0 && !$downPaymentAlreadyRecorded) ? $downPaymentAmount : 0);
+    $paidTotalsByLot[$lotId] = $paidTotal;
+
+    $price = (float)($lot['lot_price'] ?? 0);
+    $outstandingBalance += max(0, $price - $paidTotal);
 }
 
 /**
@@ -746,7 +1410,7 @@ function buildDueDateForMonth(DateTime $referenceMonth, int $dueDay): DateTime {
 /**
  * Compute the next unpaid installment due date for a lot.
  */
-function computeNextLotDueDate(array $lot, array $paidMonthsByLot): ?DateTime {
+function computeNextLotDueDate(array $lot, float $paidTotal): ?DateTime {
     $paymentType = trim((string)($lot['payment_type'] ?? ''));
     if ($paymentType !== 'Down Payment') {
         return null;
@@ -771,24 +1435,72 @@ function computeNextLotDueDate(array $lot, array $paidMonthsByLot): ?DateTime {
     $termYears = (int)($lot['payment_term_years'] ?? 0);
     $maxMonths = $termYears > 0 ? ($termYears * 12) : 120;
 
-    $lotId = (int)($lot['id'] ?? 0);
-    $paidMonths = $paidMonthsByLot[$lotId] ?? [];
+    $monthlyAmount = resolveLotInstallmentMonthlyAmount($lot);
+    $downPayment = (float)($lot['down_payment_amount'] ?? 0);
+    $installmentPaid = max(0.0, $paidTotal - $downPayment);
 
-    for ($i = 0; $i < $maxMonths; $i++) {
-        $targetMonth = clone $anchor;
-        if ($i > 0) {
-            $targetMonth->modify("+{$i} month");
-        }
-
-        $candidate = buildDueDateForMonth($targetMonth, $dueDay);
-        $monthKey = $candidate->format('Y-m');
-
-        if (!isset($paidMonths[$monthKey])) {
-            return $candidate;
-        }
+    $paidMonthsCount = 0;
+    if ($monthlyAmount > 0) {
+        $paidMonthsCount = (int)floor(($installmentPaid + 0.0001) / $monthlyAmount);
+    }
+    if ($paidMonthsCount < 0) {
+        $paidMonthsCount = 0;
     }
 
-    return null;
+    if ($paidMonthsCount >= $maxMonths) {
+        return null;
+    }
+
+    $targetMonth = clone $anchor;
+    if ($paidMonthsCount > 0) {
+        $targetMonth->modify('+' . $paidMonthsCount . ' month');
+    }
+
+    return buildDueDateForMonth($targetMonth, $dueDay);
+}
+
+function resolveLotInstallmentMonthlyAmount(array $lot): float {
+    $monthlyAmount = (float)($lot['payment_amount'] ?? 0);
+    if ($monthlyAmount > 0) {
+        return $monthlyAmount;
+    }
+
+    $lotPrice = (float)($lot['lot_price'] ?? 0);
+    $downPayment = (float)($lot['down_payment_amount'] ?? 0);
+    $installmentBalance = max($lotPrice - $downPayment, 0);
+    $termYears = (int)($lot['payment_term_years'] ?? 0);
+
+    if ($termYears > 0 && $installmentBalance > 0) {
+        return $installmentBalance / ($termYears * 12);
+    }
+
+    return $installmentBalance;
+}
+
+function computeNextInstallmentDueAmount(array $lot, float $paidTotal): float {
+    $lotPrice = (float)($lot['lot_price'] ?? 0);
+    $downPayment = (float)($lot['down_payment_amount'] ?? 0);
+    $monthlyAmount = resolveLotInstallmentMonthlyAmount($lot);
+
+    $installmentBalance = max($lotPrice - $downPayment, 0);
+    $installmentPaid = max(0, $paidTotal - $downPayment);
+    $remainingBalance = max(0, $installmentBalance - $installmentPaid);
+
+    if ($remainingBalance <= 0) {
+        return 0.0;
+    }
+
+    $baseDue = $monthlyAmount > 0 ? min($monthlyAmount, $remainingBalance) : $remainingBalance;
+    if ($monthlyAmount <= 0) {
+        return round($baseDue, 2);
+    }
+
+    $currentCyclePaid = fmod($installmentPaid, $monthlyAmount);
+    if (!is_finite($currentCyclePaid)) {
+        $currentCyclePaid = 0.0;
+    }
+
+    return round(max(0, $baseDue - $currentCyclePaid), 2);
 }
 
 $nextPaymentCardAmount = 'N/A';
@@ -806,7 +1518,9 @@ if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'payment_deadline')) {
     $nextDeadline = null;
 
     foreach ($listings as $lot) {
-        $candidate = computeNextLotDueDate($lot, $paidMonthsByLot);
+        $lotId = (int)($lot['id'] ?? 0);
+        $paidTotalForLot = (float)($paidTotalsByLot[$lotId] ?? 0);
+        $candidate = computeNextLotDueDate($lot, $paidTotalForLot);
         if (!$candidate) {
             continue;
         }
@@ -816,16 +1530,21 @@ if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'payment_deadline')) {
         if ($daysLeftEach < 0) {
             $deadlineText = 'Overdue by ' . abs($daysLeftEach) . ' day(s)';
         } elseif ($daysLeftEach === 0) {
-            $deadlineText = 'Due today';
+            $deadlineText = 'Next payment: ' . $candidate->format('M d, Y') . ' (Due today)';
         } else {
-            $deadlineText = 'Due in ' . $daysLeftEach . ' day(s)';
+            $deadlineText = 'Next payment: ' . $candidate->format('M d, Y');
         }
 
         $nextScheduledAmount = (float)($lot['payment_amount'] ?? 0);
+        $paidTotalDisplay = (float)($paidTotalsByLot[(int)($lot['id'] ?? 0)] ?? 0);
+        $nextDueAmount = computeNextInstallmentDueAmount($lot, $paidTotalDisplay);
+        if ($nextDueAmount > 0) {
+            $nextScheduledAmount = $nextDueAmount;
+        }
         $downPaymentDeadlines[] = [
             'lot_id' => (int)($lot['id'] ?? 0),
             'sort_date' => $candidate->format('Y-m-d'),
-            'lot_label' => 'Block ' . ($lot['block_number'] ?? 'N/A') . ', Lot ' . ($lot['lot_number'] ?? 'N/A'),
+            'lot_label' => formatLotLocationLabel($lot),
             'date' => $candidate->format('M d, Y'),
             'amount' => $nextScheduledAmount,
             'status_text' => $deadlineText,
@@ -861,9 +1580,9 @@ if (hasTable($conn, 'lots') && hasColumn($conn, 'lots', 'payment_deadline')) {
         if ($daysLeft < 0) {
             $paymentReminder['text'] = 'Overdue by ' . abs($daysLeft) . ' day(s)';
         } elseif ($daysLeft === 0) {
-            $paymentReminder['text'] = 'Due today';
+            $paymentReminder['text'] = 'Next payment: ' . $paymentReminder['date'] . ' (Due today)';
         } else {
-            $paymentReminder['text'] = 'Due in ' . $daysLeft . ' day(s)';
+            $paymentReminder['text'] = 'Next payment: ' . $paymentReminder['date'];
         }
     }
 }
@@ -881,23 +1600,60 @@ if (!empty($userAgents)) {
     ];
 }
 
+$agentReviewSummary = [
+    'average_rating' => 0,
+    'review_count' => 0
+];
+$myAgentReview = null;
+
+if ($agent && (int)($agent['id'] ?? 0) > 0 && hasTable($conn, 'agent_reviews')) {
+    $agentIdForReview = (int)$agent['id'];
+
+    $stmtReviewSummary = prepOrDie($conn, "SELECT IFNULL(AVG(rating), 0) AS average_rating, COUNT(*) AS review_count FROM agent_reviews WHERE agent_id = ?");
+    $stmtReviewSummary->bind_param('i', $agentIdForReview);
+    $stmtReviewSummary->execute();
+    $summaryRow = $stmtReviewSummary->get_result()->fetch_assoc();
+    $stmtReviewSummary->close();
+
+    if ($summaryRow) {
+        $agentReviewSummary['average_rating'] = (float)($summaryRow['average_rating'] ?? 0);
+        $agentReviewSummary['review_count'] = (int)($summaryRow['review_count'] ?? 0);
+    }
+
+    $stmtMyReview = prepOrDie($conn, "SELECT rating, review_text, updated_at FROM agent_reviews WHERE agent_id = ? AND user_id = ? LIMIT 1");
+    $stmtMyReview->bind_param('ii', $agentIdForReview, $uid);
+    $stmtMyReview->execute();
+    $myAgentReview = $stmtMyReview->get_result()->fetch_assoc();
+    $stmtMyReview->close();
+}
+
 /* ---------------- 7. FETCH TURNOVERS FOR OWNED LOTS ---------------- */
 $lotTurnovers = [];
 if (hasTable($conn, 'lot_turnovers')) {
-    $turnoverSql = "SELECT lt.lot_id, lt.turnover_date, lt.title_released, lt.remarks
-                    FROM lot_turnovers lt
-                    INNER JOIN lots l ON l.id = lt.lot_id
-                    WHERE l.owner_id = ?";
-    $stmtTv = prepOrDie($conn, $turnoverSql);
-    $stmtTv->bind_param('i', $user_id);
-    $stmtTv->execute();
-    $resTv = $stmtTv->get_result();
-    if ($resTv) {
-        while ($rowTv = $resTv->fetch_assoc()) {
-            $lotTurnovers[(int)$rowTv['lot_id']] = $rowTv;
+    $visibleLotIds = [];
+    foreach ($listings as $visibleLot) {
+        $visibleLotId = (int)($visibleLot['id'] ?? 0);
+        if ($visibleLotId > 0) {
+            $visibleLotIds[] = $visibleLotId;
         }
     }
-    $stmtTv->close();
+
+    if (!empty($visibleLotIds)) {
+        $visibleLotIds = array_values(array_unique($visibleLotIds));
+        $hasTurnoverConfirmed = hasColumn($conn, 'lot_turnovers', 'is_confirmed');
+        $confirmedWhere = $hasTurnoverConfirmed ? ' AND lt.is_confirmed = 1' : '';
+        $idCsv = implode(',', $visibleLotIds);
+
+        $turnoverSql = "SELECT lt.lot_id, lt.turnover_date, lt.title_released, lt.remarks
+                        FROM lot_turnovers lt
+                        WHERE lt.lot_id IN ($idCsv)" . $confirmedWhere;
+        $resTv = $conn->query($turnoverSql);
+        if ($resTv) {
+            while ($rowTv = $resTv->fetch_assoc()) {
+                $lotTurnovers[(int)$rowTv['lot_id']] = $rowTv;
+            }
+        }
+    }
 }
 
 $conn->close();
@@ -1066,6 +1822,8 @@ tbody tr:hover { background:#f9fbfd; }
 .badge { padding:6px 12px; border-radius:20px; font-size:12px; font-weight:700; text-transform:capitalize; letter-spacing:0.3px; display:inline-block; }
 .badge.scheduled { background:#e0f2fe; color:#0284c7; }
 .badge.pending { background:#fef3c7; color:#d97706; }
+.badge.cancelled { background:#fee2e2; color:#dc2626; }
+.badge.completed, .badge.complete { background:#dcfce7; color:#166534; }
 .badge.paid { background:#dcfce7; color:#166534; }
 
 /* --- Agent Card --- */
@@ -1109,6 +1867,11 @@ tbody tr:hover { background:#f9fbfd; }
     .main-content { margin-left:0; padding:20px 24px; }
     .form-grid { grid-template-columns:1fr !important; }
     .card-grid { grid-template-columns:1fr; }
+    .properties-metrics { grid-template-columns:1fr; min-width:0; width:100%; }
+    .properties-hero { padding:18px; }
+    .properties-hero h2 { font-size:24px; }
+    .properties-grid { grid-template-columns:1fr; }
+    .property-details { grid-template-columns:1fr; }
     .stat-card.stat-card-next-payment {
         min-height: 0;
     }
@@ -1121,6 +1884,13 @@ tbody tr:hover { background:#f9fbfd; }
 @media (max-width: 560px) {
     .main-content { padding: 14px 12px; }
     .agent-card { flex-direction: column; align-items: flex-start; }
+    .properties-card,
+    .properties-hero,
+    .property-card { border-radius:14px; }
+    .property-card-top { padding:18px 16px 0; }
+    .property-details,
+    .property-card-actions,
+    .property-footer-note { padding-left:16px; padding-right:16px; }
     .modal-content { width:calc(100% - 20px); max-height:calc(100vh - 20px); }
     .modal-body { padding:18px; }
 }
@@ -1158,6 +1928,80 @@ tbody tr:hover { background:#f9fbfd; }
 .modal-footer { padding:20px 24px; border-top:1px solid #f0f0f0; display:flex; gap:12px; justify-content:flex-end; }
 .modal-footer .btn { margin:0; }
 
+/* --- Lot Contract Modal (fullscreen viewer) --- */
+#lotContractModal.lot-contract-modal { background:rgba(0, 0, 0, 0.72); }
+#lotContractModal.lot-contract-modal .modal-content {
+    width:calc(100vw - 24px);
+    max-width:1500px;
+    height:calc(100vh - 24px);
+    max-height:calc(100vh - 24px);
+    border-radius:12px;
+}
+#lotContractModal.lot-contract-modal .modal-header,
+#lotContractModal.lot-contract-modal .modal-footer {
+    padding:14px 18px;
+}
+#lotContractModal.lot-contract-modal .modal-body {
+    padding:12px;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    min-height:0;
+}
+.lot-contract-toolbar {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+}
+.lot-contract-selector {
+    flex:1 1 320px;
+    min-width:220px;
+    padding:10px 12px;
+    border:1px solid #d1d5db;
+    border-radius:8px;
+    background:#fff;
+    font-size:14px;
+}
+.lot-contract-meta {
+    font-size:12px;
+    color:#6b7280;
+    min-height:18px;
+}
+.lot-contract-frame-wrap {
+    flex:1;
+    min-height:0;
+    border:1px solid #d1d5db;
+    border-radius:10px;
+    overflow:hidden;
+    background:#fff;
+}
+#lot-contract-frame {
+    width:100%;
+    height:100%;
+    border:none;
+    display:block;
+    background:#fff;
+}
+
+@media (max-width: 700px) {
+    #lotContractModal.lot-contract-modal .modal-content {
+        width:100vw;
+        height:100vh;
+        max-height:100vh;
+        border-radius:0;
+    }
+
+    .lot-contract-toolbar {
+        align-items:stretch;
+    }
+
+    .lot-contract-selector {
+        flex:1 1 100%;
+    }
+}
+
 /* --- Payment Page Styles --- */
 .payment-info-card { background:linear-gradient(135deg, #f0fdf4 0%, #f1f5f9 100%); border:1.5px solid #bbf7d0; border-radius:12px; padding:20px; margin-bottom:30px; }
 .payment-info-card h4 { margin:0 0 8px 0; color:var(--green); font-weight:700; }
@@ -1167,6 +2011,198 @@ tbody tr:hover { background:#f9fbfd; }
 .payment-warning p { margin:0; color:#92400e; font-size:13px; }
 .payment-status-guide { background:#f9fbfd; padding:16px; border-radius:9px; margin-bottom:18px; border-left:3px solid #0284c7; }
 .payment-status-guide p { margin:0; color:var(--muted); font-size:13px; }
+
+/* --- Properties Section --- */
+.properties-section { display:flex; flex-direction:column; gap:18px; }
+.properties-hero {
+    background:linear-gradient(135deg, #0f4223 0%, #14532d 55%, #1f6b3a 100%);
+    border-radius:18px;
+    padding:22px 24px;
+    border:1px solid rgba(20,83,45,0.14);
+    box-shadow:0 10px 30px rgba(20, 83, 45, 0.08);
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    gap:20px;
+    flex-wrap:wrap;
+    position:relative;
+    overflow:hidden;
+}
+.properties-hero::after {
+    content:'';
+    position:absolute;
+    inset:auto -80px -90px auto;
+    width:280px;
+    height:280px;
+    border-radius:50%;
+    background:rgba(255,255,255,0.08);
+    pointer-events:none;
+}
+.properties-hero-copy { max-width:680px; }
+.properties-kicker {
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    background:rgba(255,255,255,0.16);
+    color:#fff;
+    padding:6px 12px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.4px;
+    text-transform:uppercase;
+    margin-bottom:12px;
+}
+.properties-hero h2 {
+    margin:0 0 8px;
+    color:#fff;
+    font-size:30px;
+    line-height:1.15;
+}
+.properties-hero p {
+    margin:0;
+    color:rgba(255,255,255,0.96);
+    font-size:14px;
+    line-height:1.6;
+    max-width:720px;
+}
+.properties-metrics {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(120px, 1fr));
+    gap:12px;
+    min-width:280px;
+}
+.property-metric {
+    background:rgba(255,255,255,0.92);
+    border:1px solid rgba(20,83,45,0.08);
+    border-radius:14px;
+    padding:14px 16px;
+    box-shadow:0 8px 18px rgba(15, 42, 24, 0.06);
+    position:relative;
+    z-index:1;
+}
+.property-metric strong {
+    display:block;
+    font-size:22px;
+    color:var(--green);
+    line-height:1.1;
+}
+.property-metric span {
+    display:block;
+    margin-top:4px;
+    font-size:12px;
+    color:var(--muted);
+}
+.properties-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:18px; }
+.property-card {
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    background:linear-gradient(180deg, #ffffff 0%, #fbfdfb 100%);
+    border:1px solid #e8efe9;
+    border-radius:18px;
+    box-shadow:0 10px 24px rgba(15, 42, 24, 0.07);
+    overflow:hidden;
+    position:relative;
+    transition:transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.property-card:hover {
+    transform:translateY(-4px);
+    box-shadow:0 16px 32px rgba(15, 42, 24, 0.12);
+    border-color:#cfe2d4;
+}
+.property-card::before {
+    content:'';
+    position:absolute;
+    inset:0 auto auto 0;
+    width:100%;
+    height:6px;
+    background:linear-gradient(90deg, #14532d 0%, #22c55e 100%);
+}
+.property-card-top {
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:14px;
+    padding:20px 20px 0;
+}
+.property-status {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:7px 12px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:800;
+    letter-spacing:0.5px;
+    text-transform:uppercase;
+    white-space:nowrap;
+}
+.property-title {
+    margin:0;
+    color:var(--green);
+    font-size:20px;
+    font-weight:700;
+    line-height:1.25;
+}
+.property-location {
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    color:var(--muted);
+    font-size:13px;
+    line-height:1.5;
+}
+.property-location i {
+    color:#16a34a;
+    margin-top:2px;
+}
+.property-details {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:12px;
+    padding:0 20px;
+}
+.property-detail {
+    background:#f8fbf8;
+    border:1px solid #e7eee8;
+    border-radius:14px;
+    padding:12px 14px;
+}
+.property-detail label {
+    display:block;
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.6px;
+    color:#6b7280;
+    margin-bottom:6px;
+}
+.property-detail strong {
+    display:block;
+    font-size:15px;
+    color:var(--text);
+    line-height:1.35;
+}
+.property-detail .value-green { color:var(--green); }
+.property-card-actions {
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    padding:0 20px 20px;
+}
+.property-card-actions .btn {
+    width:100%;
+    justify-content:center;
+    padding:12px 18px;
+    border-radius:12px;
+}
+.property-footer-note {
+    padding:0 20px 20px;
+    color:var(--muted);
+    font-size:12px;
+    line-height:1.5;
+}
 </style>
 </head>
 <body>
@@ -1196,7 +2232,7 @@ tbody tr:hover { background:#f9fbfd; }
             <a href="#payments" class="nav-link" onclick="switchTab('payments', this); loadLotPayments();"><i class="fa fa-credit-card"></i> Payments</a>
             <a href="#viewings" class="nav-link" onclick="switchTab('viewings', this)"><i class="fa fa-calendar-check"></i> Viewings</a>
             <a href="#documents" class="nav-link" onclick="switchTab('documents', this)"><i class="fa fa-folder-open"></i> Documents</a>
-            <a href="#notifications" class="nav-link" onclick="switchTab('notifications', this)"><i class="fa fa-bell"></i> Notifications</a>
+            <a href="#notifications" class="nav-link" onclick="switchTab('notifications', this)"><i class="fa fa-bell"></i> Notifications<?php if ($unreadNotificationCount > 0): ?> <span id="user-notifications-badge" style="margin-left:8px; min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:#ef4444; color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; line-height:1; vertical-align:middle;"><?php echo $unreadNotificationCount > 99 ? '99+' : (int)$unreadNotificationCount; ?></span><?php endif; ?></a>
             <a href="#agent" class="nav-link" onclick="switchTab('agent', this)"><i class="fa fa-user-tie"></i> My Agent</a>
             <a href="#" class="nav-link logout-link" style="margin-top:20px;" onclick="confirmLogout(event)"><i class="fa fa-sign-out-alt logout-icon"></i> Logout</a>
         </nav>
@@ -1204,9 +2240,17 @@ tbody tr:hover { background:#f9fbfd; }
 
     <main class="main-content">
         
+
         <div id="dashboard" class="section active">
-            <h2>Dashboard</h2>
-            <span class="subtitle">Welcome back, <?php echo h($user['first_name']); ?></span>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div>
+                    <h2>Dashboard</h2>
+                    <span class="subtitle">Welcome back, <?php echo h($user['first_name']); ?></span>
+                </div>
+                <a href="index.php" class="btn btn-primary" style="height:40px; display:flex; align-items:center; gap:8px; font-size:15px; padding:0 22px; text-decoration:none;">
+                    <i class="fa fa-home"></i> Go to Homepage
+                </a>
+            </div>
 
             <div class="card-grid">
                 <div class="stat-card">
@@ -1230,32 +2274,11 @@ tbody tr:hover { background:#f9fbfd; }
                         <span>Balance Due</span>
                     </div>
                 </div>
-                <div class="stat-card stat-card-next-payment">
+                <div class="stat-card stat-card-next-payment" style="cursor:pointer;" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">
                     <div class="stat-icon" style="background:#dcfce7; color:#166534;"><i class="fa fa-wallet"></i></div>
                     <div class="stat-info">
                         <h3><?php echo h($nextPaymentCardAmount); ?></h3>
                         <span>Next Payment <?php echo !empty($nextPaymentCardDate) ? '(Due: ' . h($nextPaymentCardDate) . ')' : ''; ?></span>
-                    </div>
-                </div>
-                <div class="stat-card stat-card-reminder">
-                    <div class="stat-icon" style="background:#fff7ed; color:#c2410c;"><i class="fa fa-hourglass-half"></i></div>
-                    <div class="stat-info">
-                        <h3><?php echo h($paymentReminder['text']); ?></h3>
-                        <span>Payment Deadline Reminder</span>
-                        <?php if (!empty($downPaymentDeadlines)): ?>
-                        <ul class="deadline-list">
-                            <?php foreach ($downPaymentDeadlines as $deadline): ?>
-                            <li class="deadline-item">
-                                <strong><?php echo h($deadline['lot_label']); ?></strong>
-                                : <?php echo h($deadline['date']); ?>
-                                <?php if (!empty($deadline['due_day'])): ?>
-                                (Due day: <?php echo (int)$deadline['due_day']; ?>)
-                                <?php endif; ?>
-                                (<?php echo h($deadline['status_text']); ?>)
-                            </li>
-                            <?php endforeach; ?>
-                        </ul>
-                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -1345,102 +2368,183 @@ tbody tr:hover { background:#f9fbfd; }
         </div>
 
         <div id="properties" class="section">
-            <h2>My Properties</h2>
-            <span class="subtitle">List of lots you own or have reserved</span>
-
-            <div class="card-grid">
-                <?php if(empty($listings)): ?>
-                    <div class="content-box" style="grid-column: span 3; text-align:center;">
-                        <p>No properties found linked to this account.</p>
+            <div class="properties-section">
+                <div class="properties-hero">
+                    <div class="properties-hero-copy">
+                        <div class="properties-kicker"><i class="fa fa-map-marker-alt"></i> Property Portfolio</div>
+                        <h2>My Properties</h2>
+                        <p>Review every lot linked to your account with its barangay, block, lot number, size, price, and payment status in one place.</p>
                     </div>
-                <?php else: ?>
-                    <?php foreach($listings as $lot): ?>
-                    <?php
-                        $effectiveStatus = strtolower(trim((string)($lot['status'] ?? '')));
-                        $paymentType = strtolower(trim((string)($lot['payment_type'] ?? '')));
-                        if ($paymentType === 'down payment' && in_array($effectiveStatus, ['reserved', 'reservation', 'installment', 'installments'], true)) {
-                            $effectiveStatus = 'installment';
-                        }
+                    <div class="properties-metrics">
+                        <div class="property-metric">
+                            <strong><?php echo (int)$lotsOwned; ?></strong>
+                            <span>Total Properties</span>
+                        </div>
+                        <div class="property-metric">
+                            <strong><?php echo (int)$reservedLots; ?></strong>
+                            <span>Reserved Lots</span>
+                        </div>
+                    </div>
+                </div>
 
-                        $statusLabel = match($effectiveStatus) {
-                            'available'   => ['Available',   '#22c55e', '#dcfce7'],
-                            'reserved'    => ['Under Reservation', '#f59e0b', '#fef3c7'],
-                            'reservation' => ['Under Reservation', '#f59e0b', '#fef3c7'],
-                            'installment' => ['Installment', '#3b82f6', '#dbeafe'],
-                            'installments' => ['Installment', '#3b82f6', '#dbeafe'],
-                            'paid'        => ['Fully Paid',  '#8b5cf6', '#ede9fe'],
-                            'sold'        => ['Sold',        '#64748b', '#f1f5f9'],
-                            default       => [ucfirst($lot['status'] ?? 'N/A'), '#64748b', '#f1f5f9'],
-                        };
-                        $rawNextAmount = (float)($lot['payment_amount'] ?? 0);
-                        $nextPayAmt  = $rawNextAmount > 0 ? '₱' . number_format($rawNextAmount, 2) : null;
-                        $nextPayDate = !empty($lot['payment_deadline'])  ? date('M d, Y', strtotime($lot['payment_deadline']))     : null;
-                        $lotPaidSoFar = (float)($paymentsByLot[(int)($lot['id'] ?? 0)] ?? 0);
-                        $downPaymentAmount = (float)($lot['down_payment_amount'] ?? 0);
-                        $totalPaidDisplay = $lotPaidSoFar + $downPaymentAmount;
-                        $remainingBalance = max(0, (float)($lot['lot_price'] ?? 0) - $totalPaidDisplay);
-                        $isInstallmentCard = ($paymentType === 'down payment' && in_array($effectiveStatus, ['installment', 'installments'], true));
-                    ?>
-                    <div class="stat-card" style="display:block; border-left:4px solid <?php echo $statusLabel[1]; ?>; padding:24px; position:relative; overflow:hidden;">
-                        <div style="position:absolute; top:0; right:0; width:60px; height:60px; background:rgba(20, 83, 45, 0.05); border-radius:0 12px 0 999px;"></div>
-                        <span style="display:inline-block; background:<?php echo $statusLabel[2]; ?>; color:<?php echo $statusLabel[1]; ?>; font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; margin-bottom:10px; letter-spacing:.5px;"><?php echo $statusLabel[0]; ?></span>
-                        <h4 style="margin:0 0 16px; color:var(--green); font-size:18px; font-weight:700;">
-                            Block <?php echo h($lot['block_number']); ?>, Lot <?php echo h($lot['lot_number']); ?>
-                        </h4>
-                        <div style="font-size:14px; margin-bottom:8px;">
-                            <strong style="color:var(--text);">Size:</strong> <span style="color:var(--muted);"><?php echo h($lot['lot_size']); ?> sqm</span>
+                <div class="properties-grid">
+                    <?php if(empty($listings)): ?>
+                        <div class="content-box" style="grid-column: 1 / -1; text-align:center;">
+                            <p>No properties found linked to this account.</p>
                         </div>
-                        <div style="font-size:14px; margin-bottom:8px;">
-                            <strong style="color:var(--text);">Price:</strong> <span style="color:var(--green); font-weight:700;">₱<?php echo number_format($lot['lot_price'], 2); ?></span>
-                        </div>
-                        <?php if ($nextPayAmt): ?>
-                        <div style="font-size:14px; margin-bottom:8px; background:#f0fdf4; padding:8px 12px; border-radius:8px; border-left:3px solid #22c55e;">
-                            <strong style="color:var(--text);">Next Payment:</strong> <span style="color:#16a34a; font-weight:700;"><?php echo $nextPayAmt; ?></span>
-                            <?php if ($nextPayDate): ?><br><small style="color:var(--muted);">Due: <?php echo $nextPayDate; ?></small><?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                        <?php if ($isInstallmentCard): ?>
-                        <button
-                            class="btn btn-secondary"
-                            style="width:100%; font-size:13px; margin-top:8px;"
-                            data-lot-id="<?php echo (int)($lot['id'] ?? 0); ?>"
-                            data-lot-label="<?php echo h('Block ' . ($lot['block_number'] ?? 'N/A') . ', Lot ' . ($lot['lot_number'] ?? 'N/A')); ?>"
-                            data-lot-price="<?php echo h((string)(float)($lot['lot_price'] ?? 0)); ?>"
-                            data-down-payment="<?php echo h((string)(float)($lot['down_payment_amount'] ?? 0)); ?>"
-                            data-installment-amount="<?php echo h((string)(float)($lot['payment_amount'] ?? 0)); ?>"
-                            data-term-years="<?php echo h((string)(int)($lot['payment_term_years'] ?? 0)); ?>"
-                            data-due-day="<?php echo h((string)(int)($lot['payment_due_day'] ?? 0)); ?>"
-                            data-next-due="<?php echo h((string)($lot['payment_deadline'] ?? '')); ?>"
-                            data-paid-so-far="<?php echo h((string)$totalPaidDisplay); ?>"
-                            data-remaining-balance="<?php echo h((string)$remainingBalance); ?>"
-                            onclick="openInstallmentDetailsModal(this)">View Installment Plan</button>
-                        <?php else: ?>
-                        <button class="btn btn-secondary" style="width:100%; font-size:13px; margin-top:8px;" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">View Payments</button>
-                        <?php endif; ?>
+                    <?php else: ?>
+                        <?php foreach($listings as $lot): ?>
                         <?php
-                            $tvLotId = (int)($lot['id'] ?? 0);
-                            if ($effectiveStatus === 'paid' && isset($lotTurnovers[$tvLotId])):
-                                $tv = $lotTurnovers[$tvLotId];
+                            $lotLabel = formatLotLocationLabel($lot);
+                            $effectiveStatus = strtolower(trim((string)($lot['status'] ?? '')));
+                            $paymentType = strtolower(trim((string)($lot['payment_type'] ?? '')));
+                            $lotPriceValue = (float)($lot['lot_price'] ?? 0);
+                            $lotId = (int)($lot['id'] ?? 0);
+                            $lotPaidSoFar = (float)($paymentsByLot[$lotId] ?? 0);
+                            $downPaymentAmount = (float)($lot['down_payment_amount'] ?? 0);
+                            $totalPaidDisplay = (float)($paidTotalsByLot[$lotId] ?? ($lotPaidSoFar + $downPaymentAmount));
+                            $remainingBalance = max(0, $lotPriceValue - $totalPaidDisplay);
+                            $nextDueAmount = computeNextInstallmentDueAmount($lot, $totalPaidDisplay);
+                            $isFullyPaidByAmount = ($lotPriceValue > 0 && $remainingBalance <= 0.009);
+
+                            if ($isFullyPaidByAmount || $paymentType === 'fully paid' || $effectiveStatus === 'paid' || $effectiveStatus === 'sold') {
+                                $effectiveStatus = 'paid';
+                                $paymentType = 'fully paid';
+                            } elseif ($paymentType === 'down payment' && in_array($effectiveStatus, ['reserved', 'reservation', 'installment', 'installments'], true)) {
+                                $effectiveStatus = 'installment';
+                            }
+
+                            $statusLabel = match($effectiveStatus) {
+                                'available'   => ['Available',   '#22c55e', '#dcfce7'],
+                                'reserved'    => ['Under Reservation', '#f59e0b', '#fef3c7'],
+                                'reservation' => ['Under Reservation', '#f59e0b', '#fef3c7'],
+                                'installment' => ['Installment', '#3b82f6', '#dbeafe'],
+                                'installments' => ['Installment', '#3b82f6', '#dbeafe'],
+                                'paid'        => ['Fully Paid',  '#8b5cf6', '#ede9fe'],
+                                'sold'        => ['Sold',        '#64748b', '#f1f5f9'],
+                                default       => [ucfirst($lot['status'] ?? 'N/A'), '#64748b', '#f1f5f9'],
+                            };
+                            $nextDueDateObj = ($effectiveStatus === 'installment') ? computeNextLotDueDate($lot, $totalPaidDisplay) : null;
+                            $rawNextAmount = (float)($lot['payment_amount'] ?? 0);
+                            $nextPayAmt  = ($effectiveStatus === 'installment' && $remainingBalance > 0) ? '₱' . number_format(($nextDueAmount > 0 ? $nextDueAmount : $rawNextAmount), 2) : null;
+                            $nextPayDate = ($effectiveStatus === 'installment' && $nextDueDateObj instanceof DateTime) ? $nextDueDateObj->format('M d, Y') : null;
+                            $nextDueDataValue = ($nextDueDateObj instanceof DateTime) ? $nextDueDateObj->format('Y-m-d') : '';
+                            $isInstallmentCard = ($paymentType === 'down payment' && in_array($effectiveStatus, ['installment', 'installments'], true));
                         ?>
-                        <div style="margin-top:12px; background:#f5f3ff; border-left:3px solid #8b5cf6; border-radius:8px; padding:10px 12px;">
-                            <strong style="color:#6d28d9; font-size:13px;">🏡 Title &amp; Turnover</strong>
-                            <div style="font-size:13px; margin-top:5px; color:var(--text);">
-                                Turnover Date: <strong><?php echo h(!empty($tv['turnover_date']) ? date('M d, Y', strtotime($tv['turnover_date'])) : 'Pending'); ?></strong>
+                        <article class="property-card" style="border-top-color: <?php echo $statusLabel[1]; ?>;">
+                            <div class="property-card-top">
+                                <div style="min-width:0;">
+                                    <span class="property-status" style="background:<?php echo $statusLabel[2]; ?>; color:<?php echo $statusLabel[1]; ?>;"><?php echo $statusLabel[0]; ?></span>
+                                    <h4 class="property-title"><?php echo h($lotLabel); ?></h4>
+                                </div>
+                                <div style="width:44px; height:44px; border-radius:14px; background:rgba(20,83,45,0.08); display:flex; align-items:center; justify-content:center; color:var(--green); flex-shrink:0;">
+                                    <i class="fa fa-house"></i>
+                                </div>
                             </div>
-                            <div style="font-size:13px; margin-top:2px; color:var(--text);">
-                                Title Released:
-                                <strong style="color:<?php echo ($tv['title_released'] ? '#16a34a' : '#d97706'); ?>">
-                                    <?php echo $tv['title_released'] ? 'Yes ✅' : 'Pending ⏳'; ?>
-                                </strong>
+
+                            <div style="padding:0 20px;">
+                                <?php if (!empty($lot['location_name'])): ?>
+                                <div class="property-location" style="margin-bottom:12px;">
+                                    <i class="fa fa-location-dot"></i>
+                                    <span><strong>Barangay:</strong> <?php echo h($lot['location_name']); ?></span>
+                                </div>
+                                <?php endif; ?>
+                                <div class="property-location">
+                                    <i class="fa fa-road"></i>
+                                    <span>Block <?php echo h($lot['block_number']); ?>, Lot <?php echo h($lot['lot_number']); ?></span>
+                                </div>
                             </div>
-                            <?php if (!empty($tv['remarks'])): ?>
-                            <div style="font-size:12px; margin-top:4px; color:var(--muted);"><?php echo h($tv['remarks']); ?></div>
+
+                            <div class="property-details">
+                                <div class="property-detail">
+                                    <label>Size</label>
+                                    <strong><?php echo h($lot['lot_size']); ?> sqm</strong>
+                                </div>
+                                <div class="property-detail">
+                                    <label>Price</label>
+                                    <strong class="value-green">₱<?php echo number_format($lot['lot_price'], 2); ?></strong>
+                                </div>
+                                <div class="property-detail">
+                                    <label>Payment Type</label>
+                                    <strong><?php echo h($lot['payment_type'] ?? 'N/A'); ?></strong>
+                                </div>
+                                <div class="property-detail">
+                                    <label>Remaining</label>
+                                    <strong class="value-green"><?php echo $remainingBalance > 0 ? '₱' . number_format($remainingBalance, 2) : 'Fully Paid'; ?></strong>
+                                </div>
+                            </div>
+
+                            <?php if ($nextPayAmt): ?>
+                            <div style="padding:0 20px;">
+                                <div style="background:linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); padding:14px 16px; border-radius:14px; border:1px solid #bbf7d0; display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                                    <div>
+                                        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:#16a34a; font-weight:800; margin-bottom:6px;">Next Payment</div>
+                                        <div style="font-size:15px; font-weight:700; color:var(--text);"><?php echo $nextPayAmt; ?></div>
+                                    </div>
+                                    <?php if ($nextPayDate): ?>
+                                    <div style="font-size:12px; color:var(--muted); text-align:right;">Due<br><strong style="color:var(--text);"><?php echo $nextPayDate; ?></strong></div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                             <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
+
+                            <?php
+                                $lotId = (int)($lot['id'] ?? 0);
+                                $hasLotContract =
+                                    !empty($approvedContractsByLot[$lotId])
+                                    || !empty($approvedAgreementsByLot[$lotId]);
+                            ?>
+
+                            <div class="property-card-actions">
+                                <?php if ($isInstallmentCard): ?>
+                                <button
+                                    class="btn btn-secondary"
+                                    data-lot-id="<?php echo (int)($lot['id'] ?? 0); ?>"
+                                    data-lot-label="<?php echo h($lotLabel); ?>"
+                                    data-lot-price="<?php echo h((string)(float)($lot['lot_price'] ?? 0)); ?>"
+                                    data-down-payment="<?php echo h((string)(float)($lot['down_payment_amount'] ?? 0)); ?>"
+                                    data-installment-amount="<?php echo h((string)(float)($lot['payment_amount'] ?? 0)); ?>"
+                                    data-term-years="<?php echo h((string)(int)($lot['payment_term_years'] ?? 0)); ?>"
+                                    data-due-day="<?php echo h((string)(int)($lot['payment_due_day'] ?? 0)); ?>"
+                                    data-next-due="<?php echo h((string)$nextDueDataValue); ?>"
+                                    data-paid-so-far="<?php echo h((string)$totalPaidDisplay); ?>"
+                                    data-remaining-balance="<?php echo h((string)$remainingBalance); ?>"
+                                    data-has-contract="<?php echo $hasLotContract ? '1' : '0'; ?>"
+                                    onclick="openInstallmentDetailsModal(this)">View Installment Plan</button>
+                                <?php else: ?>
+                                <button class="btn btn-secondary" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">View Payments</button>
+                                <?php endif; ?>
+
+                                <?php if ($hasLotContract): ?>
+                                <button class="btn btn-primary" onclick='openLotContractModal(<?php echo (int)$lotId; ?>, <?php echo json_encode((string)$lotLabel, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>View Contract</button>
+                                <?php endif; ?>
+
+                                <?php
+                                    $tvLotId = (int)($lot['id'] ?? 0);
+                                    if ($effectiveStatus === 'paid' && isset($lotTurnovers[$tvLotId])):
+                                        $tv = $lotTurnovers[$tvLotId];
+                                ?>
+                                <div style="background:#f5f3ff; border:1px solid #e9d5ff; border-radius:14px; padding:14px 16px;">
+                                    <strong style="color:#6d28d9; font-size:12px; text-transform:uppercase; letter-spacing:0.5px;">Title &amp; Turnover</strong>
+                                    <div style="font-size:13px; margin-top:8px; color:var(--text); line-height:1.45;">
+                                        Turnover Date: <strong><?php echo h(!empty($tv['turnover_date']) ? date('M d, Y', strtotime($tv['turnover_date'])) : 'Pending'); ?></strong>
+                                    </div>
+                                    <div style="font-size:13px; margin-top:4px; color:var(--text); line-height:1.45;">
+                                        Title Released:
+                                        <strong style="color:<?php echo ($tv['title_released'] ? '#16a34a' : '#d97706'); ?>">
+                                            <?php echo $tv['title_released'] ? 'Yes' : 'Pending'; ?>
+                                        </strong>
+                                    </div>
+                                    <?php if (!empty($tv['remarks'])): ?>
+                                    <div style="font-size:12px; margin-top:6px; color:var(--muted);"><?php echo h($tv['remarks']); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </article>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
 
@@ -1486,7 +2590,30 @@ tbody tr:hover { background:#f9fbfd; }
                                 <td>
                                     <?php echo h(($v['agent_first']??'') . ' ' . ($v['agent_last']??'')); ?>
                                 </td>
-                                <td><span class="badge scheduled"><?php echo h($v['status']); ?></span></td>
+                                                                <td>
+                                                                    <?php
+                                                                        $status = strtolower($v['status']);
+                                                                        $badgeClass = 'badge ';
+                                                                        switch ($status) {
+                                                                            case 'cancelled':
+                                                                                $badgeClass .= 'cancelled';
+                                                                                break;
+                                                                            case 'pending':
+                                                                                $badgeClass .= 'pending';
+                                                                                break;
+                                                                            case 'scheduled':
+                                                                                $badgeClass .= 'scheduled';
+                                                                                break;
+                                                                            case 'completed':
+                                                                            case 'complete':
+                                                                                $badgeClass .= 'completed';
+                                                                                break;
+                                                                            default:
+                                                                                $badgeClass .= 'scheduled';
+                                                                        }
+                                                                    ?>
+                                                                    <span class="<?php echo $badgeClass; ?>"><?php echo h($v['status']); ?></span>
+                                                                </td>
                             </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
@@ -1588,8 +2715,9 @@ tbody tr:hover { background:#f9fbfd; }
                             <tr><td colspan="5" style="text-align:center;">No previous payment records found.</td></tr>
                         <?php else: ?>
                             <?php foreach ($previousPayments as $p): ?>
+                            <?php $paymentLabel = formatLotLocationLabel($p); ?>
                             <tr>
-                                <td>Block <?php echo h($p['block_number'] ?? '-'); ?>, Lot <?php echo h($p['lot_number'] ?? '-'); ?></td>
+                                <td><?php echo h($paymentLabel); ?></td>
                                 <td><?php echo !empty($p['payment_date']) ? h(date('M d, Y', strtotime($p['payment_date']))) : 'N/A'; ?></td>
                                 <td>₱<?php echo number_format((float)($p['amount'] ?? 0), 2); ?></td>
                                 <td><?php echo h($p['payment_method'] ?? 'N/A'); ?></td>
@@ -1650,6 +2778,42 @@ tbody tr:hover { background:#f9fbfd; }
                         <div style="margin-top:10px;">
                             <button class="btn btn-primary btn-sm" onclick="openMessageModal(<?php echo (int)$agent['id']; ?>)">Message Agent</button>
                         </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:18px; border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fafafa;">
+                    <h3 style="margin:0 0 8px 0; font-size:18px;">Rate Your Agent</h3>
+                    <p style="margin:0 0 12px 0; color:var(--muted); font-size:13px;">
+                        Average rating: <strong><?php echo number_format((float)$agentReviewSummary['average_rating'], 1); ?>/5</strong>
+                        (<?php echo (int)$agentReviewSummary['review_count']; ?> review<?php echo ((int)$agentReviewSummary['review_count'] === 1 ? '' : 's'); ?>)
+                    </p>
+
+                    <div class="form-group" style="max-width:220px;">
+                        <label for="agent_rating">Your Rating</label>
+                        <select id="agent_rating" class="form-control">
+                            <option value="">Select rating</option>
+                            <option value="5" <?php echo ((int)($myAgentReview['rating'] ?? 0) === 5 ? 'selected' : ''); ?>>5 - Excellent</option>
+                            <option value="4" <?php echo ((int)($myAgentReview['rating'] ?? 0) === 4 ? 'selected' : ''); ?>>4 - Very Good</option>
+                            <option value="3" <?php echo ((int)($myAgentReview['rating'] ?? 0) === 3 ? 'selected' : ''); ?>>3 - Good</option>
+                            <option value="2" <?php echo ((int)($myAgentReview['rating'] ?? 0) === 2 ? 'selected' : ''); ?>>2 - Fair</option>
+                            <option value="1" <?php echo ((int)($myAgentReview['rating'] ?? 0) === 1 ? 'selected' : ''); ?>>1 - Poor</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" style="margin-top:8px;">
+                        <label for="agent_review_text">Your Review (optional)</label>
+                        <textarea id="agent_review_text" class="form-control" rows="4" maxlength="2000" placeholder="Share your experience with your agent..."><?php echo h($myAgentReview['review_text'] ?? ''); ?></textarea>
+                    </div>
+
+                    <?php if (!empty($myAgentReview['updated_at'])): ?>
+                    <p style="margin:8px 0 0 0; color:var(--muted); font-size:12px;">
+                        Last updated: <?php echo h(date('F d, Y h:i A', strtotime((string)$myAgentReview['updated_at']))); ?>
+                    </p>
+                    <?php endif; ?>
+
+                    <div style="display:flex; align-items:center; gap:12px; margin-top:12px;">
+                        <button class="btn btn-primary" onclick="submitAgentReview(<?php echo (int)$agent['id']; ?>)">Submit Review</button>
+                        <div id="agentReviewStatus" style="font-size:13px; font-weight:600;"></div>
                     </div>
                 </div>
                 <?php else: ?>
@@ -1721,7 +2885,33 @@ tbody tr:hover { background:#f9fbfd; }
                 </div>
             </div>
             <div class="modal-footer">
+                <button id="installment-view-contract-btn" class="btn btn-primary" style="display:none;">View Contract</button>
                 <button class="btn btn-secondary" onclick="closeInstallmentDetailsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="lotContractModal" class="modal-overlay lot-contract-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="lot-contract-title">View Contract</h3>
+                <button class="modal-close-btn" onclick="closeLotContractModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="lot-contract-toolbar">
+                    <select id="lot-contract-select" class="lot-contract-selector" onchange="previewLotContractDoc(this.value)">
+                        <option value="">Select contract/agreement</option>
+                    </select>
+                    <a id="lot-contract-open-link" href="#" target="_blank" rel="noopener" class="btn btn-secondary" style="padding:8px 12px; font-size:12px;">Open in New Tab</a>
+                </div>
+                <div id="lot-contract-file-meta" class="lot-contract-meta"></div>
+                <div id="lot-contract-empty" style="display:none; padding:12px; font-size:13px; color:#6b7280; border:1px solid #e5e7eb; border-radius:10px; background:#f9fafb;">No approved contract/agreement found for this lot.</div>
+                <div class="lot-contract-frame-wrap">
+                    <iframe id="lot-contract-frame" title="Contract Viewer"></iframe>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLotContractModal()">Close</button>
             </div>
         </div>
     </div>
@@ -1807,9 +2997,17 @@ tbody tr:hover { background:#f9fbfd; }
 </div>
 
 <script>
+const lotContractDocsByLot = <?php echo json_encode($approvedLegalDocsByLot, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
+let activeLotContractDocs = [];
+
 function switchTab(id, link) {
     // Prevent default anchor link behavior (which causes scrolling)
     event.preventDefault();
+
+    if (id === 'notifications') {
+        const badge = document.getElementById('user-notifications-badge');
+        if (badge) badge.style.display = 'none';
+    }
     
     // Hide all sections
     document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
@@ -1880,9 +3078,41 @@ function formatMonthLabel(value) {
 
 function parseDateOnly(value) {
     if (!value) return null;
-    const parts = String(value).split('-').map(Number);
+    const normalizedValue = String(value).trim().slice(0, 10);
+    const parts = normalizedValue.split('-').map(Number);
     if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
     return new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0, 0);
+}
+
+function resolveDateInput(value) {
+    const exactDate = parseDateOnly(value);
+    if (exactDate) return exactDate;
+
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0, 0);
+}
+
+function resolveInstallmentAnchorDate(plan, transactions, fallbackDeadline = '') {
+    const fromPlan = resolveDateInput(plan?.payment_deadline || fallbackDeadline || '');
+    if (fromPlan) {
+        return fromPlan;
+    }
+
+    if (Array.isArray(transactions) && transactions.length) {
+        const dates = transactions
+            .map(tx => resolveDateInput(tx?.payment_date || ''))
+            .filter(date => date instanceof Date && !Number.isNaN(date.getTime()));
+
+        if (dates.length) {
+            dates.sort((a, b) => a - b);
+            return dates[0];
+        }
+    }
+
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1, 12, 0, 0, 0);
 }
 
 function buildDueDate(baseDate, monthOffset, dueDay) {
@@ -1893,91 +3123,230 @@ function buildDueDate(baseDate, monthOffset, dueDay) {
     return new Date(firstOfMonth.getFullYear(), firstOfMonth.getMonth(), Math.min(dueDay, lastDay), 12, 0, 0, 0);
 }
 
-function monthKeyFromDate(value) {
-    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null;
-    return (value.getFullYear() * 12) + value.getMonth();
-}
-
-function normalizeScheduleStartDate(startDate, dueDay, installmentTransactions) {
-    if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime()) || !Array.isArray(installmentTransactions) || !installmentTransactions.length || dueDay <= 0) {
-        return startDate;
+function resolveDueDay(plan, startDate) {
+    const declaredDueDay = Number(plan?.payment_due_day || 0);
+    if (declaredDueDay > 0) {
+        return declaredDueDay;
     }
 
-    const paidMonthKeys = installmentTransactions
-        .map(tx => monthKeyFromDate(tx.parsedDate))
-        .filter(v => typeof v === 'number')
-        .sort((a, b) => a - b);
-    if (!paidMonthKeys.length) {
-        return startDate;
-    }
-    const paidMonths = new Set(paidMonthKeys);
-
-    let normalized = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 12, 0, 0, 0);
-    const currentKey = monthKeyFromDate(normalized);
-    const earliestPaidKey = paidMonthKeys[0];
-
-    // If stored anchor is ahead of real paid history, shift anchor back to the earliest paid month.
-    if (typeof currentKey === 'number' && earliestPaidKey < currentKey) {
-        const monthsBack = currentKey - earliestPaidKey;
-        if (monthsBack > 0 && monthsBack <= 36) {
-            normalized = buildDueDate(normalized, -monthsBack, dueDay);
+    if (startDate instanceof Date && !Number.isNaN(startDate.getTime())) {
+        const derivedDueDay = startDate.getDate();
+        if (derivedDueDay > 0) {
+            return derivedDueDay;
         }
     }
 
-    // Correct historical drift by shifting back when previous month has payment but anchor month has none.
-    for (let i = 0; i < 12; i += 1) {
-        const currentKey = monthKeyFromDate(normalized);
-        const previous = buildDueDate(normalized, -1, dueDay);
-        const previousKey = monthKeyFromDate(previous);
-        if (previousKey === null || currentKey === null) break;
-        if (paidMonths.has(previousKey) && !paidMonths.has(currentKey)) {
-            normalized = previous;
-            continue;
-        }
-        break;
-    }
-
-    return normalized;
+    return 1;
 }
 
-function getInstallmentMonthIndex(startDate, parsedDate) {
-    if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime()) || !(parsedDate instanceof Date) || Number.isNaN(parsedDate.getTime())) {
-        return null;
-    }
-    const startMonth = (startDate.getFullYear() * 12) + startDate.getMonth();
-    const paidMonth = (parsedDate.getFullYear() * 12) + parsedDate.getMonth();
-    const monthDiff = paidMonth - startMonth;
-    // Allow one-month-early payment to count as Month 1; older historical months should not be forced into Month 1.
-    if (monthDiff === -1) return 0;
-    return monthDiff;
-}
-
-function buildInstallmentPaymentMap(plan, installmentTransactions) {
+function resolveInstallmentMeta(plan, installmentTransactions) {
     const termYears = Number(plan?.payment_term_years || 0);
-    const dueDay = Number(plan?.payment_due_day || 0);
-    const totalMonths = termYears > 0 ? termYears * 12 : 0;
-    const rawStartDate = parseDateOnly(plan?.payment_deadline || '');
-    const startDate = normalizeScheduleStartDate(rawStartDate, dueDay, installmentTransactions);
-    const map = new Map();
-    if (!startDate || totalMonths <= 0) {
-        return { paymentMap: map, paidCount: 0, totalMonths, startDate };
+    const lotPrice = Number(plan?.lot_price || 0);
+    const downPayment = Number(plan?.down_payment_amount || 0);
+    const installmentBalance = Math.max(lotPrice - downPayment, 0);
+    const txCount = Array.isArray(installmentTransactions) ? installmentTransactions.length : 0;
+
+    let totalMonths = termYears > 0 ? termYears * 12 : 0;
+    let monthlyAmount = Number(plan?.payment_amount || 0);
+
+    if (totalMonths <= 0 && monthlyAmount > 0) {
+        if (installmentBalance > 0) {
+            totalMonths = Math.ceil(installmentBalance / monthlyAmount);
+        } else if (txCount > 0) {
+            totalMonths = txCount;
+        }
     }
 
-    installmentTransactions.forEach(tx => {
-        const index = getInstallmentMonthIndex(startDate, tx.parsedDate);
-        if (index === null || index < 0 || index >= totalMonths) return;
-        if (!map.has(index)) {
-            map.set(index, []);
+    if (totalMonths <= 0 && installmentBalance > 0) {
+        totalMonths = txCount > 0 ? txCount : 1;
+    }
+
+    if (monthlyAmount <= 0 && totalMonths > 0 && installmentBalance > 0) {
+        monthlyAmount = installmentBalance / totalMonths;
+    }
+
+    return {
+        totalMonths,
+        monthlyAmount,
+        installmentBalance,
+        lotPrice,
+        downPayment
+    };
+}
+
+function buildEstimatedInstallmentTransactions(plan, paidSoFar) {
+    const downPayment = Number(plan?.down_payment_amount || 0);
+    const totalPaid = Math.max(0, Number(paidSoFar || 0));
+    const installmentPaid = Math.max(0, totalPaid - downPayment);
+    if (installmentPaid <= 0) {
+        return [];
+    }
+
+    const txDate = resolveInstallmentAnchorDate(plan, [], plan?.payment_deadline || '') || new Date();
+    const yyyy = txDate.getFullYear();
+    const mm = String(txDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(txDate.getDate()).padStart(2, '0');
+
+    return [{
+        id: 0,
+        amount: installmentPaid,
+        payment_date: `${yyyy}-${mm}-${dd}`,
+        payment_method: 'Estimated',
+        remarks: 'Estimated from total paid'
+    }];
+}
+
+function parseJsonFromResponseText(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+
+    try {
+        return JSON.parse(raw);
+    } catch (_) {
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            const candidate = raw.slice(start, end + 1);
+            try {
+                return JSON.parse(candidate);
+            } catch (_) {
+                return null;
+            }
         }
-        // Keep all payment records for this month for audit/history visibility.
-        map.get(index).push(tx);
+    }
+
+    return null;
+}
+
+function buildInstallmentScheduleRows(plan, installmentTransactions, fallbackDeadline = '') {
+    const startDate = resolveInstallmentAnchorDate(plan, installmentTransactions, fallbackDeadline);
+    const dueDay = resolveDueDay(plan, startDate);
+    const meta = resolveInstallmentMeta(plan, installmentTransactions);
+    const totalMonths = meta.totalMonths;
+    const monthlyAmount = meta.monthlyAmount;
+    const lotPrice = meta.lotPrice;
+    const downPayment = meta.downPayment;
+
+    const rows = [];
+    if (!startDate || totalMonths <= 0) {
+        return { rows, paidCount: 0, totalMonths, startDate };
+    }
+
+    const sortedTransactions = Array.isArray(installmentTransactions)
+        ? [...installmentTransactions]
+            .map(tx => ({
+                ...tx,
+                amount: Number(tx.amount || 0),
+                parsedDate: parseDateOnly(String(tx.payment_date || '').slice(0, 10))
+            }))
+            .filter(tx => tx.parsedDate && tx.amount > 0)
+            .sort((a, b) => a.parsedDate - b.parsedDate || (Number(a.id || 0) - Number(b.id || 0)))
+        : [];
+
+    const installmentBalance = lotPrice > 0 ? Math.max(lotPrice - downPayment, 0) : (monthlyAmount * totalMonths);
+    if (installmentBalance <= 0) {
+        for (let index = 0; index < totalMonths; index += 1) {
+            rows.push({
+                index,
+                dueDate: buildDueDate(startDate, index, dueDay),
+                requiredAmount: 0,
+                paidAmount: 0,
+                isPaid: true,
+                paidOn: null
+            });
+        }
+
+        return { rows, paidCount: totalMonths, totalMonths, startDate };
+    }
+
+    const requiredAmounts = [];
+    let remainingPlanBalance = installmentBalance;
+    for (let index = 0; index < totalMonths; index += 1) {
+        const requiredAmount = index === totalMonths - 1
+            ? remainingPlanBalance
+            : Math.min(monthlyAmount, remainingPlanBalance);
+        const normalizedRequiredAmount = Math.max(requiredAmount, 0);
+        requiredAmounts.push(normalizedRequiredAmount);
+        remainingPlanBalance = Math.max(0, remainingPlanBalance - normalizedRequiredAmount);
+    }
+
+    const paidAmounts = requiredAmounts.map(() => 0);
+    const completionDates = requiredAmounts.map(() => null);
+
+    const monthIndexByKey = {};
+    for (let index = 0; index < totalMonths; index += 1) {
+        const dueDate = buildDueDate(startDate, index, dueDay);
+        const monthKey = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}`;
+        monthIndexByKey[monthKey] = index;
+    }
+
+    sortedTransactions.forEach(tx => {
+        let remainingAmount = tx.amount;
+
+        // First, allocate to the actual month of payment to keep monthly status accurate.
+        const paymentMonthKey = tx.parsedDate
+            ? `${tx.parsedDate.getFullYear()}-${String(tx.parsedDate.getMonth() + 1).padStart(2, '0')}`
+            : '';
+        const directMonthIndex = Object.prototype.hasOwnProperty.call(monthIndexByKey, paymentMonthKey)
+            ? monthIndexByKey[paymentMonthKey]
+            : -1;
+
+        if (directMonthIndex >= 0 && remainingAmount > 0) {
+            const directNeeded = Math.max(requiredAmounts[directMonthIndex] - paidAmounts[directMonthIndex], 0);
+            if (directNeeded > 0) {
+                const directUsed = Math.min(directNeeded, remainingAmount);
+                paidAmounts[directMonthIndex] += directUsed;
+                remainingAmount -= directUsed;
+
+                if (paidAmounts[directMonthIndex] + 0.005 >= requiredAmounts[directMonthIndex] && completionDates[directMonthIndex] === null) {
+                    completionDates[directMonthIndex] = tx.parsedDate;
+                }
+            }
+        }
+
+        // Any excess amount is applied to oldest remaining unpaid months.
+        for (let index = 0; index < totalMonths && remainingAmount > 0; index += 1) {
+            const needed = Math.max(requiredAmounts[index] - paidAmounts[index], 0);
+            if (needed <= 0) continue;
+
+            const used = Math.min(needed, remainingAmount);
+            paidAmounts[index] += used;
+            remainingAmount -= used;
+
+            if (paidAmounts[index] + 0.005 >= requiredAmounts[index] && completionDates[index] === null) {
+                completionDates[index] = tx.parsedDate;
+            }
+        }
     });
 
-    return { paymentMap: map, paidCount: map.size, totalMonths, startDate };
+    for (let index = 0; index < totalMonths; index += 1) {
+        const dueDate = buildDueDate(startDate, index, dueDay);
+        const requiredAmount = requiredAmounts[index];
+        const paidAmount = paidAmounts[index];
+        const remainingAmount = Math.max(0, requiredAmount - paidAmount);
+        const isPaid = requiredAmount <= 0 ? true : paidAmount + 0.005 >= requiredAmount;
+
+        rows.push({
+            index,
+            dueDate,
+            requiredAmount,
+            paidAmount,
+            remainingAmount,
+            isPaid,
+            paidOn: completionDates[index]
+        });
+    }
+
+    return {
+        rows,
+        paidCount: rows.filter(row => row.isPaid).length,
+        totalMonths,
+        startDate
+    };
 }
 
-function splitInstallmentTransactions(plan, transactions) {
-    const startDate = parseDateOnly(plan?.payment_deadline || '');
+function splitInstallmentTransactions(plan, transactions, fallbackDeadline = '') {
+    const startDate = resolveInstallmentAnchorDate(plan, transactions, fallbackDeadline);
     const downPayment = Number(plan?.down_payment_amount || 0);
 
     const sortedTransactions = Array.isArray(transactions)
@@ -1995,19 +3364,39 @@ function splitInstallmentTransactions(plan, transactions) {
     let installmentTransactions = sortedTransactions;
 
     if (downPayment > 0 && installmentTransactions.length) {
-        // Try strict match: amount + date on-or-before firstDue
-        let downPaymentIndex = startDate
-            ? installmentTransactions.findIndex(tx =>
-                Math.abs(tx.amount - downPayment) < 0.01 && tx.parsedDate.getTime() <= startDate.getTime())
-            : -1;
-        // Fallback: match by amount only (first occurrence), in case payment was recorded after firstDue
-        if (downPaymentIndex < 0) {
-            downPaymentIndex = installmentTransactions.findIndex(tx =>
-                Math.abs(tx.amount - downPayment) < 0.01);
-        }
+        // Only treat a transaction as down payment when there is strong evidence.
+        // This avoids incorrectly removing a normal monthly payment that happens to
+        // have the same amount as the down payment.
+        const downPaymentIndex = installmentTransactions.findIndex(tx => {
+            if (Math.abs(tx.amount - downPayment) >= 0.01) {
+                return false;
+            }
+
+            const remarks = String(tx.remarks || '').toLowerCase();
+            if (remarks.includes('down payment') || remarks.includes('reservation')) {
+                return true;
+            }
+
+            if (startDate) {
+                return tx.parsedDate.getTime() < startDate.getTime();
+            }
+
+            return false;
+        });
+
         if (downPaymentIndex >= 0) {
             downPaymentRecorded = true;
             installmentTransactions = installmentTransactions.filter((_, index) => index !== downPaymentIndex);
+        } else {
+            // Fall back to the first matching amount so the balance stays aligned with the contract.
+            const fallbackIndex = installmentTransactions.findIndex(tx => Math.abs(tx.amount - downPayment) < 0.01);
+            if (fallbackIndex >= 0) {
+                downPaymentRecorded = true;
+                installmentTransactions = installmentTransactions.filter((_, index) => index !== fallbackIndex);
+            } else {
+                // No verifiable down payment transaction found: still apply the contractual down payment.
+                downPaymentRecorded = true;
+            }
         }
     }
 
@@ -2017,56 +3406,75 @@ function splitInstallmentTransactions(plan, transactions) {
     };
 }
 
-function renderInstallmentSchedule(plan, transactions) {
+function renderInstallmentSchedule(plan, transactions, fallbackDeadline = '') {
     const list = document.getElementById('installment-schedule-list');
     const empty = document.getElementById('installment-schedule-empty');
     const summary = document.getElementById('installment-schedule-summary');
     if (!list || !empty || !summary) return;
 
     list.innerHTML = '';
+    list.style.display = 'grid';
     empty.style.display = 'none';
 
-    const dueDay = Number(plan?.payment_due_day || 0);
-    const monthlyAmount = Number(plan?.payment_amount || 0);
+    const { installmentTransactions } = splitInstallmentTransactions(plan, transactions, fallbackDeadline);
+    const meta = resolveInstallmentMeta(plan, installmentTransactions);
+    const monthlyAmount = meta.monthlyAmount;
+    const { rows: monthRows, paidCount, totalMonths, startDate } = buildInstallmentScheduleRows(plan, installmentTransactions, fallbackDeadline);
+    const dueDay = resolveDueDay(plan, startDate);
 
-    const { installmentTransactions } = splitInstallmentTransactions(plan, transactions);
-    const { paymentMap, paidCount, totalMonths, startDate } = buildInstallmentPaymentMap(plan, installmentTransactions);
-
-    if (!startDate || dueDay <= 0 || totalMonths <= 0 || monthlyAmount <= 0) {
+    if (totalMonths <= 0 || monthRows.length === 0) {
         summary.textContent = 'Schedule unavailable';
         empty.style.display = 'block';
         return;
     }
 
-    summary.textContent = `${paidCount} of ${totalMonths} month${totalMonths !== 1 ? 's' : ''} paid`;
+    const unpaidCount = Math.max(totalMonths - paidCount, 0);
+    summary.textContent = `${paidCount} paid | ${unpaidCount} unpaid`;
 
     const scheduleItems = [];
-    for (let index = 0; index < totalMonths; index += 1) {
-        const dueDate = buildDueDate(startDate, index, dueDay);
-        const paymentRecords = paymentMap.get(index) || [];
-        const payment = paymentRecords.length ? paymentRecords[0] : null;
-        const isPaid = !!payment;
+    monthRows.forEach(row => {
+        const dueDate = row.dueDate;
+        const isPaid = !!row.isPaid;
+        const dueLabel = formatDueDate(dueDate);
+        const displayedAmount = isPaid ? (row.requiredAmount || monthlyAmount || 0) : (row.remainingAmount || row.requiredAmount || monthlyAmount || 0);
         scheduleItems.push(`
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid ${isPaid ? '#bbf7d0' : '#e5e7eb'}; background:${isPaid ? '#f0fdf4' : '#ffffff'}; border-radius:10px;">
                 <div>
-                    <div style="font-size:14px; font-weight:700; color:#111827;">Month ${index + 1} · ${escHtml(formatMonthLabel(dueDate))}</div>
-                    <div style="font-size:12px; color:#6b7280; margin-top:3px;">Due ${escHtml(formatDueDate(dueDate.toISOString().slice(0, 10)))}</div>
-                    ${isPaid ? `<div style="font-size:12px; color:#166534; margin-top:3px;">Paid on ${escHtml(formatDueDate(String(payment.payment_date || '').slice(0, 10)))}</div>` : ''}
+                    <div style="font-size:14px; font-weight:700; color:#111827;">Month ${row.index + 1} · ${escHtml(formatMonthLabel(dueDate))}</div>
+                    <div style="font-size:12px; color:#6b7280; margin-top:3px;">Due ${escHtml(dueLabel)}</div>
+                    <div style="font-size:12px; color:${isPaid ? '#166534' : '#b45309'}; margin-top:3px;">${isPaid ? (row.paidOn ? `Paid on ${escHtml(formatDueDate(row.paidOn))}` : 'Paid') : 'Unpaid'}</div>
+                    ${!isPaid && row.paidAmount > 0 ? `<div style="font-size:12px; color:#2563eb; margin-top:3px;">After credit: ${escHtml(formatPeso(row.remainingAmount || 0))}</div>` : ''}
                 </div>
                 <div style="text-align:right; min-width:120px;">
-                    <div style="font-size:14px; font-weight:700; color:#111827;">${escHtml(formatPeso(monthlyAmount))}</div>
-                    <div style="display:inline-flex; align-items:center; justify-content:center; margin-top:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.3px; background:${isPaid ? '#dcfce7' : '#f3f4f6'}; color:${isPaid ? '#166534' : '#6b7280'};">${isPaid ? 'Paid' : 'Unpaid'}</div>
+                    <div style="font-size:14px; font-weight:700; color:#111827;">${escHtml(formatPeso(displayedAmount))}</div>
+                    <div style="display:inline-flex; align-items:center; justify-content:center; margin-top:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.3px; background:${isPaid ? '#dcfce7' : '#fef3c7'}; color:${isPaid ? '#166534' : '#b45309'};">${isPaid ? 'Paid' : 'Unpaid'}</div>
                 </div>
             </div>
         `);
-    }
+    });
 
     list.innerHTML = scheduleItems.join('');
+    list.style.display = scheduleItems.length ? 'grid' : 'none';
 }
 
 function openInstallmentDetailsModal(button) {
     const modal = document.getElementById('installmentDetailsModal');
     if (!modal || !button) return;
+
+    const hasLotContract = String(button.dataset.hasContract || '0') === '1';
+    const viewContractBtn = document.getElementById('installment-view-contract-btn');
+    if (viewContractBtn) {
+        viewContractBtn.style.display = hasLotContract ? '' : 'none';
+        if (hasLotContract) {
+            const lotId = Number(button.dataset.lotId || 0);
+            const lotLabel = String(button.dataset.lotLabel || 'Property');
+            viewContractBtn.onclick = function() {
+                openLotContractModal(lotId, lotLabel);
+            };
+        } else {
+            viewContractBtn.onclick = null;
+        }
+    }
 
     const termYears = Number(button.dataset.termYears || 0);
     const dueDay = Number(button.dataset.dueDay || 0);
@@ -2092,29 +3500,52 @@ function openInstallmentDetailsModal(button) {
 
     modal.classList.add('active');
 
+    // Always show a local fallback schedule immediately so the modal never looks empty.
+    const localPlan = {
+        lot_price: Number(button.dataset.lotPrice || 0),
+        payment_amount: Number(button.dataset.installmentAmount || 0),
+        down_payment_amount: Number(button.dataset.downPayment || 0),
+        payment_term_years: Number(button.dataset.termYears || 0),
+        payment_due_day: Number(button.dataset.dueDay || 0),
+        payment_deadline: String(button.dataset.nextDue || '')
+    };
+    const localPaidSoFar = Number(button.dataset.paidSoFar || 0);
+    const localFallbackDeadline = String(button.dataset.nextDue || '');
+    const estimatedTransactions = buildEstimatedInstallmentTransactions(localPlan, localPaidSoFar);
+    const localContractBalance = Math.max(0, Number(localPlan.lot_price || 0) - Number(localPlan.down_payment_amount || 0));
+    const localMonthlyPaidTotal = Math.max(0, localPaidSoFar - Number(localPlan.down_payment_amount || 0));
+    const localRemainingBalance = Math.max(0, localContractBalance - localMonthlyPaidTotal);
+    document.getElementById('installment-modal-balance').textContent = formatPeso(localRemainingBalance);
+    renderInstallmentSchedule(localPlan, estimatedTransactions, localFallbackDeadline);
+    if (summary && summary.textContent === 'Schedule unavailable') {
+        summary.textContent = 'Estimated schedule';
+    }
+
     const lotId = Number(button.dataset.lotId || 0);
     if (!lotId) {
         if (loading) loading.style.display = 'none';
-        if (empty) empty.style.display = 'block';
-        if (summary) summary.textContent = 'Schedule unavailable';
+        if (summary && !summary.textContent) summary.textContent = 'Estimated schedule';
         return;
     }
 
-    fetch(`user_dashboard.php?action=installment_plan&lot_id=${lotId}`)
-        .then(r => r.json())
+    fetch(`user_dashboard.php?action=installment_plan&lot_id=${lotId}&_ts=${Date.now()}`, { cache: 'no-store' })
+        .then(r => r.text())
+        .then(text => parseJsonFromResponseText(text))
         .then(data => {
             if (loading) loading.style.display = 'none';
-            if (!data.success || !data.plan) {
-                if (empty) empty.style.display = 'block';
-                if (summary) summary.textContent = 'Schedule unavailable';
+            if (!data || !data.success || !data.plan) {
+                if (summary && !summary.textContent) summary.textContent = 'Estimated schedule';
                 return;
             }
 
             const plan = data.plan || {};
-            const { installmentTransactions, downPaymentApplied } = splitInstallmentTransactions(plan, data.transactions || []);
+            const fallbackDeadline = String(button.dataset.nextDue || '');
+            const { installmentTransactions, downPaymentApplied } = splitInstallmentTransactions(plan, data.transactions || [], fallbackDeadline);
             const monthlyPaidTotal = installmentTransactions.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+            const downPaymentAmount = Number(plan.down_payment_amount || 0);
+            const contractBalance = Math.max(0, Number(plan.lot_price || 0) - downPaymentAmount);
             const totalPaid = downPaymentApplied + monthlyPaidTotal;
-            const remainingBalance = Math.max(0, Number(plan.lot_price || 0) - totalPaid);
+            const remainingBalance = Math.max(0, contractBalance - monthlyPaidTotal);
 
             document.getElementById('installment-modal-lot-price').textContent = formatPeso(plan.lot_price || 0);
             document.getElementById('installment-modal-monthly').textContent = formatPeso(plan.payment_amount || 0);
@@ -2123,30 +3554,28 @@ function openInstallmentDetailsModal(button) {
             document.getElementById('installment-modal-term').textContent = Number(plan.payment_term_years || 0) > 0 ? `${Number(plan.payment_term_years || 0)} year${Number(plan.payment_term_years || 0) > 1 ? 's' : ''}` : 'Not set';
             document.getElementById('installment-modal-due-day').textContent = Number(plan.payment_due_day || 0) > 0 ? `Every day ${Number(plan.payment_due_day || 0)} of the month` : 'Not set';
             // Compute next due as first unpaid month slot (accurate to selected payment month).
-            const _dueDay = Number(plan.payment_due_day || 0);
-            const _mapInfo = buildInstallmentPaymentMap(plan, installmentTransactions);
-            if (_mapInfo.startDate && _dueDay > 0 && _mapInfo.totalMonths > 0) {
-                let nextIndex = 0;
-                while (nextIndex < _mapInfo.totalMonths && _mapInfo.paymentMap.has(nextIndex)) {
-                    nextIndex += 1;
-                }
-                if (nextIndex >= _mapInfo.totalMonths) {
+            const _scheduleInfo = buildInstallmentScheduleRows(plan, installmentTransactions, fallbackDeadline);
+            if (!_scheduleInfo.rows || _scheduleInfo.rows.length === 0) {
+                if (summary) summary.textContent = 'Estimated schedule';
+                return;
+            }
+            if (_scheduleInfo.totalMonths > 0) {
+                const nextUnpaidMonth = _scheduleInfo.rows.find(row => !row.isPaid);
+                if (!nextUnpaidMonth) {
                     document.getElementById('installment-modal-next-due').textContent = 'Fully paid';
                 } else {
-                    const _nextDue = buildDueDate(_mapInfo.startDate, nextIndex, _dueDay);
-                    document.getElementById('installment-modal-next-due').textContent = formatDueDate(_nextDue.toISOString().slice(0, 10));
+                    document.getElementById('installment-modal-next-due').textContent = formatDueDate(nextUnpaidMonth.dueDate);
                 }
             } else {
                 document.getElementById('installment-modal-next-due').textContent = formatDueDate(plan.payment_deadline || '');
             }
             document.getElementById('installment-modal-paid').textContent = formatPeso(totalPaid);
 
-            renderInstallmentSchedule(data.plan, data.transactions || []);
+            renderInstallmentSchedule(data.plan, data.transactions || [], fallbackDeadline);
         })
         .catch(() => {
             if (loading) loading.style.display = 'none';
-            if (empty) empty.style.display = 'block';
-            if (summary) summary.textContent = 'Failed to load schedule';
+            if (summary && !summary.textContent) summary.textContent = 'Estimated schedule';
         });
 }
 
@@ -2154,6 +3583,103 @@ function closeInstallmentDetailsModal() {
     const modal = document.getElementById('installmentDetailsModal');
     if (modal) {
         modal.classList.remove('active');
+    }
+}
+
+function openLotContractModal(lotId, lotLabel = 'Property') {
+    const modal = document.getElementById('lotContractModal');
+    const titleEl = document.getElementById('lot-contract-title');
+    if (!modal || !titleEl) return;
+
+    const normalizedLotId = Number(lotId || 0);
+    const lotKey = String(normalizedLotId);
+    const docs = (lotContractDocsByLot && Array.isArray(lotContractDocsByLot[lotKey]))
+        ? lotContractDocsByLot[lotKey]
+        : [];
+
+    activeLotContractDocs = docs.slice();
+    titleEl.textContent = `View Contract - ${lotLabel || 'Property'}`;
+
+    renderLotContractList();
+    if (activeLotContractDocs.length > 0) {
+        previewLotContractDoc(0);
+    } else {
+        const frame = document.getElementById('lot-contract-frame');
+        const meta = document.getElementById('lot-contract-file-meta');
+        const openLink = document.getElementById('lot-contract-open-link');
+        if (frame) frame.src = 'about:blank';
+        if (meta) meta.textContent = '';
+        if (openLink) {
+            openLink.href = '#';
+            openLink.style.pointerEvents = 'none';
+            openLink.style.opacity = '0.6';
+        }
+    }
+
+    modal.classList.add('active');
+}
+
+function closeLotContractModal() {
+    const modal = document.getElementById('lotContractModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function renderLotContractList() {
+    const listEl = document.getElementById('lot-contract-select');
+    const emptyEl = document.getElementById('lot-contract-empty');
+    if (!listEl || !emptyEl) return;
+
+    listEl.innerHTML = '<option value="">Select contract/agreement</option>';
+
+    if (!Array.isArray(activeLotContractDocs) || activeLotContractDocs.length === 0) {
+        emptyEl.style.display = 'block';
+        listEl.disabled = true;
+        return;
+    }
+
+    listEl.disabled = false;
+    emptyEl.style.display = 'none';
+    listEl.innerHTML += activeLotContractDocs.map((doc, index) => {
+        const uploaded = String(doc.uploaded_at || '').trim();
+        const uploadedText = uploaded ? new Date(uploaded).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: '2-digit' }) : 'N/A';
+        const label = `${String(doc.file_name || 'Document')} - ${String(doc.doc_type || 'Legal Document')} (${uploadedText})`;
+        return `<option value="${index}">${escHtml(label)}</option>`;
+    }).join('');
+}
+
+function previewLotContractDoc(index) {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= activeLotContractDocs.length) return;
+
+    const doc = activeLotContractDocs[i] || {};
+    const frame = document.getElementById('lot-contract-frame');
+    const meta = document.getElementById('lot-contract-file-meta');
+    const openLink = document.getElementById('lot-contract-open-link');
+    const selectEl = document.getElementById('lot-contract-select');
+    if (!frame || !meta || !openLink) return;
+
+    const filePath = String(doc.file_path || '').trim();
+    const uploaded = String(doc.uploaded_at || '').trim();
+    const uploadedText = uploaded ? new Date(uploaded).toLocaleString('en-PH', { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'N/A';
+
+    meta.textContent = `${String(doc.doc_type || 'Legal Document')} • Uploaded ${uploadedText}`;
+
+    if (!filePath) {
+        frame.src = 'about:blank';
+        openLink.href = '#';
+        openLink.style.pointerEvents = 'none';
+        openLink.style.opacity = '0.6';
+        return;
+    }
+
+    // Ask browser PDF viewers to fit document width to reduce horizontal scrolling.
+    frame.src = `${filePath}#view=FitH`;
+    openLink.href = filePath;
+    openLink.style.pointerEvents = '';
+    openLink.style.opacity = '1';
+
+    if (selectEl) {
+        selectEl.value = String(i);
     }
 }
 
@@ -2222,6 +3748,46 @@ function sendModalMessage() {
     })
     .catch((err) => {
         statusEl.innerHTML = '<span style="color:#dc2626;">Request failed: ' + err.message + '</span>';
+    });
+}
+
+function submitAgentReview(agentId) {
+    const ratingEl = document.getElementById('agent_rating');
+    const reviewEl = document.getElementById('agent_review_text');
+    const statusEl = document.getElementById('agentReviewStatus');
+
+    if (!ratingEl || !reviewEl || !statusEl) return;
+
+    const rating = parseInt(ratingEl.value || '0', 10);
+    const review = reviewEl.value.trim();
+
+    if (rating < 1 || rating > 5) {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Please select a rating from 1 to 5.</span>';
+        return;
+    }
+
+    statusEl.innerHTML = '<span style="color:#0284c7;">Submitting review...</span>';
+
+    fetch('?action=submit_agent_review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            agent_id: Number(agentId || 0),
+            rating,
+            review
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data && data.success) {
+            statusEl.innerHTML = '<span style="color:#166534;">' + (data.message || 'Review submitted successfully.') + '</span>';
+            setTimeout(() => window.location.reload(), 900);
+        } else {
+            statusEl.innerHTML = '<span style="color:#dc2626;">' + ((data && data.message) ? data.message : 'Failed to submit review.') + '</span>';
+        }
+    })
+    .catch(() => {
+        statusEl.innerHTML = '<span style="color:#dc2626;">Request failed. Please try again.</span>';
     });
 }
 
@@ -2334,6 +3900,7 @@ function loadLotPayments(forceReload) {
                         lot_id: tx.lot_id,
                         block_number: tx.block_number,
                         lot_number: tx.lot_number,
+                        location_name: tx.location_name || '',
                         lot_price: parseFloat(tx.lot_price) || 0,
                         amount_paid_so_far: parseFloat(tx.amount_paid_so_far) || 0,
                         payment_deadline: tx.payment_deadline,
@@ -2360,13 +3927,16 @@ function loadLotPayments(forceReload) {
                 const barColor  = pct >= 100 ? '#8b5cf6' : pct >= 50 ? '#3b82f6' : '#22c55e';
 
                 const dueDate  = lot.payment_deadline ? new Date(lot.payment_deadline).toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'}) : null;
+                const lotHeader = lot.location_name
+                    ? `Barangay ${lot.location_name}, Block ${lot.block_number}, Lot ${lot.lot_number}`
+                    : `Block ${lot.block_number}, Lot ${lot.lot_number}`;
 
                 html += `
                 <div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); margin-bottom:28px; overflow:hidden;">
                     <div style="background:linear-gradient(135deg,#14532d 0%,#166534 100%); padding:20px 24px; color:#fff;">
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                             <div>
-                                <div style="font-size:18px; font-weight:700;">Block ${escHtml(lot.block_number)}, Lot ${escHtml(lot.lot_number)}</div>
+                                <div style="font-size:18px; font-weight:700;">${escHtml(lotHeader)}</div>
                                 <div style="font-size:13px; opacity:.8; margin-top:2px;">${escHtml(lot.payment_type || lot.status || '')}</div>
                             </div>
                             <div style="text-align:right;">
@@ -2442,6 +4012,7 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeInstallmentDetailsModal();
         closeMessageModal();
+        closeLotContractModal();
     }
 });
 
@@ -2449,11 +4020,15 @@ document.addEventListener('keydown', function(e) {
 document.addEventListener('click', function(e) {
     const installmentModal = document.getElementById('installmentDetailsModal');
     const modal = document.getElementById('messageModal');
+    const lotContractModal = document.getElementById('lotContractModal');
     if (e.target === installmentModal) {
         closeInstallmentDetailsModal();
     }
     if (e.target === modal) {
         closeMessageModal();
+    }
+    if (e.target === lotContractModal) {
+        closeLotContractModal();
     }
 });
 

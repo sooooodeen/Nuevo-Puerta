@@ -1,7 +1,7 @@
 <?php
   // Suppress all PHP errors and warnings from being output to the browser
-  error_reporting(0);
-  ini_set('display_errors', 0);
+  error_reporting(E_ALL);
+  ini_set('display_errors', 1);
   ob_start(); // Buffer all output so PHP warnings never corrupt AJAX/JSON responses
   session_start();
 
@@ -851,27 +851,11 @@
         . '</body></html>';
     }
 
-    function sendSystemEmail($to, $toName, $subject, $body, &$errorMessage = '', array $attachments = []): bool {
+    function sendSystemEmail($to, $toName, $subject, $body, &$errorMessage = ''): bool {
       $errorMessage = '';
       $to = trim((string)$to);
       $toName = trim((string)$toName);
       $logoPath = resolveSystemEmailLogoPath();
-
-      $normalizedAttachments = [];
-      foreach ($attachments as $attachment) {
-        if (!is_array($attachment)) {
-          continue;
-        }
-        $path = trim((string)($attachment['path'] ?? ''));
-        if ($path === '' || !is_file($path)) {
-          continue;
-        }
-        $name = trim((string)($attachment['name'] ?? ''));
-        if ($name === '') {
-          $name = basename($path);
-        }
-        $normalizedAttachments[] = ['path' => $path, 'name' => $name];
-      }
 
       if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
         $errorMessage = 'Invalid recipient email';
@@ -903,9 +887,6 @@
               $mail->addEmbeddedImage($logoPath, 'nuevo_puerta_logo', basename($logoPath));
               $logoSrc = 'cid:nuevo_puerta_logo';
             }
-            foreach ($normalizedAttachments as $attachment) {
-              $mail->addAttachment($attachment['path'], $attachment['name']);
-            }
 
             $mail->isHTML(true);
             $mail->Subject = (string)$subject;
@@ -918,31 +899,6 @@
           }
         }
         return false;
-      }
-
-      if (!empty($normalizedAttachments) && ensureSystemMailerLoaded()) {
-        try {
-          $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-          $mail->setFrom('no-reply@nuevopuerta.local', 'Nuevo Puerta');
-          $mail->addAddress($to, $toName !== '' ? $toName : 'Client');
-          $logoSrc = null;
-          if ($logoPath !== null) {
-            $mail->addEmbeddedImage($logoPath, 'nuevo_puerta_logo', basename($logoPath));
-            $logoSrc = 'cid:nuevo_puerta_logo';
-          }
-          foreach ($normalizedAttachments as $attachment) {
-            $mail->addAttachment($attachment['path'], $attachment['name']);
-          }
-          $mail->isHTML(true);
-          $mail->Subject = (string)$subject;
-          $mail->Body = buildSystemEmailHtml((string)$body, $logoSrc);
-          $mail->AltBody = (string)$body . "\n\nCopyright (c) " . date('Y') . " Nuevo Puerta Real Estate. All rights reserved.";
-          $mail->send();
-          return true;
-        } catch (Throwable $e) {
-          $errorMessage = $e->getMessage();
-          return false;
-        }
       }
 
       $headers = "From: Nuevo Puerta <no-reply@nuevopuerta.local>\r\n";
@@ -2488,7 +2444,7 @@
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
       // Prevent PHP errors from breaking JSON
-      ini_set('display_errors', 0);
+      ini_set('display_errors', 1);
       ob_start();
       registerJsonFatalHandler();
       set_error_handler(function($errno, $errstr, $errfile, $errline) {
@@ -2658,7 +2614,7 @@
   //    – delete: normal form, no JSON
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
-      ini_set('display_errors', 0);
+      ini_set('display_errors', 1);
       ob_start();
       registerJsonFatalHandler();
       set_error_handler(function($errno, $errstr, $errfile, $errline) {
@@ -2828,7 +2784,7 @@
   // USER ACCOUNT CRUD (AJAX: user_action)
   // =====================================================
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
-      ini_set('display_errors', 0);
+      ini_set('display_errors', 1);
       ob_start();
       registerJsonFatalHandler();
       set_error_handler(function($errno, $errstr, $errfile, $errline) {
@@ -3319,7 +3275,7 @@
         $groupExpr = str_replace('{date_col}', $dateCol, $period['group_expr']);
         $groupBy = str_replace('{date_col}', $dateCol, $period['group_by']);
         $orderBy = str_replace('{date_col}', $dateCol, $period['order_by']);
-        $labelExpr = str_replace('{date_col}', $dateCol, $period['label_expr']);
+        $labelExpr = $period['label_expr'];
 
         $sql = "
           SELECT {$groupExpr}, {$labelExpr} AS period_label, IFNULL(SUM({$amountExpr}), 0) AS total
@@ -3618,46 +3574,7 @@
     return null;
   }
 
-  function getAnalyticsPeriodRange(string $salesPeriod): array {
-    $salesPeriod = strtolower(trim($salesPeriod));
-    switch ($salesPeriod) {
-      case 'daily':
-        return [date('Y-m-d', strtotime('-30 days')), date('Y-m-d')];
-      case 'weekly':
-        return [date('Y-m-d', strtotime('-12 weeks')), date('Y-m-d')];
-      case 'yearly':
-        return [date('Y-m-d', strtotime('-5 years')), date('Y-m-d')];
-      case 'monthly':
-      default:
-        return [date('Y-m-d', strtotime('-12 months')), date('Y-m-d')];
-    }
-  }
-
-  function getPrintableReportPeriodRange(string $salesPeriod): array {
-    $salesPeriod = strtolower(trim($salesPeriod));
-    switch ($salesPeriod) {
-      case 'daily':
-        return [date('Y-m-d'), date('Y-m-d')];
-      case 'weekly':
-        return [date('Y-m-d', strtotime('monday this week')), date('Y-m-d')];
-      case 'yearly':
-        return [date('Y-01-01'), date('Y-m-d')];
-      case 'monthly':
-      default:
-        return [date('Y-m-01'), date('Y-m-d')];
-    }
-  }
-
   function buildAnalyticsSnapshot($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod = 'monthly'): array {
-    $salesPeriod = strtolower(trim($salesPeriod));
-    if (!in_array($salesPeriod, ['daily', 'weekly', 'monthly', 'yearly'], true)) {
-      $salesPeriod = 'monthly';
-    }
-
-    if (!$date_from && !$date_to) {
-      [$date_from, $date_to] = getAnalyticsPeriodRange($salesPeriod);
-    }
-
     if (tableExists($conn, 'lot_payment_transactions') && tableExists($conn, 'lots')) {
       $salesQuery = "
         SELECT IFNULL(SUM(t.amount), 0) as total
@@ -3847,13 +3764,6 @@
       $date_to = normalizeAnalyticsDate($_GET['date_to'] ?? null);
       $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
       $agent_id = isset($_GET['agent_id']) ? intval($_GET['agent_id']) : null;
-      $sales_period = strtolower(trim((string)($_GET['sales_period'] ?? 'monthly')));
-      if (!in_array($sales_period, ['daily', 'weekly', 'monthly', 'yearly', 'custom'], true)) {
-        $sales_period = 'monthly';
-      }
-      if (!$date_from && !$date_to && $sales_period !== 'custom') {
-        [$date_from, $date_to] = getPrintableReportPeriodRange($sales_period);
-      }
 
       if (($date_from === null && !empty($_GET['date_from'])) || ($date_to === null && !empty($_GET['date_to']))) {
         header('Content-Type: application/json');
@@ -3873,8 +3783,7 @@
         $location_id,
         $salesDateCol,
         $salesLocationCol,
-        $salesAmountExprRoot,
-        $sales_period === 'custom' ? 'monthly' : $sales_period
+        $salesAmountExprRoot
       );
 
       $agents = [];
@@ -3907,19 +3816,6 @@
               'availability' => (int)($row['availability'] ?? 1),
             ];
           }
-        }
-      }
-
-      $selectedAgentName = 'All Agents';
-      if ($agent_id) {
-        foreach ($agents as $agentRow) {
-          if ((int)($agentRow['id'] ?? 0) === $agent_id) {
-            $selectedAgentName = (string)($agentRow['name'] ?? 'Agent');
-            break;
-          }
-        }
-        if ($selectedAgentName === 'All Agents') {
-          $selectedAgentName = 'Agent #' . $agent_id;
         }
       }
 
@@ -4017,9 +3913,6 @@
             if ($date_to && $recordDate !== '' && $recordDate > $date_to) {
               continue;
             }
-            if ($agent_id && $resolvedAgentId !== $agent_id) {
-              continue;
-            }
 
             $rowData = [
               'lot_id' => (int)($row['id'] ?? 0),
@@ -4039,7 +3932,10 @@
 
             $closedSales[] = $rowData;
             $fullyPaidLots[] = $rowData;
-            $agentSoldLots[] = $rowData;
+
+            if ($agent_id && $resolvedAgentId === $agent_id) {
+              $agentSoldLots[] = $rowData;
+            }
           }
         }
       }
@@ -4047,15 +3943,6 @@
       if (!$agent_id) {
         $agentSoldLots = $closedSales;
       }
-
-      $reportTotalSalesAmount = 0.0;
-      foreach ($closedSales as $saleRow) {
-        $reportTotalSalesAmount += (float)($saleRow['closed_amount'] ?? 0);
-      }
-
-      $reportKpis = $snapshot['kpis'] ?? [];
-      $reportKpis['total_sales'] = $reportTotalSalesAmount;
-      $reportKpis['closed_sales'] = count($closedSales);
 
       header('Content-Type: application/json');
       echo json_encode([
@@ -4066,10 +3953,8 @@
           'date_to' => $date_to,
           'location_id' => $location_id,
           'agent_id' => $agent_id,
-          'agent_name' => $selectedAgentName,
-          'sales_period' => $sales_period,
         ],
-        'kpis' => $reportKpis,
+        'kpis' => $snapshot['kpis'] ?? [],
         'agents' => $agents,
         'closed_sales' => $closedSales,
         'fully_paid_lots' => $fullyPaidLots,
@@ -4121,8 +4006,8 @@
       );
 
       $filenameDate = date('Ymd_His');
-      header('Content-Type: text/html; charset=utf-8');
-      header('Content-Disposition: attachment; filename="analytics_report_' . $filenameDate . '.html"');
+      header('Content-Type: text/csv; charset=utf-8');
+      header('Content-Disposition: attachment; filename="analytics_export_' . $filenameDate . '.csv"');
       header('Cache-Control: max-age=0');
 
       $generatedAt = date('Y-m-d H:i:s');
@@ -4130,87 +4015,62 @@
       $dateToText = $snapshot['filters']['date_to'] ?: 'N/A';
       $locationText = $snapshot['filters']['location_name'] ?: 'All Locations';
 
-      // Build HTML report
-      $html = '<html>';
-      $html .= '<head>';
-      $html .= '<meta charset="utf-8">';
-      $html .= '<title>Nuevo Puerta Analytics Report</title>';
-      $html .= '<style>';
-      $html .= 'body { font-family: Arial, sans-serif; padding: 16px; color: #111; }';
-      $html .= 'h3, h4 { color: #1f3d1f; margin: 0 0 8px; }';
-      $html .= 'table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; }';
-      $html .= 'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }';
-      $html .= 'th { background: #f3f4f6; font-weight: bold; }';
-      $html .= '.meta { background: #f8f9fa; padding: 12px; border-radius: 4px; margin-bottom: 16px; }';
-      $html .= '.meta div { display: flex; gap: 40px; margin: 4px 0; }';
-      $html .= '.meta-label { font-weight: bold; min-width: 120px; }';
-      $html .= '</style>';
-      $html .= '</head>';
-      $html .= '<body>';
+      // UTF-8 BOM for proper Excel UTF-8 detection on Windows.
+      echo "\xEF\xBB\xBF";
+      $out = fopen('php://output', 'w');
 
-      $html .= '<h2>Nuevo Puerta - Analytics Report</h2>';
-      $html .= '<div class="meta">';
-      $html .= '<div><span class="meta-label">Generated At:</span> <span>' . htmlspecialchars($generatedAt) . '</span></div>';
-      $html .= '<div><span class="meta-label">Date From:</span> <span>' . htmlspecialchars($dateFromText) . '</span></div>';
-      $html .= '<div><span class="meta-label">Date To:</span> <span>' . htmlspecialchars($dateToText) . '</span></div>';
-      $html .= '<div><span class="meta-label">Location:</span> <span>' . htmlspecialchars($locationText) . '</span></div>';
-      $html .= '<div><span class="meta-label">Period:</span> <span>' . htmlspecialchars(ucfirst($sales_period)) . '</span></div>';
-      $html .= '</div>';
+      fputcsv($out, ['Analytics Export Report']);
+      fputcsv($out, ['Generated for admin analytics dashboard']);
+      fputcsv($out, []);
 
-      // KPI Summary
-      $html .= '<h3>KPI Summary</h3>';
-      $html .= '<table>';
-      $html .= '<tr><th>Metric</th><th>Value</th></tr>';
-      $html .= '<tr><td>Total Sales</td><td>PHP ' . number_format((float)$snapshot['kpis']['total_sales'], 2) . '</td></tr>';
-      $html .= '<tr><td>Closed Sales (Fully Paid)</td><td>' . (int)($snapshot['kpis']['closed_sales'] ?? 0) . '</td></tr>';
-      $html .= '<tr><td>Ongoing Sales (Installment)</td><td>' . (int)($snapshot['kpis']['ongoing_sales'] ?? 0) . '</td></tr>';
-      $html .= '<tr><td>Total Lots</td><td>' . (int)$snapshot['kpis']['total_lots'] . '</td></tr>';
-      $html .= '<tr><td>Available Agents</td><td>' . (int)$snapshot['kpis']['available_agents'] . '</td></tr>';
-      $html .= '<tr><td>Pending Documents</td><td>' . (int)$snapshot['kpis']['pending_documents'] . '</td></tr>';
-      $html .= '</table>';
+      fputcsv($out, ['Generated At', $generatedAt]);
+      fputcsv($out, ['Date From', $dateFromText]);
+      fputcsv($out, ['Date To', $dateToText]);
+      fputcsv($out, ['Location', $locationText]);
+      fputcsv($out, []);
 
-      // Sales Trend
-      $html .= '<h3>Sales Trend (' . htmlspecialchars(ucfirst($sales_period)) . ')</h3>';
-      $html .= '<table>';
-      $html .= '<tr><th>Period</th><th>Sales Amount</th></tr>';
+      fputcsv($out, ['KPI Summary']);
+      fputcsv($out, ['Metric', 'Value']);
+      fputcsv($out, ['Total Sales', 'PHP ' . number_format((float)$snapshot['kpis']['total_sales'], 2)]);
+      fputcsv($out, ['Closed Sales (Fully Paid)', (int)($snapshot['kpis']['closed_sales'] ?? 0)]);
+      fputcsv($out, ['Ongoing Sales (Installment)', (int)($snapshot['kpis']['ongoing_sales'] ?? 0)]);
+      fputcsv($out, ['Total Lots', (int)$snapshot['kpis']['total_lots']]);
+      fputcsv($out, ['Available Agents', (int)$snapshot['kpis']['available_agents']]);
+      fputcsv($out, ['Pending Documents', (int)$snapshot['kpis']['pending_documents']]);
+      fputcsv($out, []);
+
+      fputcsv($out, ['Sales Trend (' . ucfirst($sales_period) . ')']);
+      fputcsv($out, ['Period', 'Sales Amount']);
       if (empty($snapshot['monthly_sales'])) {
-        $html .= '<tr><td colspan="2">No sales records for selected filters.</td></tr>';
+        fputcsv($out, ['No sales records for selected filters.']);
       } else {
         foreach ($snapshot['monthly_sales'] as $row) {
-          $period = htmlspecialchars((string)($row['period'] ?? $row['month'] ?? ''));
-          $amount = number_format((float)$row['amount'], 2);
-          $html .= '<tr><td>' . $period . '</td><td>PHP ' . $amount . '</td></tr>';
+          fputcsv($out, [(string)($row['period'] ?? $row['month'] ?? ''), 'PHP ' . number_format((float)$row['amount'], 2)]);
         }
       }
-      $html .= '</table>';
+      fputcsv($out, []);
 
-      // Top Agents
-      $html .= '<h3>Top Agents</h3>';
-      $html .= '<table>';
-      $html .= '<tr><th>Agent Name</th><th>Email</th><th>Sales Count</th><th>Sold Lots</th><th>Reserved Lots</th><th>Ongoing Lots</th><th>Cancelled Lots</th><th>Total Sales</th><th>Average Deal Size</th></tr>';
+      fputcsv($out, ['Top Agents']);
+      fputcsv($out, ['Agent Name', 'Email', 'Sales Count', 'Sold Lots', 'Reserved Lots', 'Ongoing Lots', 'Cancelled Lots', 'Total Sales', 'Average Deal Size']);
       if (empty($topAgentsRows)) {
-        $html .= '<tr><td colspan="9">No top-agent sales records for selected filters.</td></tr>';
+        fputcsv($out, ['No top-agent sales records for selected filters.']);
       } else {
         foreach ($topAgentsRows as $row) {
-          $html .= '<tr>';
-          $html .= '<td>' . htmlspecialchars((string)($row['name'] ?? '')) . '</td>';
-          $html .= '<td>' . htmlspecialchars((string)($row['email'] ?? '')) . '</td>';
-          $html .= '<td>' . (int)($row['sales_count'] ?? 0) . '</td>';
-          $html .= '<td>' . (int)($row['sold_lots_count'] ?? 0) . '</td>';
-          $html .= '<td>' . (int)($row['reserved_lots_count'] ?? 0) . '</td>';
-          $html .= '<td>' . (int)($row['ongoing_lots_count'] ?? 0) . '</td>';
-          $html .= '<td>' . (int)($row['cancelled_lots_count'] ?? 0) . '</td>';
-          $html .= '<td>PHP ' . number_format((float)($row['total_amount'] ?? 0), 2) . '</td>';
-          $html .= '<td>PHP ' . number_format((float)($row['avg_deal_size'] ?? 0), 2) . '</td>';
-          $html .= '</tr>';
+          fputcsv($out, [
+            (string)($row['name'] ?? ''),
+            (string)($row['email'] ?? ''),
+            (int)($row['sales_count'] ?? 0),
+            (int)($row['sold_lots_count'] ?? 0),
+            (int)($row['reserved_lots_count'] ?? 0),
+            (int)($row['ongoing_lots_count'] ?? 0),
+            (int)($row['cancelled_lots_count'] ?? 0),
+            'PHP ' . number_format((float)($row['total_amount'] ?? 0), 2),
+            'PHP ' . number_format((float)($row['avg_deal_size'] ?? 0), 2),
+          ]);
         }
       }
-      $html .= '</table>';
 
-      $html .= '</body>';
-      $html .= '</html>';
-
-      echo $html;
+      fclose($out);
       exit;
   }
 
@@ -4680,7 +4540,6 @@
   if (isset($_POST['action']) && $_POST['action'] === 'admin_upload_document') {
     try {
       $user_id  = (int)($_POST['user_id'] ?? 0);
-      $lot_id   = isset($_POST['lot_id']) && $_POST['lot_id'] !== '' ? (int)$_POST['lot_id'] : null;
       $doc_type = trim($_POST['doc_type'] ?? '');
       $allowed_types = ['Copy of Contract', 'Copy of Agreement'];
 
@@ -4744,81 +4603,19 @@
       // Ensure columns added after initial table creation exist on existing installs
       $conn->query("ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP NULL");
       $conn->query("ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS reviewed_by INT NULL");
-      $conn->query("ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS lot_id INT NULL");
 
       // Build INSERT only with columns that actually exist in the table
       $hasReviewedAt = columnExists($conn, 'user_documents', 'reviewed_at');
       $hasReviewedBy = columnExists($conn, 'user_documents', 'reviewed_by');
-      $hasLotId = columnExists($conn, 'user_documents', 'lot_id');
 
       $insertCols = "user_id, doc_type, file_name, file_path, status, uploaded_at";
       $insertVals = "$user_id, '$docTypeEsc', '$origNameEsc', '$relPathEsc', 'approved', NOW()";
       if ($hasReviewedAt) { $insertCols .= ", reviewed_at"; $insertVals .= ", NOW()"; }
       if ($hasReviewedBy) { $insertCols .= ", reviewed_by"; $insertVals .= ", " . intval($admin_id ?? 0); }
-      if ($hasLotId) { $insertCols .= ", lot_id"; $insertVals .= ", " . ($lot_id !== null ? $lot_id : "NULL"); }
 
       $insertSql = "INSERT INTO user_documents ($insertCols) VALUES ($insertVals)";
       if (!mysqli_query($conn, $insertSql)) {
           respondJSON(['success' => false, 'error' => 'Database insert failed: ' . mysqli_error($conn)]);
-      }
-
-      $emailSent = false;
-      $emailError = '';
-
-      $recipientEmail = '';
-      $recipientName = '';
-      $userInfoRes = mysqli_query(
-        $conn,
-        "SELECT first_name, last_name, email FROM user_accounts WHERE id = " . (int)$user_id . " LIMIT 1"
-      );
-      if ($userInfoRes && ($userInfo = mysqli_fetch_assoc($userInfoRes))) {
-        $recipientEmail = trim((string)($userInfo['email'] ?? ''));
-        $recipientName = trim((string)($userInfo['first_name'] ?? '') . ' ' . (string)($userInfo['last_name'] ?? ''));
-      }
-
-      $lotLabel = 'N/A';
-      if ($lot_id !== null && $lot_id > 0) {
-        $lotSql = "SELECT l.block_number, l.lot_number, ll.location_name
-                   FROM lots l
-                   LEFT JOIN lot_locations ll ON ll.id = l.location_id
-                   WHERE l.id = " . (int)$lot_id . "
-                   LIMIT 1";
-        $lotRes = mysqli_query($conn, $lotSql);
-        if ($lotRes && ($lotRow = mysqli_fetch_assoc($lotRes))) {
-          $lotLabel = 'Block ' . (string)($lotRow['block_number'] ?? 'N/A') . ', Lot ' . (string)($lotRow['lot_number'] ?? 'N/A');
-          $locationName = trim((string)($lotRow['location_name'] ?? ''));
-          if ($locationName !== '') {
-            $lotLabel .= ' (' . $locationName . ')';
-          }
-        }
-      }
-
-      if ($recipientEmail !== '') {
-        $mailSubject = 'Nuevo Puerta Document Release Notice';
-        $mailBody = "Hello " . ($recipientName !== '' ? $recipientName : 'Client') . ",\n\n"
-          . "Your document has been released and is now available in your dashboard.\n"
-          . "Property: {$lotLabel}\n"
-          . "Document Type: {$doc_type}\n"
-          . "Released On: " . date('F j, Y g:i A') . "\n"
-          . "Status: Available for viewing in your dashboard\n\n"
-          . "Please keep this email as your transaction record.\n\n"
-          . "Thank you,\nNuevo Puerta";
-
-        $emailSent = sendSystemEmail(
-          $recipientEmail,
-          $recipientName,
-          $mailSubject,
-          $mailBody,
-          $emailError,
-          [
-            [
-              'path' => $destPath,
-              'name' => $origName,
-            ],
-          ]
-        );
-      } else {
-        $emailError = 'No recipient email found for this client account.';
       }
 
       // Notify the user (best-effort — won't crash if table differs)
@@ -4827,12 +4624,7 @@
       // Audit (best-effort)
       try { logAudit($conn, $admin_id ?? 0, 'Admin Uploaded Document', "Uploaded $doc_type for user_id=$user_id"); } catch (Throwable $ae) { /* skip if audit_logs differs */ }
 
-      respondJSON([
-        'success' => true,
-        'message' => 'Document uploaded successfully.',
-        'email_sent' => $emailSent,
-        'email_error' => $emailSent ? null : ($emailError !== '' ? $emailError : null)
-      ]);
+      respondJSON(['success' => true, 'message' => 'Document uploaded successfully.']);
     } catch (Throwable $uploadEx) {
       respondJSON(['success' => false, 'error' => 'Server error: ' . $uploadEx->getMessage()]);
     }
@@ -4843,9 +4635,6 @@
         echo json_encode([]);
         exit;
       }
-
-      // Ensure lot_id column exists
-      $conn->query("ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS lot_id INT NULL");
 
       $docs = [];
       $query = "SELECT d.*, u.first_name, u.last_name, u.email, 'user_documents' AS source
@@ -4862,102 +4651,6 @@
       $stmt->close();
       header('Content-Type: application/json');
       echo json_encode($docs);
-      exit;
-  }
-
-  // Get lots for a user (for document upload)
-  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_user_lots') {
-      $user_id = (int)($_GET['user_id'] ?? 0);
-      if ($user_id <= 0) {
-          header('Content-Type: application/json');
-          echo json_encode(['success' => false, 'error' => 'Invalid user']);
-          exit;
-      }
-
-      $lots = [];
-      if (tableExists($conn, 'lots') && columnExists($conn, 'lots', 'owner_id')) {
-          try {
-          $hasBlockNumber = columnExists($conn, 'lots', 'block_number');
-          $hasLotNumber = columnExists($conn, 'lots', 'lot_number');
-          $hasLocationId = columnExists($conn, 'lots', 'location_id');
-          $hasLotLocations = tableExists($conn, 'lot_locations') && columnExists($conn, 'lot_locations', 'location_name');
-          $hasViewings = tableExists($conn, 'viewings') && columnExists($conn, 'viewings', 'lot_id') && columnExists($conn, 'viewings', 'client_email');
-
-          $userEmail = '';
-          if (tableExists($conn, 'user_accounts') && columnExists($conn, 'user_accounts', 'email')) {
-            $emailStmt = $conn->prepare("SELECT email FROM user_accounts WHERE id = ? LIMIT 1");
-            if ($emailStmt) {
-              $emailStmt->bind_param('i', $user_id);
-              $emailStmt->execute();
-              $emailRes = $emailStmt->get_result();
-              if ($emailRes && ($emailRow = $emailRes->fetch_assoc())) {
-                $userEmail = trim((string)($emailRow['email'] ?? ''));
-              }
-              $emailStmt->close();
-            }
-          }
-
-          $selectCols = "l.id";
-          if ($hasBlockNumber) {
-            $selectCols .= ", l.block_number";
-          } else {
-            $selectCols .= ", NULL AS block_number";
-          }
-          if ($hasLotNumber) {
-            $selectCols .= ", l.lot_number";
-          } else {
-            $selectCols .= ", NULL AS lot_number";
-          }
-          if ($hasLotLocations && $hasLocationId) {
-            $selectCols .= ", ll.location_name";
-          } else {
-            $selectCols .= ", '' AS location_name";
-          }
-
-          $sql = "SELECT DISTINCT {$selectCols}
-              FROM lots l";
-
-          if ($hasLotLocations && $hasLocationId) {
-            $sql .= " LEFT JOIN lot_locations ll ON ll.id = l.location_id";
-          }
-
-          if ($hasViewings) {
-            $sql .= " LEFT JOIN viewings v ON v.lot_id = l.id";
-          }
-
-          $sql .= " WHERE l.owner_id = ?";
-          if ($hasViewings && $userEmail !== '') {
-            $sql .= " OR LOWER(TRIM(v.client_email)) = LOWER(TRIM(?))";
-          }
-
-          $sql .= " ORDER BY l.block_number ASC, l.lot_number ASC, l.id ASC";
-
-              $stmt = $conn->prepare($sql);
-              if (!$stmt) {
-                  throw new Exception("Prepare failed: " . $conn->error);
-              }
-
-          if ($hasViewings && $userEmail !== '') {
-            $stmt->bind_param('is', $user_id, $userEmail);
-          } else {
-            $stmt->bind_param('i', $user_id);
-          }
-
-              $stmt->execute();
-              $res = $stmt->get_result();
-              while ($row = $res->fetch_assoc()) {
-                  $lots[] = $row;
-              }
-              $stmt->close();
-          } catch (Exception $e) {
-              header('Content-Type: application/json');
-              echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
-              exit;
-          }
-      }
-
-      header('Content-Type: application/json');
-      echo json_encode(['success' => true, 'lots' => $lots]);
       exit;
   }
   ?>
@@ -8441,29 +8134,19 @@
           </div>
         </div>
 
-        <div class="table-section" style="margin-bottom: 24px; padding: 18px;">
-          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 14px; align-items:end;">
-            <input type="date" id="analytics_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date From">
-            <input type="date" id="analytics_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date To">
-            <select id="analytics_location" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
-              <option value="">All Locations</option>
-            </select>
-            <select id="analytics_sales_period" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
+        <div style="display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:12px; margin-bottom:18px; padding:16px 18px; background:linear-gradient(180deg, #fbfdfb 0%, #f4f8f4 100%); border:1px solid #dfe8e0; border-radius:10px;">
+          <div>
+            <div style="font-size:12px; font-weight:700; color:#2d482d; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">Sales Trend Filter</div>
+            <div style="font-size:13px; color:#5d6a60;">Choose how sales are grouped in the chart below.</div>
+          </div>
+          <div>
+            <label for="analytics_sales_period" style="display:block; font-size:11px; color:#666; margin-bottom:4px;">Sales Period</label>
+            <select id="analytics_sales_period" style="padding:9px 12px; border:1px solid #cfd8d3; border-radius:8px; min-width:220px; background:#fff; color:#2f3b33;">
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly" selected>Monthly</option>
               <option value="yearly">Yearly</option>
             </select>
-            <button type="button" class="btn-primary" onclick="loadAnalyticsData()">Generate</button>
-            <button type="button" class="btn" onclick="exportAnalytics()">Download Report</button>
-          </div>
-
-          <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:12px 14px; background:#f8faf8; border:1px solid #e4ebe5; border-radius:8px; margin-bottom: 14px;">
-            <div>
-              <div style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.04em;">Analytics View</div>
-              <div id="analytics-view-range-label" style="font-size:13px; color:#2f3b33; margin-top:4px;">Monthly sales view</div>
-            </div>
-            <div style="font-size:12px; color:#6b7280;">Use the filters above to refresh the analytics cards, chart, and export.</div>
           </div>
         </div>
 
@@ -8630,16 +8313,9 @@
         </div>
 
         <div class="table-section">
-          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 14px; align-items:end;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 14px; align-items:end;">
             <input type="date" id="report_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date From">
             <input type="date" id="report_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date To">
-            <select id="report_sales_period" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
-              <option value="daily">Today</option>
-              <option value="weekly">This Week</option>
-              <option value="monthly" selected>This Month</option>
-              <option value="yearly">This Year</option>
-              <option value="custom">Custom Date Range</option>
-            </select>
             <select id="report_location" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
               <option value="">All Locations</option>
             </select>
@@ -8815,17 +8491,11 @@
         <!-- ===== ADMIN UPLOAD FORM ===== -->
         <div class="table-section" style="margin-bottom:22px;">
           <div style="font-size:16px; font-weight:700; color:#2d4e1e; margin-bottom:14px;">Upload New Document</div>
-          <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:12px; align-items:end;">
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:12px; align-items:end;">
             <div>
               <label style="display:block; font-size:13px; color:#495057; margin-bottom:5px;">Client / User</label>
-              <select id="admin_upload_user_id" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; background:#fff;" onchange="onUserChangeForUpload()">
+              <select id="admin_upload_user_id" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; background:#fff;">
                 <option value="">— Loading users… —</option>
-              </select>
-            </div>
-            <div>
-              <label style="display:block; font-size:13px; color:#495057; margin-bottom:5px;">Lot (Optional)</label>
-              <select id="admin_upload_lot_id" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; background:#fff;">
-                <option value="">Select Lot (leave blank for all lots)</option>
               </select>
             </div>
             <div>
@@ -8920,26 +8590,14 @@
           </div>
         </div>
 
-        <div id="recordPaymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 12px;">
-          <div style="background:#fff; width:95%; max-width:520px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2); max-height:calc(100vh - 40px); overflow-y:auto;">
+        <div id="recordPaymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
+          <div style="background:#fff; width:95%; max-width:520px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
               <h3 style="margin:0; color:#2d4e1e;">Record Payment</h3>
               <button type="button" onclick="closeRecordPaymentModal()" style="border:none;background:transparent;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
             </div>
             <input type="hidden" id="record-payment-lot-id">
-            <div style="display:grid; gap:10px; margin-bottom:10px;">
-              <div>
-                <label style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Step 1: Select unpaid month(s)</label>
-                <div id="record-payment-month-list" style="max-height:200px; overflow:auto; border:1px solid #dee2e6; border-radius:6px; padding:8px; background:#fff;"></div>
-                <div id="record-payment-month-summary" style="margin-top:6px; font-size:12px; color:#6c757d;">Select one or more unpaid months to proceed.</div>
-              </div>
-              <div style="display:flex; justify-content:flex-end;">
-                <button type="button" class="payment-btn payment-btn-primary" onclick="proceedRecordPaymentDetails()">Proceed</button>
-              </div>
-            </div>
-            <div id="record-payment-details-section" style="display:none; border-top:1px solid #e9ecef; padding-top:10px;">
-              <div style="font-size:12px; color:#495057; margin-bottom:8px;">Step 2: Confirm payment details and save</div>
-              <div style="display:grid; gap:10px;">
+            <div style="display:grid; gap:10px;">
               <div>
                 <label for="record-payment-amount" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Amount (PHP)</label>
                 <input id="record-payment-amount" type="number" min="0.01" step="0.01" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px;" placeholder="0.00">
@@ -8960,9 +8618,8 @@
                 <label for="record-payment-remarks" style="display:block; font-size:13px; color:#495057; margin-bottom:6px;">Remarks (optional)</label>
                 <textarea id="record-payment-remarks" rows="3" style="width:100%; padding:9px 10px; border:1px solid #ced4da; border-radius:6px; resize:vertical;"></textarea>
               </div>
-              </div>
             </div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px; position:sticky; bottom:0; background:#fff; padding-top:10px; border-top:1px solid #e9ecef;">
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
               <button type="button" class="payment-btn payment-btn-secondary" onclick="closeRecordPaymentModal()">Cancel</button>
               <button type="button" class="payment-btn payment-btn-primary" onclick="submitRecordPayment()">Save Payment</button>
             </div>
@@ -9167,7 +8824,6 @@
         loadLocations();
         loadLots('');
       } else if (targetId === 'section-analytics') {
-        loadLocations();
         loadAnalyticsData();
       } else if (targetId === 'section-reports') {
         loadPrintableReports();
@@ -9242,15 +8898,6 @@
       analyticsSalesPeriodSelect.addEventListener('change', function() {
         loadAnalyticsData();
       });
-    }
-
-    const reportSalesPeriodSelect = document.getElementById('report_sales_period');
-    if (reportSalesPeriodSelect) {
-      reportSalesPeriodSelect.addEventListener('change', function() {
-        applyReportSalesPeriodPreset();
-        loadPrintableReports();
-      });
-      applyReportSalesPeriodPreset();
     }
 
     // Initial loads
@@ -10047,7 +9694,6 @@
 
   async function adminUploadDocument() {
     const userId   = document.getElementById('admin_upload_user_id')?.value;
-    const lotId    = document.getElementById('admin_upload_lot_id')?.value;
     const docType  = document.getElementById('admin_upload_doc_type')?.value;
     const fileInput = document.getElementById('admin_upload_file');
     const msgEl = document.getElementById('admin-upload-msg');
@@ -10060,7 +9706,6 @@
     const formData = new FormData();
     formData.append('action', 'admin_upload_document');
     formData.append('user_id', userId);
-    if (lotId) formData.append('lot_id', lotId);
     formData.append('doc_type', docType);
     formData.append('admin_doc_file', fileInput.files[0]);
 
@@ -10072,7 +9717,6 @@
       if (data.success) {
         if (msgEl) { msgEl.style.color='#27ae60'; msgEl.textContent = 'Document uploaded successfully and is now visible to the user.'; }
         document.getElementById('admin_upload_user_id').value = '';
-        document.getElementById('admin_upload_lot_id').innerHTML = '<option value="">Select Lot (leave blank for all lots)</option>';
         document.getElementById('admin_upload_doc_type').value = '';
         fileInput.value = '';
         loadDocuments();
@@ -10082,47 +9726,6 @@
       }
     } catch(e) {
       if (msgEl) { msgEl.style.color='#c0392b'; msgEl.textContent = 'Upload failed. Please try again.'; }
-    }
-  }
-
-  async function onUserChangeForUpload() {
-    const userId = document.getElementById('admin_upload_user_id')?.value;
-    const lotSelect = document.getElementById('admin_upload_lot_id');
-    if (!lotSelect) return;
-
-    lotSelect.innerHTML = '<option value="">Loading lots...</option>';
-
-    if (!userId) {
-      lotSelect.innerHTML = '<option value="">Select Lot (leave blank for all lots)</option>';
-      return;
-    }
-
-    try {
-      const res = await fetch(`${window.location.pathname}?action=get_user_lots&user_id=${userId}&_ts=${Date.now()}`);
-      const data = await res.json();
-      if (data.success && data.lots) {
-        let options = '<option value="">Select Lot (leave blank for all lots)</option>';
-        data.lots.forEach(lot => {
-          const blockText = (lot.block_number !== null && lot.block_number !== undefined && String(lot.block_number).trim() !== '')
-            ? `Block ${lot.block_number}`
-            : 'Block N/A';
-          const lotText = (lot.lot_number !== null && lot.lot_number !== undefined && String(lot.lot_number).trim() !== '')
-            ? `Lot ${lot.lot_number}`
-            : 'Lot N/A';
-          const locationText = (lot.location_name !== null && lot.location_name !== undefined && String(lot.location_name).trim() !== '')
-            ? String(lot.location_name).trim()
-            : 'Unknown Location';
-          const label = `${blockText}, ${lotText} — ${locationText}`;
-          options += `<option value="${lot.id}">${label}</option>`;
-        });
-        lotSelect.innerHTML = options;
-      } else if (data.success) {
-        lotSelect.innerHTML = '<option value="">No lots found</option>';
-      } else {
-        lotSelect.innerHTML = '<option value="">Error: ' + (data.error || 'Unknown error') + '</option>';
-      }
-    } catch(e) {
-      lotSelect.innerHTML = '<option value="">Error loading lots: ' + e.message + '</option>';
     }
   }
 
@@ -10465,7 +10068,7 @@
             <td class="col-actions" style="text-align:center;">
               <div class="payment-actions payment-actions-image-ref">
                 <button type="button" class="payment-action-btn${(autoStage === 'Not Applicable') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Not Applicable') ? 'disabled' : ''} title="Set Installment" onclick="${(autoStage !== 'Not Applicable') ? `openInstallmentPlanModal(${payment.lot_id}, ${Number(payment.lot_price || 0)}, ${installmentAmount || 0}, ${downPaymentAmount || 0}, ${installmentYears || 0}, ${dueDayValue || 0}, '${hasDeadline ? escapeText(payment.payment_deadline) : ''}', true)` : ''}">Set Installment</button>
-                <button type="button" class="payment-action-btn${(autoStage === 'Paid') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Paid') ? 'disabled' : ''} title="Record Payment" onclick="${(autoStage !== 'Paid') ? `recordPaymentForLot(${payment.lot_id}, ${installmentAmount || 0}, ${downPaymentAmount || 0}, ${Number(payment.balance_due || 0)}, ${Number(payment.total_paid || 0)}, ${Number(payment.lot_price || 0)}, ${dueDayValue || 0}, '${hasDeadline ? escapeText(payment.payment_deadline) : ''}', '${payment.last_payment_date ? escapeText(payment.last_payment_date) : ''}', ${installmentYears || 0})` : ''}">Record Payment</button>
+                <button type="button" class="payment-action-btn${(autoStage === 'Paid') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Paid') ? 'disabled' : ''} title="Record Payment" onclick="${(autoStage !== 'Paid') ? `recordPaymentForLot(${payment.lot_id}, ${installmentAmount || 0}, ${downPaymentAmount || 0}, ${Number(payment.balance_due || 0)}, ${Number(payment.total_paid || 0)}, ${Number(payment.lot_price || 0)}, ${dueDayValue || 0}, '${hasDeadline ? escapeText(payment.payment_deadline) : ''}', '${payment.last_payment_date ? escapeText(payment.last_payment_date) : ''}')` : ''}">Record Payment</button>
                 <button type="button" class="payment-action-btn${(autoStage === 'Not Applicable') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Not Applicable') ? 'disabled' : ''} title="View Payment History" onclick="${(autoStage !== 'Not Applicable') ? `showPaymentHistory(${payment.lot_id})` : ''}">View History</button>
                 <button type="button" class="payment-action-btn${(autoStage !== 'Paid') ? ' payment-action-disabled' : ''}" ${(autoStage !== 'Paid') ? 'disabled' : ''} title="Turnover Title" onclick="${(autoStage === 'Paid') ? `markTurnoverForLot(${payment.lot_id}, true)` : ''}">Turnover Title</button>
               </div>
@@ -10598,239 +10201,50 @@
     return Math.max(0, baseDue - currentCyclePaid);
   }
 
-  let recordPaymentSelectionContext = null;
-
-  function buildInstallmentAnchorDate(paymentDeadline, lastPaymentDate, dueDay) {
-    const safeDueDay = Math.max(1, Math.min(31, Number(dueDay || 1)));
-    const parseIso = (raw) => {
-      const m = String(raw || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!m) return null;
-      const y = Number(m[1]);
-      const mm = Number(m[2]) - 1;
-      const dd = Number(m[3]);
-      const d = new Date(y, mm, dd);
-      if (Number.isNaN(d.getTime())) return null;
-      return d;
-    };
-
-    const deadlineDate = parseIso(paymentDeadline);
-    if (deadlineDate) {
-      return new Date(deadlineDate.getFullYear(), deadlineDate.getMonth(), Math.min(safeDueDay, new Date(deadlineDate.getFullYear(), deadlineDate.getMonth() + 1, 0).getDate()));
-    }
-
-    const lastDate = parseIso(lastPaymentDate);
-    if (lastDate) {
-      return new Date(lastDate.getFullYear(), lastDate.getMonth(), Math.min(safeDueDay, new Date(lastDate.getFullYear(), lastDate.getMonth() + 1, 0).getDate()));
-    }
-
-    const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth(), Math.min(safeDueDay, new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()));
-  }
-
-  function buildRecordPaymentMonthOptions(lotPrice, monthlyAmount, downPaymentAmount, totalPaid, termYears, dueDay, paymentDeadline, lastPaymentDate) {
-    const safeLotPrice = Math.max(0, Number(lotPrice || 0));
-    const safeMonthly = Math.max(0, Number(monthlyAmount || 0));
-    const safeDownPayment = Math.max(0, Number(downPaymentAmount || 0));
-    const safeTotalPaid = Math.max(0, Number(totalPaid || 0));
-    const safeTermYears = Math.max(0, Number(termYears || 0));
-    const totalMonths = safeTermYears > 0 ? Math.round(safeTermYears * 12) : 0;
-
-    if (totalMonths <= 0 || safeMonthly <= 0) {
-      return [];
-    }
-
-    const contractBalance = Math.max(0, safeLotPrice - safeDownPayment);
-    if (contractBalance <= 0) {
-      return [];
-    }
-
-    const monthlyPaidTotal = Math.max(0, safeTotalPaid - safeDownPayment);
-    const paidMonthsCount = Math.min(totalMonths, Math.floor((monthlyPaidTotal + 0.0001) / safeMonthly));
-    const anchor = buildInstallmentAnchorDate(paymentDeadline, lastPaymentDate, dueDay);
-
-    const options = [];
-    let remainingByPlan = contractBalance;
-    for (let i = 0; i < totalMonths; i++) {
-      const dueDate = new Date(anchor.getFullYear(), anchor.getMonth() + i, 1);
-      const daysInMonth = new Date(dueDate.getFullYear(), dueDate.getMonth() + 1, 0).getDate();
-      dueDate.setDate(Math.min(Math.max(1, Number(dueDay || 1)), daysInMonth));
-
-      const monthsLeft = totalMonths - i;
-      let plannedAmount = monthsLeft <= 1 ? remainingByPlan : Math.min(safeMonthly, remainingByPlan);
-      plannedAmount = Math.max(0, Number(plannedAmount.toFixed(2)));
-      remainingByPlan = Math.max(0, Number((remainingByPlan - plannedAmount).toFixed(2)));
-
-      if (i >= paidMonthsCount && plannedAmount > 0) {
-        options.push({
-          monthIndex: i + 1,
-          dueDate,
-          amount: plannedAmount,
-          selected: false,
-        });
-      }
-    }
-
-    return options;
-  }
-
-  function renderRecordPaymentMonthOptions() {
-    const listEl = document.getElementById('record-payment-month-list');
-    const summaryEl = document.getElementById('record-payment-month-summary');
-    if (!listEl || !summaryEl) return;
-
-    const ctx = recordPaymentSelectionContext;
-    if (!ctx || !Array.isArray(ctx.monthOptions) || !ctx.monthOptions.length) {
-      listEl.innerHTML = '<div style="padding:6px; color:#6c757d; font-size:12px;">No unpaid installment months available for selection.</div>';
-      summaryEl.textContent = 'No unpaid installment months found.';
-      return;
-    }
-
-    listEl.innerHTML = ctx.monthOptions.map((opt, idx) => {
-      const monthLabel = opt.dueDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
-      const dueLabel = opt.dueDate.toLocaleDateString('en-PH', { day: '2-digit', month: 'short', year: 'numeric' });
-      return `
-        <label style="display:flex; align-items:flex-start; gap:8px; padding:8px 6px; border-bottom:1px solid #f1f3f5; cursor:pointer;">
-          <input type="checkbox" data-month-option-index="${idx}" onchange="toggleRecordPaymentMonth(${idx})" ${opt.selected ? 'checked' : ''}>
-          <span style="font-size:13px; color:#2f3a33;">
-            <strong>${monthLabel}</strong><br>
-            <span style="color:#6c757d; font-size:12px;">Due ${dueLabel} • ${formatPhpAmount(opt.amount)}</span>
-          </span>
-        </label>
-      `;
-    }).join('');
-
-    updateRecordPaymentMonthSummary();
-  }
-
-  function toggleRecordPaymentMonth(index) {
-    if (!recordPaymentSelectionContext || !Array.isArray(recordPaymentSelectionContext.monthOptions)) return;
-    const i = Number(index);
-    if (!Number.isInteger(i) || i < 0 || i >= recordPaymentSelectionContext.monthOptions.length) return;
-    const opt = recordPaymentSelectionContext.monthOptions[i];
-    opt.selected = !opt.selected;
-    updateRecordPaymentMonthSummary();
-  }
-
-  function updateRecordPaymentMonthSummary() {
-    const summaryEl = document.getElementById('record-payment-month-summary');
-    if (!summaryEl) return;
-
-    if (!recordPaymentSelectionContext || !Array.isArray(recordPaymentSelectionContext.monthOptions)) {
-      summaryEl.textContent = 'Select one or more unpaid months to proceed.';
-      return;
-    }
-
-    const selected = recordPaymentSelectionContext.monthOptions.filter(opt => !!opt.selected);
-    const total = selected.reduce((sum, opt) => sum + Number(opt.amount || 0), 0);
-    if (!selected.length) {
-      summaryEl.textContent = 'Select one or more unpaid months to proceed.';
-      return;
-    }
-
-    summaryEl.textContent = `${selected.length} month(s) selected • Total ${formatPhpAmount(total)}`;
-  }
-
-  function proceedRecordPaymentDetails() {
-    const detailsEl = document.getElementById('record-payment-details-section');
+  function recordPaymentForLot(lotId, suggestedAmount, downPaymentAmount, balanceDue, totalPaid, lotPrice, dueDay, paymentDeadline, lastPaymentDate) {
+    const lotInput = document.getElementById('record-payment-lot-id');
     const amountInput = document.getElementById('record-payment-amount');
     const dateInput = document.getElementById('record-payment-date');
     const methodInput = document.getElementById('record-payment-method');
     const remarksInput = document.getElementById('record-payment-remarks');
 
-    if (!detailsEl || !amountInput || !dateInput || !methodInput || !remarksInput) {
+    if (!lotInput || !amountInput || !dateInput || !methodInput || !remarksInput) {
       alert('Payment form is not available.');
       return;
     }
 
-    const selected = (recordPaymentSelectionContext?.monthOptions || []).filter(opt => !!opt.selected);
-    if (!selected.length) {
-      alert('Please select at least one unpaid month before proceeding.');
-      return;
+    lotInput.value = String(lotId);
+    const cleanSuggestedAmount = Number(suggestedAmount || 0);
+    const cleanDownPaymentAmount = Number(downPaymentAmount || 0);
+    const cleanBalanceDue = Number(balanceDue || 0);
+    const cleanTotalPaid = Number(totalPaid || 0);
+    const cleanLotPrice = Number(lotPrice || 0);
+
+    let defaultAmount = cleanSuggestedAmount;
+    const installmentDueAmount = calculateInstallmentDueAmount(cleanLotPrice, cleanSuggestedAmount, cleanDownPaymentAmount, cleanTotalPaid);
+
+    if (cleanDownPaymentAmount > 0 && cleanTotalPaid <= 0) {
+      defaultAmount = cleanDownPaymentAmount;
+    } else if (installmentDueAmount > 0) {
+      defaultAmount = installmentDueAmount;
+    } else if (!(defaultAmount > 0)) {
+      if (cleanBalanceDue > 0) {
+        defaultAmount = cleanBalanceDue;
+      } else if (cleanLotPrice > 0) {
+        defaultAmount = cleanLotPrice;
+      }
     }
 
-    const total = selected.reduce((sum, opt) => sum + Number(opt.amount || 0), 0);
-    amountInput.value = total > 0 ? total.toFixed(2) : '';
-    dateInput.value = new Date().toISOString().slice(0, 10);
-    methodInput.value = 'Cash';
-
-    const monthNames = selected.map(opt => opt.dueDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }));
-    const monthRemark = `Installment months paid: ${monthNames.join(', ')}`;
-    remarksInput.value = monthRemark;
-
-    detailsEl.style.display = 'block';
+    amountInput.value = defaultAmount > 0 ? defaultAmount.toFixed(2) : '';
     amountInput.focus();
     amountInput.select();
-  }
-
-  function resetRecordPaymentModalState() {
-    const detailsEl = document.getElementById('record-payment-details-section');
-    const listEl = document.getElementById('record-payment-month-list');
-    const summaryEl = document.getElementById('record-payment-month-summary');
-    const amountInput = document.getElementById('record-payment-amount');
-    const dateInput = document.getElementById('record-payment-date');
-    const methodInput = document.getElementById('record-payment-method');
-    const remarksInput = document.getElementById('record-payment-remarks');
-
-    recordPaymentSelectionContext = null;
-    if (detailsEl) detailsEl.style.display = 'none';
-    if (listEl) listEl.innerHTML = '';
-    if (summaryEl) summaryEl.textContent = 'Select one or more unpaid months to proceed.';
-    if (amountInput) amountInput.value = '';
-    if (dateInput) dateInput.value = '';
-    if (methodInput) methodInput.value = 'Cash';
-    if (remarksInput) remarksInput.value = '';
-  }
-
-  function recordPaymentForLot(lotId, suggestedAmount, downPaymentAmount, balanceDue, totalPaid, lotPrice, dueDay, paymentDeadline, lastPaymentDate, termYears) {
-    const lotInput = document.getElementById('record-payment-lot-id');
-    const monthListEl = document.getElementById('record-payment-month-list');
-    const summaryEl = document.getElementById('record-payment-month-summary');
-
-    if (!lotInput || !monthListEl || !summaryEl) {
-      alert('Payment form is not available.');
-      return;
-    }
-
-    resetRecordPaymentModalState();
-    lotInput.value = String(lotId);
-
-    const options = buildRecordPaymentMonthOptions(
-      Number(lotPrice || 0),
-      Number(suggestedAmount || 0),
-      Number(downPaymentAmount || 0),
-      Number(totalPaid || 0),
-      Number(termYears || 0),
-      Number(dueDay || 0),
-      paymentDeadline || '',
-      lastPaymentDate || ''
-    );
-
-    if (!options.length) {
-      const fallbackAmount = Math.max(0, Number(suggestedAmount || 0));
-      const dueDate = calcNextDueDate(Number(dueDay) || 0, paymentDeadline || '', lastPaymentDate || '');
-      const m = String(dueDate || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      const fallbackDate = m
-        ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-        : new Date();
-      recordPaymentSelectionContext = {
-        monthOptions: fallbackAmount > 0 ? [{ monthIndex: 1, dueDate: fallbackDate, amount: fallbackAmount, selected: false }] : []
-      };
-      if (recordPaymentSelectionContext.monthOptions.length) {
-        renderRecordPaymentMonthOptions();
-      } else {
-        monthListEl.innerHTML = '<div style="padding:6px; color:#6c757d; font-size:12px;">No unpaid installment months found.</div>';
-        summaryEl.textContent = 'No unpaid installment months found.';
-      }
-    } else {
-      recordPaymentSelectionContext = { monthOptions: options };
-      renderRecordPaymentMonthOptions();
-    }
-
+    dateInput.value = calcNextDueDate(Number(dueDay) || 0, paymentDeadline || '', lastPaymentDate || '');
+    methodInput.value = 'Cash';
+    remarksInput.value = '';
     showModalById('recordPaymentModal');
   }
 
   function closeRecordPaymentModal() {
-    resetRecordPaymentModalState();
     hideModalById('recordPaymentModal');
   }
 
@@ -11009,29 +10423,11 @@
     const paymentDate = (document.getElementById('record-payment-date')?.value || '').trim();
     const method = (document.getElementById('record-payment-method')?.value || 'Cash').trim();
     const remarks = (document.getElementById('record-payment-remarks')?.value || '').trim();
-    const detailsSection = document.getElementById('record-payment-details-section');
-    const detailsVisible = !!detailsSection && getComputedStyle(detailsSection).display !== 'none';
-
-    if (!detailsVisible) {
-      showPaymentNotice('Please select unpaid month(s) and click Proceed first.', 'Month Selection Required');
-      return;
-    }
 
     if (!lotId || !Number.isFinite(amount) || amount <= 0) {
       showPaymentNotice('Please enter a valid payment amount.', 'Invalid Payment');
       return;
     }
-
-    const selectedMonths = (recordPaymentSelectionContext?.monthOptions || [])
-      .filter(opt => !!opt.selected)
-      .map(opt => opt.dueDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }));
-
-    if (!selectedMonths.length) {
-      showPaymentNotice('Please select unpaid month(s) before saving.', 'Month Selection Required');
-      return;
-    }
-
-    const finalRemarks = remarks || (`Installment months paid: ${selectedMonths.join(', ')}`);
 
     const fd = new FormData();
     fd.append('action', 'add_payment_transaction');
@@ -11039,7 +10435,7 @@
     fd.append('amount', String(amount));
     fd.append('payment_date', paymentDate);
     fd.append('payment_method', method || 'Cash');
-    fd.append('remarks', finalRemarks);
+    fd.append('remarks', remarks);
 
     fetch(window.location.pathname, { method: 'POST', body: fd })
       .then(r => r.text())
@@ -12294,73 +11690,18 @@
     return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: '2-digit' });
   }
 
-  function formatReportSalesPeriodLabel(rawPeriod) {
-    const period = String(rawPeriod || '').toLowerCase();
-    switch (period) {
-      case 'daily': return 'Today';
-      case 'weekly': return 'This Week';
-      case 'yearly': return 'This Year';
-      case 'custom': return 'Custom Date Range';
-      case 'monthly':
-      default:
-        return 'This Month';
-    }
-  }
-
-  function applyReportSalesPeriodPreset() {
-    const periodEl = document.getElementById('report_sales_period');
-    const fromEl = document.getElementById('report_date_from');
-    const toEl = document.getElementById('report_date_to');
-    if (!periodEl || !fromEl || !toEl) return;
-
-    const period = String(periodEl.value || 'monthly').toLowerCase();
-    if (period === 'custom') {
-      fromEl.disabled = false;
-      toEl.disabled = false;
-      return;
-    }
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const toIso = (d) => {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    };
-
-    let fromDate = new Date(today);
-    if (period === 'weekly') {
-      const day = today.getDay();
-      const diffToMonday = day === 0 ? 6 : day - 1;
-      fromDate.setDate(today.getDate() - diffToMonday);
-    } else if (period === 'monthly') {
-      fromDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else if (period === 'yearly') {
-      fromDate = new Date(today.getFullYear(), 0, 1);
-    }
-
-    fromEl.value = toIso(fromDate);
-    toEl.value = toIso(today);
-    fromEl.disabled = true;
-    toEl.disabled = true;
-  }
-
   function getReportFilters() {
-    applyReportSalesPeriodPreset();
-
-    const salesPeriod = document.getElementById('report_sales_period')?.value || 'monthly';
     const dateFrom = document.getElementById('report_date_from')?.value || '';
     const dateTo = document.getElementById('report_date_to')?.value || '';
     const locationId = document.getElementById('report_location')?.value || '';
     const agentId = document.getElementById('report_agent')?.value || '';
 
-    if (salesPeriod === 'custom' && dateFrom && dateTo && dateFrom > dateTo) {
+    if (dateFrom && dateTo && dateFrom > dateTo) {
       alert('Date From cannot be later than Date To.');
       return null;
     }
 
-    return { dateFrom, dateTo, locationId, agentId, salesPeriod };
+    return { dateFrom, dateTo, locationId, agentId };
   }
 
   function loadPrintableReports() {
@@ -12373,7 +11714,6 @@
     if (filters.dateTo) params.append('date_to', filters.dateTo);
     if (filters.locationId) params.append('location_id', filters.locationId);
     if (filters.agentId) params.append('agent_id', filters.agentId);
-    if (filters.salesPeriod) params.append('sales_period', filters.salesPeriod);
 
     fetch(window.location.pathname + '?' + params.toString())
       .then(res => res.json())
@@ -12397,11 +11737,9 @@
     const rangeText = (f.date_from || f.date_to)
       ? `${f.date_from || '...'} to ${f.date_to || '...'}`
       : 'All dates';
-    const periodText = formatReportSalesPeriodLabel(f.sales_period || 'monthly');
-    const agentText = f.agent_name || 'All Agents';
 
     if (meta) {
-      meta.textContent = `Generated: ${generated || 'N/A'} | Period: ${periodText} | Date range: ${rangeText} | Agent: ${agentText}`;
+      meta.textContent = `Generated: ${generated || 'N/A'} | Date range: ${rangeText}`;
     }
 
     const kpis = data.kpis || {};
@@ -13294,7 +12632,6 @@ function closePinModal() {
     const dateFrom = normalizeDateInput(document.getElementById('analytics_date_from')?.value || '');
     const dateTo = normalizeDateInput(document.getElementById('analytics_date_to')?.value || '');
     const locationId = document.getElementById('analytics_location')?.value || '';
-    const salesPeriod = document.getElementById('analytics_sales_period')?.value || 'monthly';
 
     if (dateFrom && dateTo && dateFrom > dateTo) {
       alert('Date From cannot be later than Date To.');
@@ -13306,7 +12643,6 @@ function closePinModal() {
     if (dateFrom) params.append('date_from', dateFrom);
     if (dateTo) params.append('date_to', dateTo);
     if (locationId) params.append('location_id', locationId);
-    if (salesPeriod) params.append('sales_period', salesPeriod);
 
     window.location.href = window.location.pathname + '?' + params.toString();
   }

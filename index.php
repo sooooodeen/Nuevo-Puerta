@@ -654,14 +654,11 @@ body.dark-mode .social-media p {
         <ul class="nav-links">
             <li class="active"><a href="index.php">Home</a></li> <li><a href="userlot.php">View Lots</a></li>
             <li><a href="findagent.php">Find Agent</a></li>
-            <li><a href="about.html">About</a></li>
-            <li><a href="faqs.html">FAQs</a></li>
-            <li><a href="contact.html">Contact</a></li>
+            <li><a href="about.php">About</a></li>
+            <li><a href="faqs.php">FAQs</a></li>
+            <li><a href="contact.php">Contact</a></li>
         </ul>
         <div class="nav-right">
-            <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" title="Toggle dark mode">
-                <i class="fa fa-moon"></i>
-            </button>
             <?php if (userHasAccount()): ?>
                 <a href="user_dashboard.php" class="login-btn">Go to Dashboard</a>
             <?php else: ?>

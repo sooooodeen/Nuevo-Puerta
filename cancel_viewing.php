@@ -77,10 +77,7 @@ if ($ok && $affected > 0) {
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/PHPMailer.php';
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/SMTP.php';
         require_once __DIR__ . '/vendor/phpmailer/phpmailer/src/Exception.php';
-            use PHPMailer\PHPMailer\PHPMailer;
-            use PHPMailer\PHPMailer\Exception;
-
-            $mail = new PHPMailer(true);
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
             try {
                 // SMTP config (change these for production)
                 $mail->isSMTP();
@@ -104,7 +101,7 @@ if ($ok && $affected > 0) {
                 $body .= "\n\nViewing Details:\nDate & Time: $preferred_at\n$location_details\n\nIf you have any questions, please contact us.\n\nThank you.";
                 $mail->Body = $body;
                 $mail->send();
-            } catch (Exception $e) {
+            } catch (\PHPMailer\PHPMailer\Exception $e) {
                 // Log or handle email errors
                 error_log('PHPMailer error: ' . $mail->ErrorInfo);
                 // Optionally, return error in response (for debugging, remove in production)

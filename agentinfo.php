@@ -4,11 +4,11 @@ $servername = "localhost";
 $username = "root";
 $password = "";
 
-// Connect to agentmanager database first
-$agent_dbname = "agentmanager";
-$agent_conn = new mysqli($servername, $username, $password, $agent_dbname);
-if ($agent_conn->connect_error) {
-    die("Connection to agentmanager database failed: " . $agent_conn->connect_error);
+// Connect to nuevopuerta database for messages
+$main_dbname = "nuevopuerta";
+$main_conn = new mysqli($servername, $username, $password, $main_dbname);
+if ($main_conn->connect_error) {
+    die("Connection to nuevopuerta database failed: " . $main_conn->connect_error);
 }
 
 // Create a second connection for loginmanager database (agent_accounts)
@@ -17,6 +17,8 @@ $account_conn = new mysqli($servername, $username, $password, $account_dbname);
 if ($account_conn->connect_error) {
     die("Connection to loginmanager database failed: " . $account_conn->connect_error);
 }
+
+echo '<script src="assets/js/alert-modal.js"></script>';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -28,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($name && $phone && $email) {
         $insert_sql = "INSERT INTO messages (agent_id, name, phone, email, message, created_at) VALUES (?, ?, ?, ?, ?, NOW())";
-        $insert_stmt = $agent_conn->prepare($insert_sql);
+        $insert_stmt = $main_conn->prepare($insert_sql);
         $insert_stmt->bind_param("issss", $agent_id, $name, $phone, $email, $message);
 
         if ($insert_stmt->execute()) {

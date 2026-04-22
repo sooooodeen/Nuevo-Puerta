@@ -1,7 +1,10 @@
-function deleteRow(btn) {
+async function deleteRow(btn) {
   const row = btn.closest('tr');
   const saleId = row.getAttribute('data-sale-id');
-  if (confirm('Are you sure you want to delete this sale?')) {
+  const proceed = (typeof showConfirmModal === 'function')
+    ? await showConfirmModal('Are you sure you want to delete this sale?')
+    : confirm('Are you sure you want to delete this sale?');
+  if (proceed) {
     fetch('delete_sale.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -180,8 +183,14 @@ function clearInputError(input) {
 }
 
 
-document.getElementById('add-sale-btn').addEventListener('click', addRow);
-document.getElementById('save-all-sales-btn').addEventListener('click', function() {
+const addSaleBtn = document.getElementById('add-sale-btn');
+if (addSaleBtn) {
+  addSaleBtn.addEventListener('click', addRow);
+}
+
+const saveAllSalesBtn = document.getElementById('save-all-sales-btn');
+if (saveAllSalesBtn) {
+  saveAllSalesBtn.addEventListener('click', function() {
   const rows = document.querySelectorAll('#sales-table-body tr.editing');
   if (rows.length === 0) {
     // Optionally show a message somewhere else
@@ -242,7 +251,8 @@ document.getElementById('save-all-sales-btn').addEventListener('click', function
       showSaleSuccess('Save failed: ' + (data.error || 'Unknown error'), true);
     }
   });
-});
+  });
+}
 
 
 
@@ -310,13 +320,60 @@ function filterTable() {
   });
 }
 
+function isAutoSalesMode() {
+  const salesSection = document.getElementById('section-sales');
+  return !!(salesSection && salesSection.dataset && salesSection.dataset.autoSales === '1');
+}
+
+function setSalesModeUi(autoMode) {
+  const addBtn = document.getElementById('add-sale-btn');
+  const saveBtn = document.getElementById('save-all-sales-btn');
+  const note = document.getElementById('sales-auto-note');
+
+  if (addBtn) addBtn.style.display = autoMode ? 'none' : '';
+  if (saveBtn) saveBtn.style.display = autoMode ? 'none' : '';
+  if (note) note.classList.toggle('hidden', !autoMode);
+
+  const ths = document.querySelectorAll('#section-sales thead th');
+  if (ths && ths.length >= 5) {
+    ths[4].textContent = autoMode ? 'Source' : 'Actions';
+  }
+}
+
 function fetchSales() {
-  fetch('sales.php')
+  const autoMode = isAutoSalesMode();
+  const endpoint = autoMode ? 'agent_dashboard.php?fetch=agent_sales_auto' : 'sales.php';
+  setSalesModeUi(autoMode);
+
+  fetch(endpoint)
     .then(res => res.json())
     .then(data => {
       const tbody = document.getElementById('sales-table-body');
+      if (!tbody) return;
       tbody.innerHTML = '';
+
+      if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-3 px-4 text-center text-gray-500">No sales records found.</td></tr>`;
+        return;
+      }
+
       data.forEach(row => {
+        const sourceLabel = row.source || 'Recorded';
+        const sourceBadge = sourceLabel === 'Closed'
+          ? '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Closed</span>'
+          : (sourceLabel === 'Ongoing'
+            ? '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Ongoing</span>'
+            : (sourceLabel === 'Reserved'
+              ? '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">Reserved</span>'
+              : '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">Recorded</span>'));
+
+        const actionCell = autoMode
+          ? sourceBadge
+          : `
+      <button class="bg-green-800 text-white px-3 py-1 rounded hover:bg-green-900 mr-2" onclick="editRow(this)">Edit</button>
+      <button class="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700" onclick="deleteRow(this)">Delete</button>
+    `;
+
         tbody.innerHTML += `
   <tr class="odd:bg-white even:bg-gray-50 border-b" data-sale-id="${row.id}">
     <td class="py-2 px-4">${row.property}</td>
@@ -324,12 +381,16 @@ function fetchSales() {
     <td class="py-2 px-4">${Number(row.sale_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
     <td class="py-2 px-4">${row.sale_date}</td>
     <td class="py-2 px-4">
-      <button class="bg-green-800 text-white px-3 py-1 rounded hover:bg-green-900 mr-2" onclick="editRow(this)">Edit</button>
-      <button class="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700" onclick="deleteRow(this)">Delete</button>
+      ${actionCell}
     </td>
   </tr>
 `;
       });
+    })
+    .catch(() => {
+      const tbody = document.getElementById('sales-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = `<tr><td colspan="5" class="py-3 px-4 text-center text-red-600">Failed to load sales records.</td></tr>`;
     });
 }
 
@@ -574,8 +635,11 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('DOMContentLoaded', function() {
   const logoutLink = document.getElementById('logout-link');
   if (logoutLink) {
-    logoutLink.addEventListener('click', function(e) {
-      if (!confirm('Are you sure you want to logout?')) {
+    logoutLink.addEventListener('click', async function(e) {
+      const proceed = (typeof showConfirmModal === 'function')
+        ? await showConfirmModal('Are you sure you want to logout?')
+        : confirm('Are you sure you want to logout?');
+      if (!proceed) {
         e.preventDefault();
       }
     });

@@ -377,6 +377,7 @@ button.btn.gray{background:#475569}
   </div>
 </div>
 
+<script src="assets/js/alert-modal.js"></script>
 <script>
 const Q = sel => document.querySelector(sel);
 const QA = sel => document.querySelectorAll(sel);
@@ -481,7 +482,8 @@ async function openEdit(id){
 }
 
 async function delProp(id){
-  if(!confirm('Delete this property?')) return;
+  const proceed = await showConfirmModal('Delete this property?');
+  if(!proceed) return;
   const fd = new FormData();
   fd.append('api','delete_property');
   fd.append('id',id);
