@@ -1,0 +1,2837 @@
+    10   1 if (isset($_SESSION['error_message'])) {
+    13   0 }
+    22   1 if ($conn->connect_error) {
+    24   0 }
+    27   1 function tableExists($conn, $tableName): bool {
+    29   2 if ($tableName === '') {
+    31   1 }
+    36   0 }
+    38   1 function columnExists($conn, $tableName, $columnName): bool {
+    41   2 if ($tableName === '' || $columnName === '') {
+    43   1 }
+    45   2 if (!tableExists($conn, $tableName)) {
+    47   1 }
+    53   0 }
+    55   1 function generateUniqueUserAccountNumber($conn): string {
+    57   2 for ($attempt = 0; $attempt < 12; $attempt++) {
+    61   3 if (!$check) {
+    63   2 }
+    71   3 if (!$exists) {
+    73   2 }
+    74   1 }
+    78   0 }
+    80   1 function normalizeLotStatus($status) {
+    82   2 if ($status === 'Installments') {
+    84   1 }
+    85   2 if ($status === 'Sold') {
+    87   1 }
+    88   2 if ($status === '') {
+    90   1 }
+    92   0 }
+    94   1 function deriveLotWorkflowStage($status, $paymentType) {
+    98   2 if ($normalizedStatus === 'Available') {
+   100   1 }
+   102   2 if ($normalizedStatus === 'Paid') {
+   104   1 }
+   106   2 if ($normalizedStatus === 'Installment') {
+   108   1 }
+   110   2 if ($normalizedStatus === 'Reserved' && $paymentType === 'Down Payment') {
+   112   1 }
+   114   2 if ($normalizedStatus === 'Reserved') {
+   116   1 }
+   119   0 }
+   121   1 function calculateNextMonthlyDueDate(int $dueDay, ?string $referenceDate = null): ?string {
+   122   2 if ($dueDay < 1 || $dueDay > 31) {
+   124   1 }
+   126   2 try {
+   130   1 }
+   136   2 if ($candidate < $base) {
+   140   1 }
+   143   0 }
+   145   1 function registerJsonFatalHandler() {
+   146   2 register_shutdown_function(function () {
+   148   3 if (!$error) {
+   150   2 }
+   153   3 if (!in_array($error['type'], $fatalTypes, true)) {
+   155   2 }
+   157   3 if (ob_get_length()) {
+   159   2 }
+   160   3 if (!headers_sent()) {
+   162   2 }
+   167   1 });
+   168   0 }
+   170   1 function parseSaleLotContext(?string $property, $lotNoRaw = null): array {
+   177   2 if ($property !== '') {
+   178   3 if (preg_match('/lot\s*(\d+)\s*[-,]?\s*block\s*(\d+)/i', $property, $m)) {
+   184   2 }
+   185   1 }
+   187   2 if ($lotNumber === null && $lotNoRaw !== '' && preg_match('/\d+/', $lotNoRaw, $m)) {
+   189   1 }
+   196   0 }
+   198   1 function resolveFallbackAgentIdForSale($conn, ?string $property, $lotNoRaw, array &$cache): ?int {
+   205   2 if (array_key_exists($cacheKey, $cache)) {
+   207   1 }
+   221   2 if ($lotNumber !== null && $blockNumber !== null && $hasLotsBlock && $hasLotsLotNo) {
+   223   3 if ($lotStmt) {
+   227   4 if ($lotRes && ($lotRow = $lotRes->fetch_assoc())) {
+   229   3 }
+   231   2 }
+   232   1 }
+   234   2 if ($lotId !== null && $hasLotsAgent) {
+   236   3 if ($lotAgentStmt) {
+   240   4 if ($lotAgentRes && ($lotAgentRow = $lotAgentRes->fetch_assoc())) {
+   242   5 if ($lotAgentId > 0) {
+   244   4 }
+   245   3 }
+   247   2 }
+   249   1 }
+   251   2 if ($resolvedAgentId === null && $lotId !== null && $hasViewingsLotId && $hasViewingsAgent) {
+   253   3 if ($viewingStmt) {
+   257   4 if ($viewingRes && ($viewingRow = $viewingRes->fetch_assoc())) {
+   259   3 }
+   261   2 }
+   262   1 }
+   264   2 if ($resolvedAgentId === null && $lotNoText !== '' && $hasViewingsLotNo && $hasViewingsAgent) {
+   266   3 if ($viewingByLotNoStmt) {
+   270   4 if ($viewingByLotNoRes && ($viewingByLotNoRow = $viewingByLotNoRes->fetch_assoc())) {
+   272   3 }
+   274   2 }
+   275   1 }
+   277   2 if ($resolvedAgentId === null && $lotNumber !== null && $hasViewingsLotNo && $hasViewingsAgent) {
+   280   3 if ($viewingByParsedLotNoStmt) {
+   284   4 if ($viewingByParsedLotNoRes && ($viewingByParsedLotNoRow = $viewingByParsedLotNoRes->fetch_assoc())) {
+   286   3 }
+   288   2 }
+   289   1 }
+   293   0 }
+   295   1 function buildTopAgentsLeaderboard($conn, ?string $dateFrom, ?string $dateTo, ?int $locationId, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprWithAlias, string $salesSc
+   298   2 if (!in_array($salesScope, $allowedSalesScopes, true)) {
+   300   1 }
+   301   2 if (!in_array($rankMode, $allowedRankModes, true)) {
+   303   1 }
+   308   2 if ($agentRes) {
+   309   3 while ($row = mysqli_fetch_assoc($agentRes)) {
+   329   2 }
+   330   1 }
+   334   2 if ($salesDateCol && $dateFrom) {
+   336   1 }
+   337   2 if ($salesDateCol && $dateTo) {
+   339   1 }
+   340   2 if ($salesLocationCol && $locationId) {
+   342   1 }
+   346   2 if ($salesRes) {
+   347   3 while ($row = mysqli_fetch_assoc($salesRes)) {
+   349   4 if ($agentId > 0 && isset($agents[$agentId])) {
+   352   3 }
+   353   2 }
+   354   1 }
+   358   2 if ($salesDateCol && $dateFrom) {
+   360   1 }
+   361   2 if ($salesDateCol && $dateTo) {
+   363   1 }
+   364   2 if ($salesLocationCol && $locationId) {
+   366   1 }
+   370   2 if ($fallbackRes) {
+   371   3 while ($row = mysqli_fetch_assoc($fallbackRes)) {
+   374   4 if ($agentId > 0 && isset($agents[$agentId])) {
+   377   3 }
+   378   2 }
+   379   1 }
+   403   2 if ($hasLotsTable) {
+   414   3 if ($hasLotsAgent) {
+   416   2 }
+   418   3 if ($hasLotsOwner && $hasUsersAgent) {
+   421   2 }
+   423   3 if ($hasViewingsTable && $hasViewingsAgent && $hasViewingsLotId) {
+   435   2 }
+   437   3 if ($hasViewingsTable && $hasViewingsAgent && $hasViewingsLotNo && $hasLotsLotNumber) {
+   452   2 }
+   468   3 if ($locationId && $hasLotsLocation) {
+   470   2 }
+   471   3 if ($lotDateCol && $dateFrom) {
+   473   2 }
+   474   3 if ($lotDateCol && $dateTo) {
+   476   2 }
+   480   3 if ($lotPortfolioRes) {
+   481   4 while ($row = mysqli_fetch_assoc($lotPortfolioRes)) {
+   483   5 if ($agentId > 0 && isset($agents[$agentId])) {
+   488   4 }
+   489   3 }
+   490   2 }
+   491   1 }
+   493   2 if ($hasViewingsTable && $hasViewingsAgent && $hasViewingsStatus) {
+   495   3 if ($hasViewingsLotId && $hasViewingsLotNo) {
+   511   2 }
+   517   3 if ($locationId && !$hasViewingsLocation && $hasLotsTable && $hasLotsLocation && $hasViewingsLotId) {
+   520   2 }
+   526   3 if ($viewingsDateCol && $dateFrom) {
+   528   2 }
+   529   3 if ($viewingsDateCol && $dateTo) {
+   531   2 }
+   532   3 if ($locationId && $hasViewingsLocation) {
+   536   2 }
+   541   3 if ($cancelledRes) {
+   542   4 while ($row = mysqli_fetch_assoc($cancelledRes)) {
+   544   5 if ($agentId > 0 && isset($agents[$agentId])) {
+   546   4 }
+   547   3 }
+   548   2 }
+   549   1 }
+   552   2 foreach ($agents as $agent) {
+   560   3 if ($salesScope === 'fully_paid_only') {
+   569   2 }
+   575   3 ) {
+   577   2 }
+   586   1 }
+   588   2 if ($rankMode === 'encouragement') {
+   589   3 usort($ranked, function ($a, $b) {
+   599   2 });
+   601   3 usort($ranked, function ($a, $b) {
+   611   2 });
+   612   1 }
+   615   0 }
+   617   1 function insertRecipientNotification($conn, $recipientType, $recipientId, $title, $message, $type = 'info') {
+   618   2 if (!tableExists($conn, 'notifications')) {
+   620   1 }
+   624   2 foreach ($candidateColumns as $col) {
+   625   3 if (columnExists($conn, 'notifications', $col)) {
+   627   2 }
+   628   1 }
+   631   2 if (!in_array('title', $columns, true) || !in_array('message', $columns, true)) {
+   633   1 }
+   642   2 foreach ($columns as $col) {
+   643   3 if ($col === 'recipient_type') {
+   657   2 }
+   658   1 }
+   662   0 }
+   664   1 function insertUserNotificationFeed($conn, $userId, $title, $message, $type = 'info') {
+   687   0 }
+   689   1 function sendSmsViaGateway($phoneRaw, $message, &$errorMessage = '') {
+   694   2 if ($apiUrl === '') {
+   697   1 }
+   700   2 if ($phone === '') {
+   703   1 }
+   711   2 if ($payload === false) {
+   714   1 }
+   720   2 if ($apiKey !== '') {
+   722   1 }
+   724   2 if (function_exists('curl_init')) {
+   736   3 if ($resp === false || $httpCode < 200 || $httpCode >= 300) {
+   739   2 }
+   741   1 }
+   745   0 }
+   747   1 function shouldUseSmtpForSystemMail(): bool {
+   750   0 }
+   752   1 function getSystemMailConfig(): array {
+   778   0 }
+   780   1 function ensureSystemMailerLoaded(): bool {
+   781   2 if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
+   783   1 }
+   791   2 foreach ($candidatePaths as $path) {
+   792   3 if (file_exists($path)) {
+   795   2 }
+   796   1 }
+   798   2 if ($basePath === null) {
+   800   1 }
+   807   0 }
+   809   1 function resolveSystemEmailLogoPath(): ?string {
+   817   2 foreach ($candidates as $candidate) {
+   818   3 if (is_file($candidate)) {
+   820   2 }
+   821   1 }
+   824   0 }
+   826   1 function buildSystemEmailHtml(string $bodyText, ?string $logoSrc = null): string {
+   831   2 if ($logoSrc !== null && $logoSrc !== '') {
+   834   1 }
+   852   0 }
+   854   1 function sendSystemEmail($to, $toName, $subject, $body, &$errorMessage = '', array $attachments = []): bool {
+   861   2 foreach ($attachments as $attachment) {
+   862   3 if (!is_array($attachment)) {
+   864   2 }
+   866   3 if ($path === '' || !is_file($path)) {
+   868   2 }
+   870   3 if ($name === '') {
+   872   2 }
+   874   1 }
+   876   2 if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+   879   1 }
+   881   2 if (shouldUseSmtpForSystemMail()) {
+   882   3 if (!ensureSystemMailerLoaded()) {
+   885   2 }
+   888   3 for ($attempt = 1; $attempt <= 2; $attempt++) {
+   889   4 try {
+   902   5 if ($logoPath !== null) {
+   905   4 }
+   906   5 foreach ($normalizedAttachments as $attachment) {
+   908   4 }
+   918   3 }
+   919   2 }
+   921   1 }
+   923   2 if (!empty($normalizedAttachments) && ensureSystemMailerLoaded()) {
+   924   3 try {
+   929   4 if ($logoPath !== null) {
+   932   3 }
+   933   4 foreach ($normalizedAttachments as $attachment) {
+   935   3 }
+   945   2 }
+   946   1 }
+   955   2 if ($logoPath !== null) {
+   957   3 if ($logoData !== false) {
+   961   2 }
+   962   1 }
+   967   2 if (!$sent) {
+   969   1 }
+   971   0 }
+  1052   1 isset($_GET['id'])) {
+  1062   0 }
+  1068   1 isset($_GET['fetch']) && $_GET['fetch'] === 'lookup_client') {
+  1081   2 if ($email !== '') {
+  1083   1 }
+  1085   2 if ($userPhoneColumn !== null && $phoneDigits !== '') {
+  1088   1 }
+  1091   2 if (empty($whereParts)) {
+  1094   1 }
+  1103   0 }
+  1112   1 if ($admin_id) {
+  1114   2 if ($row = mysqli_fetch_assoc($result)) {
+  1116   1 }
+  1117   0 }
+  1131   1 if ($clientResult) {
+  1134   0 }
+  1139   1 if ($lotsResult) {
+  1142   0 }
+  1147   1 if ($agentsResult) {
+  1150   0 }
+  1156   1 isset($_GET['fetch']) && $_GET['fetch'] === 'top_agents') {
+  1164   2 if (($date_from === null && !empty($_GET['date_from'])) || ($date_to === null && !empty($_GET['date_to']))) {
+  1168   1 }
+  1171   2 try {
+  1186   1 }
+  1188   0 }
+  1194   1 isset($_GET['fetch']) && $_GET['fetch'] === 'all_payments') {
+  1259   2 if ($result) {
+  1260   3 while ($row = mysqli_fetch_assoc($result)) {
+  1288   2 }
+  1289   1 }
+  1294   0 }
+  1300   1 isset($_GET['fetch']) && $_GET['fetch'] === 'payment_transactions') {
+  1305   2 if (!$lot_id) {
+  1309   1 }
+  1320   2 if ($txResult) {
+  1321   3 while ($row = mysqli_fetch_assoc($txResult)) {
+  1323   2 }
+  1324   1 }
+  1327   2 usort($transactions, function ($a, $b) {
+  1330   3 if ($da === $db) {
+  1332   2 }
+  1334   1 });
+  1339   0 }
+  1345   1 isset($_GET['fetch']) && $_GET['fetch'] === 'turnover_info') {
+  1347   2 if (!$lot_id) {
+  1351   1 }
+  1360   0 }
+  1366   1 isset($_GET['fetch']) && $_GET['fetch'] === 'all_lot_owners') {
+  1414   2 if ($result) {
+  1415   3 while ($row = mysqli_fetch_assoc($result)) {
+  1429   2 }
+  1430   1 }
+  1435   0 }
+  1443   1 isset($_POST['action']) && $_POST['action'] === 'save') {
+  1459   2 if ($commission_amount_raw !== '') {
+  1461   3 if (!is_numeric($normalizedCommission) || (float)$normalizedCommission < 0) {
+  1465   2 }
+  1467   1 }
+  1469   2 if (!in_array($payment_type, ['Down Payment', 'Fully Paid', 'Not Applicable'], true)) {
+  1473   1 }
+  1475   2 if ($payment_type === 'Down Payment' && $payment_deadline_raw !== '') {
+  1477   3 if (!$deadlineObj || $deadlineObj->format('Y-m-d') !== $payment_deadline_raw) {
+  1481   2 }
+  1483   1 }
+  1485   2 if ($status === 'Available') {
+  1494   3 if ($payment_amount_raw === '' || !is_numeric($payment_amount_raw) || (float)$payment_amount_raw <= 0) {
+  1498   2 }
+  1504   1 }
+  1506   2 if (!empty($_POST['lot_id'])) {
+  1522   3 if ($success) {
+  1526   2 }
+  1533   1 }
+  1538   0 }
+  1542   1 isset($_POST['action']) && $_POST['action'] === 'delete') {
+  1554   0 }
+  1558   1 isset($_POST['action']) && $_POST['action'] === 'bulk_delete') {
+  1561   2 if (!is_array($ids) || empty($ids)) {
+  1565   1 }
+  1577   0 }
+  1586   1 isset($_GET['fetch']) && $_GET['fetch'] === 'blueprint') {
+  1596   2 if (!$lot) {
+  1600   1 }
+  1620   2 if ($allPinsResult) {
+  1621   3 while ($row = mysqli_fetch_assoc($allPinsResult)) {
+  1627   2 }
+  1628   1 }
+  1640   0 }
+  1644   1 isset($_POST['action']) && $_POST['action'] === 'save_pin') {
+  1650   2 if (!$lot_id || !$coordinates) {
+  1654   1 }
+  1661   2 if ($exists) {
+  1669   1 }
+  1672   2 if ($success) {
+  1675   1 }
+  1683   0 }
+  1688   1 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'owner_users') {
+  1697   2 if ($result) {
+  1698   3 while ($row = mysqli_fetch_assoc($result)) {
+  1706   2 }
+  1707   1 }
+  1712   0 }
+  1714   1 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'owner_assignable_lots') {
+  1729   2 if ($result) {
+  1730   3 while ($row = mysqli_fetch_assoc($result)) {
+  1739   2 }
+  1740   1 }
+  1745   0 }
+  1749   1 isset($_GET['fetch']) && $_GET['fetch'] === 'pin_location') {
+  1762   0 }
+  1767   1 isset($_POST['action']) && $_POST['action'] === 'save_location') {
+  1774   2 if ($location_name === '' || $latitude == 0.0 || $longitude == 0.0) {
+  1777   1 }
+  1780   2 if (!$insertLocationStmt) {
+  1783   1 }
+  1789   2 if (!$success) {
+  1795   1 }
+  1801   2 if (isset($_FILES['blueprint']) && $_FILES['blueprint']['error'] === UPLOAD_ERR_OK) {
+  1805   3 if (in_array($ext, $allowed, true)) {
+  1807   4 if (!is_dir($uploadDir)) {
+  1809   3 }
+  1812   4 if (move_uploaded_file($_FILES['blueprint']['tmp_name'], $uploadDir . $newName)) {
+  1814   5 if ($stmt) {
+  1816   6 if (!$stmt->execute()) {
+  1818   5 }
+  1822   4 }
+  1825   3 }
+  1828   2 }
+  1829   1 }
+  1837   0 }
+  1843   1 isset($_POST['action']) && $_POST['action'] === 'update_lot_status') {
+  1849   2 if (!$lot_id || !in_array($status, ['Available', 'Reserved', 'Reservation', 'Installment', 'Installments', 'Sold', 'Paid'], true)) {
+  1852   1 }
+  1854   2 if ($status === 'Reservation') {
+  1856   1 }
+  1858   2 if ($status === 'Sold') {
+  1860   1 }
+  1862   2 if ($status === 'Installments' || $status === 'Installment') {
+  1874   1 }
+  1877   2 if ($success) {
+  1882   1 }
+  1884   0 }
+  1890   1 isset($_POST['action']) && $_POST['action'] === 'update_installment_plan') {
+  1899   2 if (!$lot_id) {
+  1902   1 }
+  1904   2 if ($termYears <= 0 || $termYears > 5) {
+  1907   1 }
+  1909   2 if ($dueDay < 1 || $dueDay > 31) {
+  1912   1 }
+  1915   2 if ($downPaymentRaw !== '') {
+  1916   3 if (!is_numeric($downPaymentRaw) || (float)$downPaymentRaw < 0) {
+  1919   2 }
+  1921   1 }
+  1924   2 if ($deadlineRaw !== '') {
+  1926   3 if (!$deadlineObj || $deadlineObj->format('Y-m-d') !== $deadlineRaw) {
+  1929   2 }
+  1933   3 if ($computedDeadline !== null) {
+  1936   2 }
+  1937   1 }
+  1941   2 if (!$lotCheck) {
+  1944   1 }
+  1947   2 if ($currentStatus === 'Paid') {
+  1950   1 }
+  1953   2 if ($lotPrice <= 0) {
+  1956   1 }
+  1958   2 if ($downPaymentAmount !== null && $downPaymentAmount >= $lotPrice) {
+  1961   1 }
+  1965   2 if ($remainingBalance <= 0 || $termMonths <= 0) {
+  1968   1 }
+  1971   2 if ($amount <= 0) {
+  1974   1 }
+  1989   2 if (!$ok) {
+  1992   1 }
+  2007   0 }
+  2013   1 isset($_POST['action']) && $_POST['action'] === 'add_payment_transaction') {
+  2022   2 if (!$lot_id || $amountRaw === '' || !is_numeric($amountRaw) || (float)$amountRaw <= 0) {
+  2025   1 }
+  2027   2 if ($payment_date === '') {
+  2029   1 }
+  2034   2 if (!$lot) {
+  2037   1 }
+  2047   2 if (!$ok) {
+  2050   1 }
+  2059   2 if ($totalPaid >= $lotPrice && $lotPrice > 0) {
+  2069   1 }
+  2124   2 if ($recipient) {
+  2127   3 if ($locationName !== '') {
+  2129   2 }
+  2140   3 if ($recipientUserId > 0) {
+  2157   2 }
+  2160   3 if ($recipientEmail !== '') {
+  2173   2 }
+  2174   1 }
+  2186   0 }
+  2192   1 isset($_POST['action']) && $_POST['action'] === 'mark_turnover_complete') {
+  2200   2 if (!$lot_id) {
+  2203   1 }
+  2205   2 if ($turnover_date === '') {
+  2207   1 }
+  2209   2 if ($remarks === '') {
+  2213   1 }
+  2228   2 if (!$isFullyPaid) {
+  2231   1 }
+  2234   2 if ($status !== 'Paid') {
+  2237   1 }
+  2249   2 if (!$ok) {
+  2252   1 }
+  2255   2 if (columnExists($conn, 'user_accounts', 'mobile_number')) {
+  2261   1 }
+  2285   2 if ($ownerRow && !empty($ownerRow['owner_id'])) {
+  2288   3 if ($locationName !== '') {
+  2290   2 }
+  2317   3 if ($ownerEmail !== '') {
+  2330   2 }
+  2331   1 }
+  2343   0 }
+  2349   1 isset($_POST['action']) && $_POST['action'] === 'remove_lot_owner') {
+  2354   2 if (!$lot_id) {
+  2357   1 }
+  2364   0 }
+  2369   1 if (isset($_GET['fetch'], $_GET['id']) && in_array($_GET['fetch'], ['admin', 'agent', 'user'], true)) {
+  2375   2 if ($type === 'admin') {
+  2387   3 if ($userPhoneColumn === null) {
+  2390   2 }
+  2394   1 }
+  2397   2 if (!$stmt) {
+  2400   1 }
+  2408   2 if (!$account) {
+  2412   1 }
+  2414   0 }
+  2418   1 isset($_POST['action']) && $_POST['action'] === 'delete_location') {
+  2421   2 if (!$location_id) {
+  2425   1 }
+  2432   2 if ($lotsCount > 0) {
+  2439   1 }
+  2444   2 if (tableExists($conn, 'blueprints')) {
+  2446   3 if ($blueprintRowsRes) {
+  2447   4 while ($bp = mysqli_fetch_assoc($blueprintRowsRes)) {
+  2449   5 if ($filename !== '') {
+  2453   6 if (is_file($filePath) && @unlink($filePath)) {
+  2455   5 }
+  2456   4 }
+  2457   3 }
+  2458   2 }
+  2462   3 if ($deletedBlueprintRowsRes === false) {
+  2469   2 }
+  2471   1 }
+  2484   0 }
+  2489   1 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'])) {
+  2494   2 set_error_handler(function($errno, $errstr, $errfile, $errline) {
+  2498   1 });
+  2503   2 if ($accountAction === 'add') {
+  2515   3 if ($raw_password === '') {
+  2518   2 }
+  2523   3 if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2525   2 }
+  2534   3 if (!$stmt) {
+  2537   2 }
+  2555   1 }
+  2558   2 if ($accountAction === 'update') {
+  2570   3 if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2572   2 }
+  2575   3 if (!empty($_POST['password'])) {
+  2583   4 if (!$stmt) {
+  2586   3 }
+  2602   4 if (!$stmt) {
+  2605   3 }
+  2613   2 }
+  2624   1 }
+  2627   2 if ($accountAction === 'delete') {
+  2632   3 if (!$stmt) {
+  2635   2 }
+  2646   1 }
+  2651   0 }
+  2660   1 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agent_action'])) {
+  2664   2 set_error_handler(function($errno, $errstr, $errfile, $errline) {
+  2668   1 });
+  2673   2 if ($action === 'add' || $action === 'update') {
+  2675   1 }
+  2678   2 if ($action === 'add') {
+  2693   3 if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2695   2 }
+  2704   3 if (!$stmt) {
+  2707   2 }
+  2716   3 try {
+  2727   4 if (stripos($rawError, 'Duplicate entry') !== false && stripos($rawError, 'username') !== false) {
+  2729   3 }
+  2735   2 }
+  2738   1 }
+  2741   2 if ($action === 'update') {
+  2752   3 if (isset($_FILES['photo']) && isset($_FILES['photo']['error']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2754   2 }
+  2756   3 if (!empty($_POST['password'])) {
+  2764   4 if (!$stmt) {
+  2767   3 }
+  2780   4 if (!$stmt) {
+  2783   3 }
+  2790   2 }
+  2800   1 }
+  2803   2 if ($action === 'delete') {
+  2808   3 if (!$stmt) {
+  2814   4 if ($stmt->execute()) {
+  2823   3 }
+  2825   2 }
+  2826   1 }
+  2832   2 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_action'])) {
+  2836   3 set_error_handler(function($errno, $errstr, $errfile, $errline) {
+  2840   2 });
+  2849   3 if ($userPhoneColumn === null) {
+  2852   2 }
+  2855   3 if ($userAction === 'add') {
+  2867   4 if ($userHasPhotoColumn && isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2869   3 }
+  2875   4 if ($userHasPhotoColumn) {
+  2879   3 }
+  2881   4 if ($userHasAccountNumberColumn) {
+  2883   5 if ($accountNumber === '') {
+  2887   6 if ($dupStmt) {
+  2891   7 if ($dupRes && $dupRes->fetch_assoc()) {
+  2895   6 }
+  2897   5 }
+  2898   4 }
+  2903   3 }
+  2909   4 if (!$stmt) {
+  2912   3 }
+  2924   2 }
+  2927   3 if ($userAction === 'update') {
+  2936   4 if ($user_id <= 0) {
+  2939   3 }
+  2956   4 if ($userHasPhotoColumn && isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+  2958   5 if ($photo_path !== null) {
+  2962   4 }
+  2963   3 }
+  2965   4 if (!empty($_POST['password'])) {
+  2970   3 }
+  2977   4 if (!$stmt) {
+  2980   3 }
+  2992   2 }
+  2995   3 if ($userAction === 'delete') {
+  2997   4 if ($user_id <= 0) {
+  3000   3 }
+  3003   4 if (!$stmt) {
+  3006   3 }
+  3017   2 }
+  3022   1 }
+  3027   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
+  3028   3 if ($_GET['fetch'] === 'lots') {
+  3031   4 if ($location_id > 0) {
+  3041   3 }
+  3045   4 if ($lotsResult) {
+  3046   5 while ($lot = mysqli_fetch_assoc($lotsResult)) {
+  3050   4 }
+  3051   3 }
+  3056   2 }
+  3058   3 if ($_GET['fetch'] === 'locations') {
+  3062   4 if ($locationsResult) {
+  3063   5 while ($row = mysqli_fetch_assoc($locationsResult)) {
+  3065   4 }
+  3066   3 }
+  3071   2 }
+  3072   1 }
+  3081   2 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'request') {
+  3108   3 if ($stmt->execute()) {
+  3112   2 }
+  3114   1 }
+  3117   2 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['viewing_action']) && $_POST['viewing_action'] === 'assign_agent') {
+  3123   3 if ($stmt) {
+  3125   4 if ($stmt->execute()) {
+  3129   3 }
+  3131   2 }
+  3134   1 }
+  3162   2 if ($viewingsResult) {
+  3163   3 while ($viewing = mysqli_fetch_assoc($viewingsResult)) {
+  3165   2 }
+  3166   1 }
+  3172   2 if ($agentsResult) {
+  3173   3 while ($agent = mysqli_fetch_assoc($agentsResult)) {
+  3175   2 }
+  3176   1 }
+  3187   2 if (!$accountsResult) {
+  3189   1 }
+  3190   2 while ($account = mysqli_fetch_assoc($accountsResult)) {
+  3192   1 }
+  3216   2 if (!$agentResult) {
+  3218   1 }
+  3220   2 while ($agent = mysqli_fetch_assoc($agentResult)) {
+  3222   1 }
+  3229   2 if ($userResult) {
+  3230   3 while ($user = mysqli_fetch_assoc($userResult)) {
+  3232   2 }
+  3233   1 }
+  3237   2 function handleFileUpload($file, $uploadDir = 'uploads/profiles/') {
+  3238   3 if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) {
+  3240   2 }
+  3242   3 if (!file_exists($uploadDir)) {
+  3244   2 }
+  3246   3 if (!in_array($file['type'], $allowedTypes)) {
+  3248   2 }
+  3252   3 if (move_uploaded_file($file['tmp_name'], $uploadPath)) {
+  3254   2 }
+  3256   1 }
+  3261   2 if ($salesAmountExprRoot) {
+  3264   3 if ($salesTotalResult) {
+  3267   2 }
+  3268   1 }
+  3270   2 function buildMonthlySalesTrend($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod
+  3274   3 if (!in_array($salesPeriod, $allowedSalesPeriods, true)) {
+  3276   2 }
+  3280   3 if ($agent_id) {
+  3286   2 }
+  3321   3 $buildTrendRows = function(string $sourceTable, string $dateCol, string $amountExpr, array $whereParts) use ($conn, $period, $salesPeriod): array {
+  3333   4 if (!empty($whereParts)) {
+  3335   3 }
+  3339   4 if ($res) {
+  3340   5 while ($row = mysqli_fetch_assoc($res)) {
+  3346   4 }
+  3347   3 }
+  3349   2 };
+  3351   3 if (tableExists($conn, 'lot_payment_transactions') && tableExists($conn, 'lots')) {
+  3358   4 if (!$date_from && !$date_to) {
+  3363   3 }
+  3365   2 }
+  3367   3 if (empty($monthlySales) && $salesAmountExprRoot && $salesDateCol) {
+  3374   4 if (!$date_from && !$date_to) {
+  3379   3 }
+  3381   2 }
+  3383   1 }
+  3385   2 function buildInstallmentDueOverview($conn, ?int $location_id = null): array {
+  3394   3 if (!tableExists($conn, 'lots') || !tableExists($conn, 'lot_payment_transactions')) {
+  3396   2 }
+  3431   3 if ($location_id) {
+  3433   2 }
+  3436   3 if (!$lotsRes) {
+  3438   2 }
+  3454   3 if ($location_id) {
+  3456   2 }
+  3459   3 if ($paymentsRes) {
+  3460   4 while ($paymentRow = mysqli_fetch_assoc($paymentsRes)) {
+  3462   5 if ($paymentLotId <= 0) {
+  3464   4 }
+  3466   5 if (!isset($paymentsByLot[$paymentLotId])) {
+  3468   4 }
+  3471   5 if ($paymentDay === '') {
+  3473   4 }
+  3479   3 }
+  3480   2 }
+  3482   3 while ($row = mysqli_fetch_assoc($lotsRes)) {
+  3494   4 if ($isFullyPaid) {
+  3496   3 }
+  3503   4 if (!$isInstallment) {
+  3505   3 }
+  3510   4 if ($dueDay < 1 || $dueDay > 31) {
+  3512   3 }
+  3518   4 if ($deadlineTs) {
+  3520   5 if ($currentMonthStart < $anchorMonthStart) {
+  3522   4 }
+  3523   3 }
+  3531   4 if ($requiredThisMonth <= 0) {
+  3533   3 }
+  3542   4 foreach ($lotPayments as $tx) {
+  3545   5 if ($txDay === '' || $txAmount <= 0) {
+  3547   4 }
+  3550   5 if ($txDay <= $todayText) {
+  3552   4 }
+  3553   5 if ($txDay <= $dueDateText) {
+  3555   4 }
+  3556   3 }
+  3561   4 if ($dueDate < $today) {
+  3562   5 if ($paidUntilDueDate + 0.00001 < $requiredThisMonth) {
+  3565   4 }
+  3567   5 if ($paidUntilToday + 0.00001 < $requiredThisMonth) {
+  3569   4 }
+  3570   3 }
+  3571   2 }
+  3574   1 }
+  3578   2 function normalizeAnalyticsDate($dateRaw): ?string {
+  3580   3 if ($dateRaw === '') {
+  3582   2 }
+  3585   3 foreach ($formats as $format) {
+  3587   4 if ($dateObj && $dateObj->format($format) === $dateRaw) {
+  3589   3 }
+  3590   2 }
+  3593   3 if ($ts !== false) {
+  3595   2 }
+  3598   1 }
+  3600   2 function getAnalyticsPeriodRange(string $salesPeriod): array {
+  3602   3 switch ($salesPeriod) {
+  3612   2 }
+  3613   1 }
+  3615   2 function getPrintableReportPeriodRange(string $salesPeriod): array {
+  3617   3 switch ($salesPeriod) {
+  3627   2 }
+  3628   1 }
+  3630   2 function buildAnalyticsSnapshot($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod =
+  3632   3 if (!in_array($salesPeriod, ['daily', 'weekly', 'monthly', 'yearly'], true)) {
+  3634   2 }
+  3637   3 if ($agent_id) {
+  3643   2 }
+  3645   3 if (tableExists($conn, 'lot_payment_transactions') && tableExists($conn, 'lots')) {
+  3661   2 }
+  3666   3 if ($location_id) {
+  3668   2 }
+  3672   3 if (tableExists($conn, 'lots')) {
+  3686   4 if ($lotSalesRes) {
+  3690   3 }
+  3691   2 }
+  3700   3 if ($location_id) {
+  3704   2 }
+  3719   1 }
+  3723   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'agents') {
+  3725   3 if (tableExists($conn, 'agent_accounts')) {
+  3728   4 if ($agentsRes) {
+  3729   5 while ($r = mysqli_fetch_assoc($agentsRes)) {
+  3731   4 }
+  3732   3 }
+  3733   2 }
+  3737   1 }
+  3739   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'reports_data') {
+  3745   3 if (!in_array($sales_period, ['daily', 'weekly', 'monthly', 'yearly', 'custom'], true)) {
+  3747   2 }
+  3748   3 if (!$date_from && !$date_to && $sales_period !== 'custom') {
+  3750   2 }
+  3752   3 if (($date_from === null && !empty($_GET['date_from'])) || ($date_to === null && !empty($_GET['date_to']))) {
+  3756   2 }
+  3757   3 if ($date_from && $date_to && strtotime($date_from) > strtotime($date_to)) {
+  3761   2 }
+  3775   3 if (tableExists($conn, 'agent_accounts')) {
+  3793   4 if ($agentsRes) {
+  3794   5 while ($row = mysqli_fetch_assoc($agentsRes)) {
+  3803   4 }
+  3804   3 }
+  3805   2 }
+  3808   3 if ($agent_id) {
+  3809   4 foreach ($agents as $agentRow) {
+  3810   5 if ((int)($agentRow['id'] ?? 0) === $agent_id) {
+  3813   4 }
+  3814   3 }
+  3815   4 if ($selectedAgentName === 'All Agents') {
+  3817   3 }
+  3818   2 }
+  3824   3 if (tableExists($conn, 'lots') && tableExists($conn, 'lot_locations')) {
+  3876   4 if ($location_id) {
+  3878   3 }
+  3883   4 if ($reportRes) {
+  3884   5 while ($row = mysqli_fetch_assoc($reportRes)) {
+  3896   6 if (!$isFullyPaid) {
+  3898   5 }
+  3901   6 if ($recordDate === '') {
+  3903   5 }
+  3904   6 if ($recordDate !== '') {
+  3906   5 }
+  3908   6 if ($date_from && $recordDate !== '' && $recordDate < $date_from) {
+  3910   5 }
+  3911   6 if ($date_to && $recordDate !== '' && $recordDate > $date_to) {
+  3913   5 }
+  3914   6 if ($agent_id && $resolvedAgentId !== $agent_id) {
+  3916   5 }
+  3937   4 }
+  3938   3 }
+  3939   2 }
+  3941   3 if (!$agent_id) {
+  3943   2 }
+  3946   3 foreach ($closedSales as $saleRow) {
+  3948   2 }
+  3973   1 }
+  3976   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['export']) && $_GET['export'] === 'analytics') {
+  3981   3 if (!in_array($sales_period, ['daily', 'weekly', 'monthly', 'yearly'], true)) {
+  3983   2 }
+  3985   3 if (($date_from === null && !empty($_GET['date_from'])) || ($date_to === null && !empty($_GET['date_to']))) {
+  3989   2 }
+  3990   3 if ($date_from && $date_to && strtotime($date_from) > strtotime($date_to)) {
+  3994   2 }
+  4070   3 if (empty($snapshot['monthly_sales'])) {
+  4073   4 foreach ($snapshot['monthly_sales'] as $row) {
+  4077   3 }
+  4078   2 }
+  4085   3 if (empty($topAgentsRows)) {
+  4088   4 foreach ($topAgentsRows as $row) {
+  4100   3 }
+  4101   2 }
+  4109   1 }
+  4117   2 function respondJSON($data) {
+  4122   1 }
+  4125   2 function logAudit($conn, $admin_id, $action, $details) {
+  4133   1 }
+  4136   2 function sendNotification($conn, $title, $message, $type = 'info') {
+  4144   1 }
+  4147   2 function safeUploadFile($fileKey, $folder = "uploads/documents/") {
+  4156   3 if (move_uploaded_file($_FILES[$fileKey]["tmp_name"], $path)) {
+  4158   2 }
+  4160   1 }
+  4162   2 function getDocumentPendingFilterSql($alias = 'd') {
+  4164   1 }
+  4166   2 function getPendingDocumentsCount($conn): int {
+  4169   3 if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
+  4172   4 if ($result && ($row = mysqli_fetch_assoc($result))) {
+  4174   3 }
+  4175   2 }
+  4177   3 if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
+  4180   4 if ($result && ($row = mysqli_fetch_assoc($result))) {
+  4182   3 }
+  4183   2 }
+  4186   1 }
+  4188   2 function updateDocumentReviewStatus($conn, $table, $doc_id, $status, $remarks = '', $admin_id = null) {
+  4189   3 if (!tableExists($conn, $table) || !columnExists($conn, $table, 'id') || !columnExists($conn, $table, 'status')) {
+  4191   2 }
+  4197   3 if (columnExists($conn, $table, 'reviewed_at')) {
+  4199   2 }
+  4200   3 if ($admin_id && columnExists($conn, $table, 'reviewed_by')) {
+  4202   2 }
+  4204   3 if ($status === 'rejected') {
+  4205   4 if (columnExists($conn, $table, 'progress_notes')) {
+  4207   3 }
+  4208   4 if (columnExists($conn, $table, 'remarks')) {
+  4210   3 }
+  4211   2 }
+  4215   3 if (!$ok) {
+  4217   2 }
+  4219   3 if (mysqli_affected_rows($conn) > 0) {
+  4221   2 }
+  4225   3 if ($check && mysqli_fetch_assoc($check)) {
+  4227   2 }
+  4230   1 }
+  4239   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'audit_logs') {
+  4241   3 if (!tableExists($conn, 'audit_logs')) {
+  4243   2 }
+  4252   3 if ($actionFilter !== '') {
+  4254   2 }
+  4255   3 if ($adminFilter !== '') {
+  4258   2 }
+  4259   3 if ($dateFrom !== '') {
+  4261   2 }
+  4262   3 if ($dateTo !== '') {
+  4264   2 }
+  4265   3 if ($search !== '') {
+  4268   2 }
+  4283   3 while ($row = mysqli_fetch_assoc($res)) {
+  4285   2 }
+  4288   1 }
+  4294   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications') {
+  4296   3 if (!tableExists($conn, 'notifications')) {
+  4298   2 }
+  4307   3 if ($typeFilter !== '' && in_array($typeFilter, $allowedTypes, true)) {
+  4309   2 }
+  4310   3 if ($dateFrom !== '') {
+  4312   2 }
+  4313   3 if ($dateTo !== '') {
+  4315   2 }
+  4316   3 if ($search !== '') {
+  4319   2 }
+  4326   3 while ($row = mysqli_fetch_assoc($res)) {
+  4328   2 }
+  4331   1 }
+  4337   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'notifications_count') {
+  4339   3 if (!tableExists($conn, 'notifications')) {
+  4341   2 }
+  4347   1 }
+  4353   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'documents') {
+  4364   3 if (tableExists($conn, 'user_documents') && columnExists($conn, 'user_documents', 'status')) {
+  4366   4 if ($statusFilter !== '' && $statusFilter !== 'all' && in_array($statusFilter, $userDocAllowedStatuses, true)) {
+  4370   3 }
+  4371   4 if ($typeFilter !== '' && columnExists($conn, 'user_documents', 'doc_type')) {
+  4373   3 }
+  4374   4 if ($dateFrom !== '') {
+  4376   3 }
+  4377   4 if ($dateTo !== '') {
+  4379   3 }
+  4380   4 if ($search !== '') {
+  4383   3 }
+  4406   4 while ($row = mysqli_fetch_assoc($res)) {
+  4408   3 }
+  4411   2 }
+  4413   3 if (tableExists($conn, 'documents') && columnExists($conn, 'documents', 'status')) {
+  4415   4 if ($statusFilter !== '' && $statusFilter !== 'all' && in_array($statusFilter, $legacyDocAllowedStatuses, true)) {
+  4419   3 }
+  4420   4 if ($typeFilter !== '') {
+  4421   5 if (columnExists($conn, 'documents', 'doc_type')) {
+  4425   4 }
+  4426   3 }
+  4427   4 if ($dateFrom !== '') {
+  4429   3 }
+  4430   4 if ($dateTo !== '') {
+  4432   3 }
+  4433   4 if ($search !== '') {
+  4440   5 if ($searchParts) {
+  4442   4 }
+  4443   3 }
+  4450   4 while ($row = mysqli_fetch_assoc($res)) {
+  4452   3 }
+  4455   2 }
+  4458   1 }
+  4464   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'documents_count') {
+  4466   1 }
+  4476   2 if (isset($_POST["action"]) && $_POST["action"] === "approve_document") {
+  4483   3 if ($doc_source === 'user_documents') {
+  4485   2 }
+  4487   3 if (!$updated) {
+  4489   2 }
+  4491   3 if (!$updated) {
+  4493   2 }
+  4499   1 }
+  4505   2 if (isset($_POST["action"]) && $_POST["action"] === "reject_document") {
+  4513   3 if ($doc_source === 'user_documents') {
+  4515   2 }
+  4517   3 if (!$updated) {
+  4519   2 }
+  4521   3 if (!$updated) {
+  4523   2 }
+  4529   1 }
+  4535   2 if (isset($_POST["action"]) && $_POST["action"] === "upload_document") {
+  4555   1 }
+  4560   2 if (isset($_GET['fetch']) && $_GET['fetch'] === 'user_list') {
+  4563   3 if ($res) {
+  4564   4 while ($row = mysqli_fetch_assoc($res)) {
+  4566   3 }
+  4567   2 }
+  4569   1 }
+  4574   2 if (isset($_POST['action']) && $_POST['action'] === 'admin_upload_document') {
+  4575   3 try {
+  4581   4 if ($user_id <= 0) {
+  4583   3 }
+  4584   4 if (!in_array($doc_type, $allowed_types, true)) {
+  4586   3 }
+  4589   4 if (!isset($_FILES['admin_doc_file']) || $uploadError !== UPLOAD_ERR_OK) {
+  4590   5 $errMsg = match((int)$uploadError) {
+  4594   4 };
+  4596   3 }
+  4600   4 if (!in_array($ext, $allowed_exts, true)) {
+  4602   3 }
+  4605   4 if (!is_dir($folder)) {
+  4606   5 if (!@mkdir($folder, 0777, true)) {
+  4608   4 }
+  4609   3 }
+  4615   4 if (!move_uploaded_file($_FILES['admin_doc_file']['tmp_name'], $destPath)) {
+  4617   3 }
+  4655   4 if (!mysqli_query($conn, $insertSql)) {
+  4657   3 }
+  4668   4 if ($userInfoRes && ($userInfo = mysqli_fetch_assoc($userInfoRes))) {
+  4671   3 }
+  4674   4 if ($lot_id !== null && $lot_id > 0) {
+  4681   5 if ($lotRes && ($lotRow = mysqli_fetch_assoc($lotRes))) {
+  4684   6 if ($locationName !== '') {
+  4686   5 }
+  4687   4 }
+  4688   3 }
+  4690   4 if ($recipientEmail !== '') {
+  4716   3 }
+  4732   2 }
+  4733   1 }
+  4734   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'all_user_documents') {
+  4735   3 if (!tableExists($conn, 'user_documents')) {
+  4739   2 }
+  4753   3 while ($row = $res->fetch_assoc()) {
+  4755   2 }
+  4760   1 }
+  4763   2 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_user_lots') {
+  4765   3 if ($user_id <= 0) {
+  4769   2 }
+  4772   3 if (tableExists($conn, 'lots') && columnExists($conn, 'lots', 'owner_id')) {
+  4773   4 try {
+  4781   5 if (tableExists($conn, 'user_accounts') && columnExists($conn, 'user_accounts', 'email')) {
+  4783   6 if ($emailStmt) {
+  4787   7 if ($emailRes && ($emailRow = $emailRes->fetch_assoc())) {
+  4789   6 }
+  4791   5 }
+  4792   4 }
+  4795   5 if ($hasBlockNumber) {
+  4799   4 }
+  4800   5 if ($hasLotNumber) {
+  4804   4 }
+  4805   5 if ($hasLotLocations && $hasLocationId) {
+  4809   4 }
+  4814   5 if ($hasLotLocations && $hasLocationId) {
+  4816   4 }
+  4818   5 if ($hasViewings) {
+  4820   4 }
+  4823   5 if ($hasViewings && $userEmail !== '') {
+  4825   4 }
+  4830   5 if (!$stmt) {
+  4832   4 }
+  4834   5 if ($hasViewings && $userEmail !== '') {
+  4838   4 }
+  4842   5 while ($row = $res->fetch_assoc()) {
+  4844   4 }
+  4850   3 }
+  4851   2 }
+  4856   1 }
+  4869   2 document.addEventListener('DOMContentLoaded', function() {
+  4870   3 setTimeout(function() {
+  4871   4 document.querySelectorAll('.alert.success, .alert.error').forEach(function(el) {
+  4873   3 });
+  4874   2 }, 3000);
+  4875   1 });
+  4878   2 * {
+  4883   1 }
+  4886   2 body {
+  4890   1 }
+  4892   2 body {
+  4898   1 }
+  4900   2 .sidebar-wrapper {
+  4910   1 }
+  4913   2 button, input[type="button"], input[type="submit"], .btn {
+  4925   1 }
+  4927   2 .user-profile {
+  4938   1 }
+  4940   2 .user-profile img {
+  4947   1 }
+  4949   2 .user-details {
+  4953   1 }
+  4955   2 .user-details div:first-child {
+  4959   1 }
+  4961   2 .user-details div:last-child {
+  4964   1 }
+  4966   2 select, textarea {
+  4977   1 }
+  4979   2 input:focus, textarea:focus, select:focus {
+  4982   1 }
+  4984   2 .form-group label {
+  4989   1 }
+  4991   2 .sidebar {
+  5004   1 }
+  5007   2 .sidebar::-webkit-scrollbar {
+  5009   1 }
+  5010   2 .sidebar::-webkit-scrollbar-track {
+  5012   1 }
+  5013   2 .sidebar::-webkit-scrollbar-thumb {
+  5016   1 }
+  5017   2 .sidebar::-webkit-scrollbar-thumb:hover {
+  5019   1 }
+  5021   2 .user-profile {
+  5033   1 }
+  5035   2 .user-profile img {
+  5043   1 }
+  5045   2 .user-details {
+  5049   1 }
+  5051   2 .user-details div:first-child {
+  5054   1 }
+  5056   2 .user-details div:last-child {
+  5059   1 }
+  5061   2 .nav {
+  5070   1 }
+  5073   2 .nav a {
+  5088   1 }
+  5091   2 .nav a.active {
+  5095   1 }
+  5097   2 .nav-icon {
+  5103   1 }
+  5106   2 .nav-icon-eye {
+  5113   1 }
+  5115   2 .container {
+  5126   1 }
+  5128   2 .table-section {
+  5134   1 }
+  5136   2 .divider {
+  5143   1 }
+  5146   2 .logout-icon {
+  5150   1 }
+  5152   2 .header {
+  5159   1 }
+  5161   2 .header h2 {
+  5164   1 }
+  5166   2 .header small {
+  5169   1 }
+  5171   2 .dashboard-cards {
+  5176   1 }
+  5178   2 .card {
+  5189   1 }
+  5191   2 .system-overview-panel {
+  5196   1 }
+  5198   2 .system-overview-top-grid {
+  5203   1 }
+  5205   2 .system-overview-top-card {
+  5216   1 }
+  5218   2 .system-overview-top-number {
+  5222   1 }
+  5224   2 .system-overview-top-label {
+  5228   1 }
+  5230   2 .system-overview-details-grid {
+  5235   1 }
+  5237   2 .system-overview-detail-card {
+  5247   1 }
+  5249   2 .system-overview-block-title {
+  5256   1 }
+  5258   2 .system-overview-row {
+  5266   1 }
+  5268   2 .system-overview-row:last-child {
+  5270   1 }
+  5272   2 .system-overview-row > strong {
+  5275   1 }
+  5277   2 .notifications-container {
+  5284   1 }
+  5286   2 #section-notifications.active {
+  5290   1 }
+  5292   2 #section-notifications .table-section {
+  5296   1 }
+  5298   2 #section-notifications .notifications-container {
+  5300   1 }
+  5302   2 .notification-item {
+  5306   1 }
+  5308   2 .notification-item:last-child {
+  5310   1 }
+  5312   2 .notification-item-title {
+  5315   1 }
+  5317   2 .notification-item-message {
+  5319   1 }
+  5321   2 .notification-item-time {
+  5325   1 }
+  5327   2 @media (max-width: 992px) {
+  5328   3 body {
+  5331   2 }
+  5333   3 .sidebar-wrapper {
+  5337   2 }
+  5339   3 .sidebar {
+  5343   2 }
+  5345   3 .nav {
+  5353   2 }
+  5355   3 .nav a {
+  5361   2 }
+  5363   3 .container {
+  5370   2 }
+  5372   3 .header h2 {
+  5374   2 }
+  5376   3 .table-section {
+  5378   2 }
+  5380   3 #section-notifications.active {
+  5382   2 }
+  5384   3 #section-notifications .notifications-container {
+  5386   2 }
+  5387   1 }
+  5389   2 .card-content {
+  5393   1 }
+  5395   2 .card-text {
+  5401   1 }
+  5403   2 .card-title {
+  5408   1 }
+  5410   2 .card-subtitle {
+  5414   1 }
+  5416   2 .card-icon {
+  5426   1 }
+  5428   2 .card-number {
+  5432   1 }
+  5434   2 .section {
+  5436   1 }
+  5439   2 .section.active {
+  5442   1 }
+  5444   2 @keyframes fadeIn {
+  5447   1 }
+  5449   2 .table-section {
+  5458   1 }
+  5460   2 .table-section table {
+  5465   1 }
+  5468   2 .table-section td {
+  5472   1 }
+  5474   2 #lots-table {
+  5476   1 }
+  5478   2 #section-lots .table-section {
+  5480   1 }
+  5482   2 #section-lots .table-section table {
+  5484   1 }
+  5487   2 #lots-table td:first-child {
+  5490   1 }
+  5495   2 #lots-table td:nth-child(3) {
+  5497   1 }
+  5504   2 #lots-table td:nth-child(6) {
+  5506   1 }
+  5509   2 #lots-table td:nth-child(7) {
+  5511   1 }
+  5514   2 #lots-table td:last-child {
+  5516   1 }
+  5518   2 #new-row td {
+  5522   1 }
+  5525   2 #new-row select {
+  5534   1 }
+  5537   2 #new-row select:focus {
+  5541   1 }
+  5543   2 .new-lot-actions {
+  5547   1 }
+  5549   2 .new-lot-actions button {
+  5552   1 }
+  5554   2 #section-lots .location-dropdown {
+  5560   1 }
+  5562   2 #section-lots .location-dropdown label {
+  5564   1 }
+  5566   2 #section-lots .location-dropdown select {
+  5569   1 }
+  5571   2 @media (max-width: 1100px) {
+  5572   3 #section-lots .table-section {
+  5574   2 }
+  5576   3 #lots-table {
+  5578   2 }
+  5580   3 #section-lots .table-section table {
+  5582   2 }
+  5583   1 }
+  5585   2 @media (max-width: 768px) {
+  5587   3 #new-row select {
+  5590   2 }
+  5592   3 .new-lot-actions {
+  5594   2 }
+  5596   3 .new-lot-actions button {
+  5598   2 }
+  5599   1 }
+  5601   2 .lots-action-buttons {
+  5605   1 }
+  5607   2 .table-section thead {
+  5610   1 }
+  5612   2 .table-section th, .table-section td {
+  5616   1 }
+  5618   2 .table-section tbody tr:hover {
+  5620   1 }
+  5622   2 .table-section thead tr:hover {
+  5624   1 }
+  5626   2 .table-section button, .btn {
+  5636   1 }
+  5638   2 .table-section button:hover, .btn:hover {
+  5640   1 }
+  5642   2 .btn-danger {
+  5644   1 }
+  5646   2 .btn-danger:hover {
+  5648   1 }
+  5650   2 .form-group {
+  5652   1 }
+  5654   2 .form-group label {
+  5659   1 }
+  5661   2 .form-group input, .form-group select {
+  5667   1 }
+  5669   2 .form-row {
+  5672   1 }
+  5674   2 .alert {
+  5679   1 }
+  5681   2 .alert.success {
+  5685   1 }
+  5687   2 .alert.error {
+  5691   1 }
+  5693   2 .location-dropdown {
+  5695   1 }
+  5697   2 .status-badge {
+  5703   1 }
+  5705   2 .status-scheduled {
+  5707   1 }
+  5709   2 .status-pending, .status-requested {
+  5712   1 }
+  5714   2 .status-completed {
+  5716   1 }
+  5718   2 .status-cancelled {
+  5720   1 }
+  5722   2 #section-viewings .table-section table {
+  5724   1 }
+  5726   2 #section-viewings .table-section {
+  5728   1 }
+  5730   2 #section-viewings table {
+  5732   1 }
+  5735   2 #section-viewings td {
+  5737   1 }
+  5740   2 #section-viewings .table-section td:nth-child(1) {
+  5742   1 }
+  5745   2 #section-viewings .table-section td:nth-child(2) {
+  5747   1 }
+  5750   2 #section-viewings .table-section td:nth-child(3) {
+  5752   1 }
+  5755   2 #section-viewings .table-section td:nth-child(4) {
+  5757   1 }
+  5760   2 #section-viewings .table-section td:nth-child(5) {
+  5762   1 }
+  5765   2 #section-viewings .table-section td:nth-child(6) {
+  5768   1 }
+  5771   2 #section-viewings .table-section td:nth-child(7) {
+  5774   1 }
+  5776   2 #section-viewings .status-badge {
+  5779   1 }
+  5781   2 .viewing-actions {
+  5785   1 }
+  5787   2 .viewing-assigned-card {
+  5795   1 }
+  5797   2 .viewing-assigned-label {
+  5803   1 }
+  5805   2 .viewing-assigned-name {
+  5810   1 }
+  5812   2 .viewing-client-meta {
+  5816   1 }
+  5818   2 .viewing-lot-details {
+  5823   1 }
+  5825   2 .viewing-lot-row {
+  5830   1 }
+  5832   2 .viewing-lot-label {
+  5837   1 }
+  5839   2 .viewing-lot-value {
+  5843   1 }
+  5845   2 .viewing-date-pill {
+  5858   1 }
+  5860   2 .viewing-assignment-form {
+  5865   1 }
+  5867   2 .viewing-assignment-form select {
+  5876   1 }
+  5878   2 .viewing-assignment-buttons {
+  5882   1 }
+  5884   2 .viewing-assignment-buttons .btn-small {
+  5886   1 }
+  5888   2 @media (max-width: 1100px) {
+  5889   3 #section-viewings .table-section {
+  5891   2 }
+  5893   3 #section-viewings .table-section table {
+  5895   2 }
+  5897   3 .viewing-assignment-buttons {
+  5899   2 }
+  5901   3 .viewing-assignment-buttons .btn-small {
+  5903   2 }
+  5904   1 }
+  5906   2 @media (max-width: 768px) {
+  5907   3 #section-viewings .table-section {
+  5909   2 }
+  5911   3 .viewing-actions {
+  5913   2 }
+  5915   3 .viewing-assigned-card {
+  5917   2 }
+  5919   3 .viewing-lot-details {
+  5921   2 }
+  5922   1 }
+  5924   2 .btn-assign {
+  5932   1 }
+  5934   2 .btn-assign:hover {
+  5936   1 }
+  5938   2 .account-type-nav {
+  5943   1 }
+  5945   2 .account-type-nav a {
+  5956   1 }
+  5958   2 .account-type-nav a:first-child {
+  5960   1 }
+  5962   2 .account-type-nav a:last-child {
+  5964   1 }
+  5966   2 .account-type-nav a:hover {
+  5970   1 }
+  5972   2 .account-type-nav a.active {
+  5977   1 }
+  5979   2 .account-type-nav a.active:hover {
+  5982   1 }
+  5984   2 .account-section {
+  5991   1 }
+  5993   2 .account-section.active {
+  5995   1 }
+  5997   2 .form-container {
+  6003   1 }
+  6005   2 .form-title {
+  6012   1 }
+  6014   2 .form-section {
+  6016   1 }
+  6018   2 .form-section-title {
+  6025   1 }
+  6027   2 .form-group {
+  6029   1 }
+  6031   2 .form-group label {
+  6037   1 }
+  6041   2 .form-group textarea {
+  6049   1 }
+  6053   2 .form-group textarea:focus {
+  6056   1 }
+  6058   2 .form-row {
+  6062   1 }
+  6064   2 .form-row-three {
+  6068   1 }
+  6070   2 .photo-upload-section {
+  6076   1 }
+  6078   2 .photo-preview {
+  6086   1 }
+  6088   2 .photo-placeholder {
+  6100   1 }
+  6102   2 .file-input-wrapper {
+  6105   1 }
+  6107   2 .file-input-wrapper input[type=file] {
+  6113   1 }
+  6115   2 .file-input-label {
+  6124   1 }
+  6126   2 .file-input-label:hover {
+  6128   1 }
+  6130   2 .availability-toggle {
+  6138   1 }
+  6140   2 .toggle-switch {
+  6144   1 }
+  6146   2 .toggle-switch input {
+  6150   1 }
+  6152   2 .slider {
+  6162   1 }
+  6164   2 .slider:before {
+  6174   1 }
+  6176   2 input:checked + .slider {
+  6178   1 }
+  6180   2 input:checked + .slider:before {
+  6182   1 }
+  6184   2 .location-section {
+  6189   1 }
+  6191   2 .location-controls {
+  6195   1 }
+  6197   2 .btn-location {
+  6206   1 }
+  6208   2 .btn-location:hover {
+  6211   1 }
+  6213   2 .btn-primary {
+  6223   1 }
+  6225   2 .btn-primary:hover {
+  6227   1 }
+  6229   2 .location-status {
+  6235   1 }
+  6237   2 .location-success {
+  6241   1 }
+  6243   2 .location-error {
+  6247   1 }
+  6249   2 .accounts-table {
+  6254   1 }
+  6256   2 .accounts-table h3 {
+  6264   1 }
+  6266   2 .accounts-table table {
+  6269   1 }
+  6271   2 .accounts-table th {
+  6279   1 }
+  6281   2 .accounts-table td {
+  6286   1 }
+  6288   2 .accounts-table tbody tr:hover {
+  6290   1 }
+  6292   2 .profile-photo {
+  6298   1 }
+  6300   2 .profile-placeholder {
+  6311   1 }
+  6313   2 .status-active {
+  6320   1 }
+  6322   2 .status-inactive {
+  6329   1 }
+  6331   2 .btn-small {
+  6341   1 }
+  6343   2 .btn-small:hover {
+  6346   1 }
+  6348   2 .accounts-table td .btn-small {
+  6350   1 }
+  6352   2 .accounts-table td form {
+  6355   1 }
+  6357   2 .accounts-table tbody td:last-child {
+  6362   1 }
+  6364   2 .btn-danger {
+  6368   1 }
+  6370   2 .btn-danger:hover {
+  6373   1 }
+  6375   2 .payments-toolbar {
+  6377   1 }
+  6379   2 .payment-search-input {
+  6388   1 }
+  6390   2 .payment-search-input:focus {
+  6394   1 }
+  6396   2 .payments-table {
+  6405   1 }
+  6407   2 .payments-table thead tr {
+  6409   1 }
+  6411   2 .payments-table th {
+  6420   1 }
+  6422   2 .payments-table td {
+  6428   1 }
+  6431   2 .payments-table td:nth-child(1) {
+  6434   1 }
+  6437   2 .payments-table td:nth-child(2) {
+  6440   1 }
+  6443   2 .payments-table td:nth-child(3) {
+  6445   1 }
+  6448   2 .payments-table td:nth-child(4) {
+  6450   1 }
+  6453   2 .payments-table td:nth-child(5) {
+  6455   1 }
+  6462   2 .payments-table td:nth-child(8) {
+  6464   1 }
+  6467   2 .payments-table td:nth-child(9) {
+  6469   1 }
+  6472   2 .payments-table tbody td:last-child {
+  6477   1 }
+  6479   2 .payments-table tbody tr:nth-child(even) {
+  6481   1 }
+  6483   2 .payments-table td.col-location {
+  6488   1 }
+  6490   2 .payments-table td.col-owner {
+  6494   1 }
+  6496   2 .payments-table td.col-actions {
+  6500   1 }
+  6502   2 .payments-table tbody tr {
+  6504   1 }
+  6506   2 .payments-table tbody tr:hover {
+  6508   1 }
+  6511   2 .payments-table tbody td:nth-child(2) {
+  6514   1 }
+  6517   2 .workflow-chip {
+  6528   1 }
+  6530   2 .workflow-chip {
+  6533   1 }
+  6547   2 .amount-balance {
+  6550   1 }
+  6553   2 .amount-price {
+  6555   1 }
+  6557   2 .amount-balance {
+  6559   1 }
+  6564   2 .workflow-block {
+  6574   1 }
+  6576   2 .workflow-head {
+  6585   1 }
+  6587   2 .workflow-title {
+  6596   1 }
+  6598   2 .workflow-meta {
+  6606   1 }
+  6608   2 .workflow-progress {
+  6611   1 }
+  6613   2 .workflow-progress-head {
+  6619   1 }
+  6621   2 .workflow-progress-percent {
+  6625   1 }
+  6627   2 .workflow-progress-track {
+  6632   1 }
+  6634   2 .workflow-progress-fill {
+  6639   1 }
+  6641   2 .payment-owner-empty {
+  6644   1 }
+  6647   2 .payment-actions.payment-actions-image-ref {
+  6657   1 }
+  6659   2 .payment-action-btn {
+  6677   1 }
+  6678   2 .payment-action-btn:hover:not(:disabled) {
+  6681   1 }
+  6682   2 .payment-action-btn:active:not(:disabled) {
+  6684   1 }
+  6686   2 .payment-action-btn:disabled {
+  6691   1 }
+  6693   2 .payment-actions .btn-small {
+  6714   1 }
+  6716   2 .payment-actions .btn-installment {
+  6720   1 }
+  6721   2 .payment-actions .btn-installment:hover {
+  6725   1 }
+  6727   2 .payment-actions .btn-record-payment {
+  6731   1 }
+  6732   2 .payment-actions .btn-record-payment:hover {
+  6736   1 }
+  6738   2 .payment-actions .btn-history {
+  6743   1 }
+  6744   2 .payment-actions .btn-history:hover {
+  6748   1 }
+  6750   2 .payment-actions .btn-turnover {
+  6754   1 }
+  6755   2 .payment-actions .btn-turnover:hover {
+  6759   1 }
+  6762   2 .payment-actions .btn-small:disabled {
+  6766   1 }
+  6768   2 .payment-action-disabled {
+  6774   1 }
+  6776   2 @media (max-width: 960px) {
+  6777   3 .payments-toolbar {
+  6780   2 }
+  6782   3 .payment-search-wrap {
+  6785   2 }
+  6786   1 }
+  6788   2 @media (max-width: 560px) {
+  6789   3 .payments-toolbar {
+  6791   2 }
+  6793   3 .payments-toolbar-copy h3 {
+  6795   2 }
+  6797   3 .payments-table-shell {
+  6799   2 }
+  6801   3 .payment-actions {
+  6803   2 }
+  6805   3 .payment-actions .action-turnover {
+  6807   2 }
+  6809   3 .payment-actions .action-history {
+  6811   2 }
+  6813   3 .workflow-block {
+  6815   2 }
+  6816   1 }
+  6818   2 .payments-toolbar-copy .payments-eyebrow {
+  6821   1 }
+  6823   2 .payments-toolbar-copy h3 {
+  6825   1 }
+  6827   2 .payment-btn {
+  6838   1 }
+  6840   2 .payment-btn:hover {
+  6845   1 }
+  6847   2 .payment-btn:active {
+  6850   1 }
+  6852   2 .payment-btn:focus-visible {
+  6855   1 }
+  6857   2 .payment-btn-secondary {
+  6862   1 }
+  6864   2 .payment-btn-secondary:hover {
+  6869   1 }
+  6871   2 .payment-btn-primary {
+  6873   1 }
+  6875   2 .empty-state {
+  6882   1 }
+  6884   2 .lot-action-btn {
+  6892   1 }
+  6894   2 .lot-action-btn:hover {
+  6897   1 }
+  6899   2 .lot-action-btn-blueprint {
+  6902   1 }
+  6904   2 .lot-action-btn-edit {
+  6907   1 }
+  6909   2 .lot-action-btn-delete {
+  6912   1 }
+  6914   2 .pin-modal-overlay {
+  6923   1 }
+  6925   2 .pin-modal-card {
+  6935   1 }
+  6937   2 .pin-modal-header {
+  6945   1 }
+  6947   2 .pin-modal-title {
+  6951   1 }
+  6953   2 .pin-modal-close {
+  6960   1 }
+  6962   2 .pin-modal-close:hover {
+  6964   1 }
+  6966   2 .pin-modal-content {
+  6971   1 }
+  6973   2 .pin-status-row {
+  6978   1 }
+  6980   2 .pin-status-btn {
+  6988   1 }
+  6990   2 .pin-status-btn:hover {
+  6992   1 }
+  6994   2 .pin-status-btn-available {
+  6997   1 }
+  6999   2 .pin-status-btn-reserved {
+  7002   1 }
+  7004   2 .pin-status-btn-sold {
+  7007   1 }
+  7009   2 .pin-modal-help {
+  7015   1 }
+  7017   2 .blueprint-stage {
+  7027   1 }
+  7029   2 .blueprint-wrapper {
+  7032   1 }
+  7034   2 #blueprintImage {
+  7039   1 }
+  7041   2 #blueprintCanvas {
+  7048   1 }
+  7050   2 .pin-modal-footer {
+  7059   1 }
+  7061   2 .pin-modal-footer-btn {
+  7069   1 }
+  7075   2 @media (max-width: 768px) {
+  7076   3 .pin-modal-card {
+  7079   2 }
+  7083   3 .pin-modal-footer {
+  7085   2 }
+  7087   3 .blueprint-stage {
+  7089   2 }
+  7090   1 }
+  7092   2 textarea {
+  7095   1 }
+  7097   2 .status-reschedule_requested {
+  7100   1 }
+  8203   2 if (!empty($viewing['agent_id'])) {
+  8204   3 foreach ($agents as $agent) {
+  8205   4 if ($agent['id'] == $viewing['agent_id']) {
+  8208   3 }
+  8209   2 }
+  8210   1 }
+  9033   2 document.addEventListener('DOMContentLoaded', function() {
+  9049   3 function showSection(targetId) {
+  9050   4 sections.forEach(sectionId => {
+  9052   5 if (section) {
+  9056   4 }
+  9057   3 });
+  9059   4 document.querySelectorAll('[data-target]').forEach(link => {
+  9061   3 });
+  9063   4 if (targetId === 'section-lots') {
+  9083   3 }
+  9084   2 }
+  9086   3 function loadAgentsForAnalytics() {
+  9092   4 .then(data => {
+  9093   5 if (data && data.agents && data.agents.length > 0) {
+  9095   6 data.agents.forEach(agent => {
+  9097   5 });
+  9099   4 }
+  9100   3 }).catch(err => console.error('Error fetching agents:', err));
+  9101   2 }
+  9104   3 document.querySelectorAll('[data-target]').forEach(link => {
+  9105   4 link.addEventListener('click', function(e) {
+  9108   3 });
+  9109   2 });
+  9113   3 if (viewingsNav && !document.querySelector('[data-target="section-analytics"]')) {
+  9124   4 analyticsNav.addEventListener('click', function(e) {
+  9127   3 });
+  9128   2 }
+  9135   3 if (locationSelect) {
+  9136   4 locationSelect.addEventListener('change', function() {
+  9138   3 });
+  9139   2 }
+  9142   3 if (topAgentRankModeSelect) {
+  9143   4 topAgentRankModeSelect.addEventListener('change', function() {
+  9145   3 });
+  9146   2 }
+  9149   3 if (topAgentSalesScopeSelect) {
+  9150   4 topAgentSalesScopeSelect.addEventListener('change', function() {
+  9152   3 });
+  9153   2 }
+  9156   3 if (analyticsSalesPeriodSelect) {
+  9157   4 analyticsSalesPeriodSelect.addEventListener('change', function() {
+  9159   3 });
+  9160   2 }
+  9163   3 if (reportSalesPeriodSelect) {
+  9164   4 reportSalesPeriodSelect.addEventListener('change', function() {
+  9167   3 });
+  9169   2 }
+  9176   3 setInterval(() => {
+  9183   4 if (docsSection && docsSection.classList.contains('active')) {
+  9185   3 }
+  9186   4 if (auditSection && auditSection.classList.contains('active')) {
+  9188   3 }
+  9189   2 }, 20000);
+  9192   3 function parseJsonResponse(response) {
+  9193   4 return response.text().then(text => {
+  9195   5 if (!raw) {
+  9197   4 }
+  9198   5 try {
+  9202   4 }
+  9203   3 });
+  9204   2 }
+  9207   3 if (editAccountForm) {
+  9208   4 editAccountForm.addEventListener('submit', function (e) {
+  9214   5 if (type === 'admin') {
+  9220   4 }
+  9222   5 fetch(window.location.pathname, {
+  9225   4 })
+  9227   5 .then(res => {
+  9228   6 if (res.success) {
+  9234   5 }
+  9235   4 })
+  9236   5 .catch(err => {
+  9239   4 });
+  9240   3 });
+  9241   2 }
+  9245   3 if (editLotForm) {
+  9246   4 editLotForm.addEventListener('submit', function(e) {
+  9251   5 if (lotPriceValue !== null) {
+  9253   4 }
+  9254   5 if (commissionValue !== null) {
+  9256   4 }
+  9260   5 .then(res => {
+  9261   6 if (res.success) {
+  9268   5 }
+  9269   4 })
+  9271   3 });
+  9274   2 }
+  9278   3 if (agentForm) {
+  9279   4 agentForm.addEventListener('submit', async function(e) {
+  9286   5 if (pass && confirm && error && pass.value !== confirm.value) {
+  9291   4 }
+  9295   5 try {
+  9296   6 const response = await fetch(window.location.pathname, {
+  9299   5 });
+  9302   6 if (result.success) {
+  9308   5 }
+  9312   4 }
+  9313   3 });
+  9314   2 }
+  9318   3 if (adminForm) {
+  9323   4 if (adminPass && adminConfirm && adminError) {
+  9325   5 function validateAdminPasswords() {
+  9326   6 if (adminPass.value && adminConfirm.value && adminPass.value !== adminConfirm.value) {
+  9332   5 }
+  9333   4 }
+  9338   5 adminForm.addEventListener('submit', function(e) {
+  9342   6 if (adminConfirm.validationMessage) {
+  9345   5 }
+  9348   6 if (!formData.get('account_action')) {
+  9350   5 }
+  9352   6 fetch(window.location.pathname, {
+  9355   5 })
+  9357   6 .then(res => {
+  9358   7 if (res.success) {
+  9364   6 }
+  9365   5 })
+  9366   6 .catch(err => {
+  9368   5 });
+  9369   4 });
+  9370   3 }
+  9371   2 }
+  9374   3 (function () {
+  9382   4 function validateUserPasswords() {
+  9383   5 if (pass.value && confirm.value && pass.value !== confirm.value) {
+  9389   4 }
+  9390   3 }
+  9395   4 form.addEventListener('submit', async function (e) {
+  9398   5 if (confirm.validationMessage) {
+  9401   4 }
+  9405   5 if (submitBtn) {
+  9408   4 }
+  9410   5 try {
+  9412   6 const response = await fetch(window.location.pathname, {
+  9415   5 });
+  9418   6 if (res.success) {
+  9425   5 }
+  9430   6 if (submitBtn) {
+  9433   5 }
+  9434   4 }
+  9435   3 });
+  9436   2 })();
+  9440   3 if (viewModal) {
+  9441   4 viewModal.addEventListener('click', (e) => {
+  9443   3 });
+  9444   2 }
+  9445   3 document.addEventListener('keydown', (e) => {
+  9447   2 });
+  9485   3 if (userAccountsSearch) {
+  9486   4 userAccountsSearch.addEventListener('input', function() {
+  9488   5 document.querySelectorAll('#section-accounts .user-account-row').forEach(row => {
+  9491   4 });
+  9492   3 });
+  9493   2 }
+  9496   3 if (paymentSearchInput) {
+  9497   4 paymentSearchInput.addEventListener('input', function() {
+  9499   3 });
+  9500   2 }
+  9501   1 });
+  9506   2 function updateBadge(el, count) {
+  9508   3 if (count > 0) {
+  9513   2 }
+  9514   1 }
+  9516   2 function refreshBadges() {
+  9520   3 if (notifBadge) {
+  9525   2 }
+  9527   3 if (docsBadge) {
+  9532   2 }
+  9533   1 }
+  9538   2 function loadLocations(selectedLocationId = '') {
+  9541   3 .then(locations => {
+  9543   4 selects.forEach(selectId => {
+  9554   5 optionsHtml += (locations || []).map(location => {
+  9558   4 }).join('');
+  9562   5 if (!isAnalytics && !isReport && normalizedSelected) {
+  9566   4 }
+  9567   3 });
+  9568   2 })
+  9570   1 }
+  9572   2 function loadLots(locationId = '') {
+  9577   3 .then(data => {
+  9587   4 if (!normalizedLocationId) {
+  9592   5 data.forEach(lot => {
+  9617   4 });
+  9618   3 }
+  9621   2 })
+  9622   3 .catch(error => {
+  9625   2 });
+  9626   1 }
+  9628   2 function normalizeLotPriceValue(value) {
+  9633   1 }
+  9635   2 function formatLotPriceDisplay(value) {
+  9641   1 }
+  9643   2 function bindLotPriceFormatter(input) {
+  9647   3 input.addEventListener('focus', function() {
+  9650   2 });
+  9652   3 input.addEventListener('blur', function() {
+  9654   2 });
+  9657   1 }
+  9659   2 function saveLot() {
+  9666   3 fields.forEach(field => {
+  9668   4 if (!value || (field.includes('number') && isNaN(value))) {
+  9670   3 }
+  9672   2 });
+  9674   3 if (!isValid || !locationId) {
+  9677   2 }
+  9689   3 .then(result => {
+  9690   4 if (result.success) {
+  9696   3 }
+  9697   2 })
+  9699   1 }
+  9701   2 async function deleteLot(id) {
+  9711   3 .then(result => {
+  9712   4 if (result.success) {
+  9718   3 }
+  9719   2 })
+  9721   1 }
+  9723   2 function editLot(button) {
+  9727   3 for (let i = 0; i < 5; i++) {
+  9729   2 }
+  9747   1 }
+  9749   2 function saveEdit(button) {
+  9755   3 if (!locationId) {
+  9758   2 }
+  9772   3 .then(result => {
+  9773   4 if (result.success) {
+  9778   3 }
+  9779   2 })
+  9781   1 }
+  9783   2 function addNewLot() {
+  9785   3 if (newRow) {
+  9790   2 }
+  9791   1 }
+  9793   2 function cancelAdd() {
+  9800   1 }
+  9802   2 function togglePaymentFieldsByStatus(status) {
+  9807   3 if (status === 'Available') {
+  9810   4 if (paymentDeadlineInput) {
+  9813   3 }
+  9816   2 }
+  9818   3 if (status === 'Paid') {
+  9821   4 if (paymentDeadlineInput) {
+  9824   3 }
+  9827   2 }
+  9830   3 if (!paymentTypeSelect.value) {
+  9832   2 }
+  9834   1 }
+  9836   2 function toggleDownPaymentField(paymentType) {
+  9843   3 if (paymentType === 'Down Payment') {
+  9846   4 if (paymentDeadlineInput) {
+  9848   3 }
+  9853   4 if (paymentDeadlineInput) {
+  9856   3 }
+  9857   2 }
+  9858   1 }
+  9860   2 function toggleEditDownPaymentField(paymentType) {
+  9867   3 if (paymentType === 'Down Payment') {
+  9870   4 if (paymentDeadlineInput) {
+  9872   3 }
+  9877   4 if (paymentDeadlineInput) {
+  9880   3 }
+  9881   2 }
+  9882   1 }
+  9884   2 function toggleEditPaymentFieldsByStatus(status) {
+  9889   3 if (status === 'Available') {
+  9892   4 if (paymentDeadlineInput) {
+  9895   3 }
+  9898   2 }
+  9901   3 if (paymentDeadlineInput) {
+  9903   2 }
+  9904   3 if (paymentTypeSelect.value === 'Not Applicable') {
+  9906   2 }
+  9908   1 }
+  9910   2 function cancelEdit() {
+  9913   1 }
+  9915   2 function showLotMessage(msg, success = true) {
+  9924   1 }
+  9927   2 function showMessage(msg, success = true) {
+  9929   3 if (msgDiv) {
+  9932   2 }
+  9933   3 if (!success) {
+  9937   2 }
+  9938   1 }
+  9945   2 function loadAdminUploadUserList() {
+  9948   3 .then(users => {
+  9953   2 })
+  9955   1 }
+  9958   2 function onDocumentsSectionShow() {
+  9961   1 }
+  9963   2 async function adminUploadDocument() {
+  9970   3 if (!userId || !docType || !fileInput?.files?.length) {
+  9973   2 }
+  9984   3 try {
+  9987   4 if (data.success) {
+  9997   3 }
+ 10000   2 }
+ 10001   1 }
+ 10003   2 async function onUserChangeForUpload() {
+ 10010   3 if (!userId) {
+ 10013   2 }
+ 10015   3 try {
+ 10018   4 if (data.success && data.lots) {
+ 10020   5 data.lots.forEach(lot => {
+ 10032   4 });
+ 10038   3 }
+ 10041   2 }
+ 10042   1 }
+ 10044   2 function loadDocuments() {
+ 10067   3 .then(documents => {
+ 10068   4 if (!documents.length) {
+ 10071   3 }
+ 10073   4 container.innerHTML = documents.map(doc => {
+ 10100   3 }).join('');
+ 10101   2 })
+ 10102   3 .catch(error => {
+ 10105   2 });
+ 10106   1 }
+ 10108   2 function applyDocumentFilters() {
+ 10110   1 }
+ 10112   2 function resetDocumentFilters() {
+ 10114   3 ids.forEach(id => {
+ 10117   2 });
+ 10119   1 }
+ 10121   2 async function approveDocument(id, source = 'user_documents') {
+ 10132   3 .then(res => {
+ 10133   4 if (res.success) {
+ 10139   3 }
+ 10140   2 })
+ 10142   1 }
+ 10144   2 async function rejectDocument(id, source = 'user_documents') {
+ 10156   3 .then(res => {
+ 10157   4 if (res.success) {
+ 10163   3 }
+ 10164   2 })
+ 10166   1 }
+ 10168   2 function updateDocumentCardStatus(id, statusText) {
+ 10173   3 if (statusEl) {
+ 10175   2 }
+ 10178   3 if (actions) {
+ 10180   2 }
+ 10181   1 }
+ 10186   2 function loadNotifications() {
+ 10207   3 .then(notifications => {
+ 10208   4 if (!notifications.length) {
+ 10211   3 }
+ 10221   4 container.querySelectorAll('[data-notification-type]').forEach(item => {
+ 10225   3 });
+ 10226   2 })
+ 10227   3 .catch(error => {
+ 10230   2 });
+ 10231   1 }
+ 10233   2 function applyNotificationFilters() {
+ 10235   1 }
+ 10237   2 function resetNotificationFilters() {
+ 10239   3 ids.forEach(id => {
+ 10242   2 });
+ 10244   1 }
+ 10246   2 function getNotificationColor(type) {
+ 10247   3 switch (type) {
+ 10252   2 }
+ 10253   1 }
+ 10255   2 function getNotificationTextColor(type) {
+ 10256   3 switch (type) {
+ 10261   2 }
+ 10262   1 }
+ 10267   2 function loadAuditLogs() {
+ 10288   3 .then(logs => {
+ 10289   4 if (!logs.length) {
+ 10292   3 }
+ 10303   2 })
+ 10304   3 .catch(error => {
+ 10307   2 });
+ 10308   1 }
+ 10310   2 function applyAuditFilters() {
+ 10312   1 }
+ 10314   2 function resetAuditFilters() {
+ 10316   3 ids.forEach(id => {
+ 10319   2 });
+ 10321   1 }
+ 10326   2 function loadPayments() {
+ 10336   3 .then(data => {
+ 10337   4 if (!data || !data.payments || data.payments.length === 0) {
+ 10340   3 }
+ 10342   4 const filteredPayments = (data.payments || []).filter(payment => {
+ 10353   3 });
+ 10355   4 if (!filteredPayments.length) {
+ 10358   3 }
+ 10360   4 tbody.innerHTML = filteredPayments.map(payment => {
+ 10390   3 }).join('');
+ 10391   2 })
+ 10392   3 .catch(error => {
+ 10395   2 });
+ 10396   1 }
+ 10398   2 function getPaymentTypeClass(type) {
+ 10399   3 switch(String(type || '').trim()) {
+ 10404   2 }
+ 10405   1 }
+ 10407   2 function getAutoWorkflowStage(payment) {
+ 10418   1 }
+ 10420   2 function getWorkflowBadgeClass(stage) {
+ 10421   3 switch (stage) {
+ 10428   2 }
+ 10429   1 }
+ 10431   2 function escapeText(value) {
+ 10438   1 }
+ 10440   2 function showModalById(id) {
+ 10443   1 }
+ 10445   2 function hideModalById(id) {
+ 10448   1 }
+ 10450   2 function calcNextDueDate(dueDay, paymentDeadline, lastPaymentDate) {
+ 10451   3 if (!dueDay || dueDay < 1 || dueDay > 31) {
+ 10453   2 }
+ 10455   3 if (lastPaymentDate) {
+ 10457   4 if (!Number.isNaN(lastDate.getTime())) {
+ 10460   5 if (lm > 11) {
+ 10463   4 }
+ 10468   3 }
+ 10469   2 }
+ 10471   3 if (paymentDeadline) {
+ 10473   4 if (parts.length === 3 && !parts.some(Number.isNaN)) {
+ 10475   3 }
+ 10476   2 }
+ 10484   3 if (candidate < today) {
+ 10489   2 }
+ 10491   1 }
+ 10493   2 function calculateInstallmentDueAmount(lotPrice, monthlyAmount, downPaymentAmount, totalPaid) {
+ 10503   3 if (remainingBalance <= 0) {
+ 10505   2 }
+ 10508   3 if (cleanMonthlyAmount <= 0) {
+ 10510   2 }
+ 10514   1 }
+ 10518   2 function buildInstallmentAnchorDate(paymentDeadline, lastPaymentDate, dueDay) {
+ 10520   3 const parseIso = (raw) => {
+ 10529   2 };
+ 10532   3 if (deadlineDate) {
+ 10534   2 }
+ 10537   3 if (lastDate) {
+ 10539   2 }
+ 10543   1 }
+ 10545   2 function buildRecordPaymentMonthOptions(lotPrice, monthlyAmount, downPaymentAmount, totalPaid, termYears, dueDay, paymentDeadline, lastPaymentDate) {
+ 10553   3 if (totalMonths <= 0 || safeMonthly <= 0) {
+ 10555   2 }
+ 10558   3 if (contractBalance <= 0) {
+ 10560   2 }
+ 10568   3 for (let i = 0; i < totalMonths; i++) {
+ 10578   4 if (i >= paidMonthsCount && plannedAmount > 0) {
+ 10579   5 options.push({
+ 10584   4 });
+ 10585   3 }
+ 10586   2 }
+ 10589   1 }
+ 10591   2 function renderRecordPaymentMonthOptions() {
+ 10597   3 if (!ctx || !Array.isArray(ctx.monthOptions) || !ctx.monthOptions.length) {
+ 10601   2 }
+ 10603   3 listEl.innerHTML = ctx.monthOptions.map((opt, idx) => {
+ 10615   2 }).join('');
+ 10618   1 }
+ 10620   2 function toggleRecordPaymentMonth(index) {
+ 10627   1 }
+ 10629   2 function updateRecordPaymentMonthSummary() {
+ 10633   3 if (!recordPaymentSelectionContext || !Array.isArray(recordPaymentSelectionContext.monthOptions)) {
+ 10636   2 }
+ 10640   3 if (!selected.length) {
+ 10643   2 }
+ 10646   1 }
+ 10648   2 function proceedRecordPaymentDetails() {
+ 10655   3 if (!detailsEl || !amountInput || !dateInput || !methodInput || !remarksInput) {
+ 10658   2 }
+ 10661   3 if (!selected.length) {
+ 10664   2 }
+ 10678   1 }
+ 10680   2 function resetRecordPaymentModalState() {
+ 10697   1 }
+ 10699   2 function recordPaymentForLot(lotId, suggestedAmount, downPaymentAmount, balanceDue, totalPaid, lotPrice, dueDay, paymentDeadline, lastPaymentDate, termYears) {
+ 10704   3 if (!lotInput || !monthListEl || !summaryEl) {
+ 10707   2 }
+ 10723   3 if (!options.length) {
+ 10730   4 recordPaymentSelectionContext = {
+ 10732   3 };
+ 10733   4 if (recordPaymentSelectionContext.monthOptions.length) {
+ 10738   3 }
+ 10742   2 }
+ 10745   1 }
+ 10747   2 function closeRecordPaymentModal() {
+ 10750   1 }
+ 10752   2 function openInstallmentPlanModal(lotId, lotPrice, amount, downPaymentAmount, termYears, dueDay, deadline, canEdit) {
+ 10753   3 if (!canEdit) {
+ 10756   2 }
+ 10768   3 if (!lotInput || !lotPriceInput || !lotPriceDisplay || !amountInput || !downPaymentInput || !termYearsInput || !dueDayInput || !remainingBalanceInput || !deadlineInput) {
+ 10771   2 }
+ 10784   1 }
+ 10786   2 function closeInstallmentPlanModal() {
+ 10788   1 }
+ 10790   2 function formatPhpAmount(value) {
+ 10793   1 }
+ 10795   2 function enforceAdminTermYearsRange(inputEl) {
+ 10798   3 if (raw === '') {
+ 10801   2 }
+ 10806   3 if (years < 1 || years > 5) {
+ 10809   4 if (inputEl.dataset.termWarned !== '1') {
+ 10812   3 }
+ 10814   2 }
+ 10817   1 }
+ 10819   2 function recalculateInstallmentPlan() {
+ 10826   3 if (!downPaymentInput || !termYearsInput || !remainingBalanceInput || !amountInput) {
+ 10828   2 }
+ 10839   3 if (termYears > 0 && remainingBalance > 0) {
+ 10844   2 }
+ 10845   1 }
+ 10847   2 async function submitInstallmentPlan() {
+ 10855   3 if (!lotId) {
+ 10858   2 }
+ 10860   3 if (!Number.isFinite(termYears) || termYears < 1 || termYears > 5) {
+ 10863   2 }
+ 10865   3 if (!Number.isFinite(downPaymentAmount) || downPaymentAmount < 0) {
+ 10868   2 }
+ 10870   3 if (downPaymentAmount >= lotPrice) {
+ 10873   2 }
+ 10875   3 if (!Number.isFinite(dueDay) || dueDay < 1 || dueDay > 31) {
+ 10878   2 }
+ 10880   3 if (!deadline) {
+ 10883   2 }
+ 10888   3 if (Number.isFinite(downPaymentAmount) && downPaymentAmount > 0) {
+ 10890   2 }
+ 10897   3 .then(res => {
+ 10898   4 if (!res.success) {
+ 10901   3 }
+ 10906   2 })
+ 10907   3 .catch(err => {
+ 10910   2 });
+ 10911   1 }
+ 10913   2 function submitRecordPayment() {
+ 10914   3 const showPaymentNotice = (message, title = 'Notice') => {
+ 10915   4 if (typeof showAlertModal === 'function') {
+ 10919   3 }
+ 10920   2 };
+ 10930   3 if (!detailsVisible) {
+ 10933   2 }
+ 10935   3 if (!lotId || !Number.isFinite(amount) || amount <= 0) {
+ 10938   2 }
+ 10944   3 if (!selectedMonths.length) {
+ 10947   2 }
+ 10961   3 .then(text => {
+ 10963   4 try {
+ 10966   5 const firstBrace = text.indexOf('{');
+ 10967   4 const lastBrace = text.lastIndexOf('}');
+ 10968   5 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+ 10972   4 }
+ 10973   3 }
+ 10975   4 if (!res.success) {
+ 10978   3 }
+ 10986   2 })
+ 10987   3 .catch(err => {
+ 10990   2 });
+ 10991   1 }
+ 10993   2 function closePaymentHistoryModal() {
+ 10995   1 }
+ 10997   2 function showPaymentHistory(lotId) {
+ 10999   3 if (!content) {
+ 11002   2 }
+ 11009   3 .then(data => {
+ 11010   4 if (!data.success) {
+ 11013   3 }
+ 11015   4 const getDateKey = (value) => {
+ 11020   5 if (iso) {
+ 11025   4 }
+ 11028   5 if (!Number.isNaN(parsed.getTime())) {
+ 11030   4 }
+ 11032   3 };
+ 11034   4 const rows = (data.transactions || []).slice().sort((a, b) => {
+ 11039   3 });
+ 11040   4 if (!rows.length) {
+ 11043   3 }
+ 11057   5 ${rows.map(tx => {
+ 11068   3 }).join('')}
+ 11072   2 })
+ 11073   3 .catch(err => {
+ 11076   2 });
+ 11077   1 }
+ 11079   2 function markTurnoverForLot(lotId, isPaid) {
+ 11080   3 if (!isPaid) {
+ 11083   2 }
+ 11090   3 if (!lotInput || !dateInput || !releasedInput || !remarksInput) {
+ 11093   2 }
+ 11102   3 .then(data => {
+ 11103   4 if (data?.success && data.turnover) {
+ 11107   3 }
+ 11108   2 })
+ 11111   1 }
+ 11113   2 function closeTurnoverModal() {
+ 11115   1 }
+ 11117   2 function submitTurnoverUpdate() {
+ 11123   3 if (!lotId) {
+ 11126   2 }
+ 11137   3 .then(text => {
+ 11139   4 try {
+ 11142   5 const firstBrace = text.indexOf('{');
+ 11143   4 const lastBrace = text.lastIndexOf('}');
+ 11144   5 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+ 11148   4 }
+ 11149   3 }
+ 11151   4 if (!res.success) {
+ 11154   3 }
+ 11161   2 })
+ 11162   3 .catch(err => {
+ 11165   2 });
+ 11166   1 }
+ 11171   2 function loadLotOwnerLocationOptions() {
+ 11174   3 .then(locations => {
+ 11187   2 })
+ 11189   1 }
+ 11191   2 function loadLotOwners() {
+ 11204   3 .then(data => {
+ 11205   4 if (!data || !data.owners || data.owners.length === 0) {
+ 11208   3 }
+ 11210   4 tbody.innerHTML = data.owners.map(owner => {
+ 11231   3 }).join('');
+ 11232   2 })
+ 11233   3 .catch(error => {
+ 11236   2 });
+ 11237   1 }
+ 11239   2 function updateLotPaymentStatus(lotId, newStatus) {
+ 11247   3 .then(text => {
+ 11249   4 try {
+ 11252   5 const firstBrace = text.indexOf('{');
+ 11253   4 const lastBrace = text.lastIndexOf('}');
+ 11254   5 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+ 11258   4 }
+ 11259   3 }
+ 11261   4 if (res.success) {
+ 11267   3 }
+ 11268   2 })
+ 11269   3 .catch(error => {
+ 11272   2 });
+ 11273   1 }
+ 11275   2 async function removeLotOwner(lotId) {
+ 11285   3 .then(res => {
+ 11286   4 if (res.success) {
+ 11292   3 }
+ 11293   2 })
+ 11294   3 .catch(error => {
+ 11297   2 });
+ 11298   1 }
+ 11300   2 function viewOwnerDetails(userId, fallbackName = '', fallbackEmail = '', fallbackMobile = '') {
+ 11305   3 const safe = (value) => {
+ 11313   2 };
+ 11315   3 const renderOwner = (owner) => {
+ 11325   2 };
+ 11329   3 if (!userId || Number(userId) <= 0) {
+ 11330   4 renderOwner({
+ 11336   3 });
+ 11338   2 }
+ 11345   3 .then(user => {
+ 11346   4 renderOwner({
+ 11351   3 });
+ 11352   2 })
+ 11353   3 .catch(() => {
+ 11355   2 });
+ 11356   1 }
+ 11358   2 function closeOwnerDetailsModal() {
+ 11361   1 }
+ 11367   2 window.addEventListener('click', function(e) {
+ 11370   1 });
+ 11375   2 function showAccountType(type) {
+ 11382   1 }
+ 11385   2 function previewPhoto(input, previewId) {
+ 11389   3 if (file && preview) {
+ 11391   4 reader.onload = function(e) {
+ 11393   3 };
+ 11398   2 }
+ 11399   1 }
+ 11401   2 function getCurrentLocation() {
+ 11407   3 if (navigator.geolocation) {
+ 11409   4 position => {
+ 11412   5 if (lat && lng) {
+ 11415   4 }
+ 11419   3 },
+ 11420   4 error => {
+ 11423   3 }
+ 11428   2 }
+ 11429   1 }
+ 11431   2 function clearLocation() {
+ 11438   1 }
+ 11440   2 function getCurrentLocationAgent() {
+ 11446   3 if (navigator.geolocation) {
+ 11448   4 position => {
+ 11451   5 if (lat && lng) {
+ 11454   4 }
+ 11458   3 },
+ 11459   4 error => {
+ 11462   3 }
+ 11467   2 }
+ 11468   1 }
+ 11470   2 function clearLocationAgent() {
+ 11477   1 }
+ 11482   2 function viewProfile(id, type, evt, clientEmail = '', clientPhone = '') {
+ 11484   3 setTimeout(() => {
+ 11486   2 }, 3000);
+ 11505   3 if (type === 'user' && (!id || id === 0)) {
+ 11506   4 try {
+ 11524   5 .then(data => {
+ 11527   6 if (account && account.id) {
+ 11533   7 if (account.created_at) {
+ 11536   6 }
+ 11541   5 }
+ 11551   4 })
+ 11552   5 .catch(() => {
+ 11561   4 });
+ 11564   3 }
+ 11566   2 }
+ 11569   3 if ((type === 'user' || type === 'admin' || type === 'agent') && id) {
+ 11571   4 .then(r => {
+ 11574   3 })
+ 11575   4 .then(account => {
+ 11576   5 if (account && account.id) {
+ 11583   6 if (account.created_at) {
+ 11586   5 }
+ 11590   4 }
+ 11591   3 })
+ 11592   4 .catch(err => {
+ 11594   3 });
+ 11595   2 }
+ 11596   1 }
+ 11598   2 function closeViewClientModal() {
+ 11601   1 }
+ 11606   2 function confirmLogout() {
+ 11610   3 try {
+ 11611   4 document.addEventListener('DOMContentLoaded', function(){
+ 11616   3 });
+ 11617   2 } catch (e) { /* noop */ }
+ 11644   3 function closeModal() {
+ 11646   2 }
+ 11651   1 }
+ 11656   2 function loadAnalyticsData() {
+ 11658   1 }
+ 11660   2 function loadAnalyticsKPIs() {
+ 11662   1 }
+ 11664   2 function updateSalesRangeLabel(dateFrom, dateTo, salesPeriod) {
+ 11668   3 const periodTextMap = {
+ 11673   2 };
+ 11676   3 if (dateFrom && dateTo) {
+ 11679   2 }
+ 11680   3 if (dateFrom) {
+ 11683   2 }
+ 11684   3 if (dateTo) {
+ 11687   2 }
+ 11689   1 }
+ 11691   2 function renderAnalyticsKpis(data) {
+ 11705   1 }
+ 11707   2 function updateTopAgentsLabels(rankMode, salesScope) {
+ 11712   3 const scopeTextMap = {
+ 11716   2 };
+ 11719   3 if (rankMode === 'encouragement') {
+ 11725   2 }
+ 11728   1 }
+ 11730   2 function loadTopAgents(page = 1) {
+ 11756   3 .then(agents => {
+ 11762   4 if (!agents.length) {
+ 11765   3 }
+ 11790   2 })
+ 11791   3 .catch(err => {
+ 11794   4 if (tbody) {
+ 11796   3 }
+ 11798   2 });
+ 11799   1 }
+ 11803   2 function loadMonthlySalesChart() {
+ 11805   1 }
+ 11807   2 function formatPesoCompact(value) {
+ 11809   3 return 'PHP ' + new Intl.NumberFormat('en-PH', {
+ 11812   2 }).format(n);
+ 11813   1 }
+ 11815   2 function formatPesoFull(value) {
+ 11817   3 return 'PHP ' + new Intl.NumberFormat('en-PH', {
+ 11819   2 }).format(n);
+ 11820   1 }
+ 11822   2 function setupResponsiveCanvas(canvas) {
+ 11836   1 }
+ 11838   2 function updateMonthlySalesTitle(data, dateFrom, dateTo, salesPeriod) {
+ 11842   3 const periodTextMap = {
+ 11847   2 };
+ 11848   3 const windowTextMap = {
+ 11853   2 };
+ 11857   3 if (data && data.monthly_scope === 'default_period' && !dateFrom && !dateTo) {
+ 11860   2 }
+ 11862   3 if (dateFrom && dateTo) {
+ 11865   2 }
+ 11866   3 if (dateFrom) {
+ 11869   2 }
+ 11870   3 if (dateTo) {
+ 11873   2 }
+ 11876   1 }
+ 11878   2 function applyAnalyticsFilters() {
+ 11879   3 const normalizeDateInput = (value) => {
+ 11885   4 if (slash) {
+ 11889   3 }
+ 11892   4 if (!Number.isNaN(parsed.getTime())) {
+ 11897   3 }
+ 11900   2 };
+ 11902   3 const getFilters = () => {
+ 11909   4 if (dateFrom && dateTo && dateFrom > dateTo) {
+ 11912   3 }
+ 11915   2 };
+ 11935   3 .then(data => {
+ 11936   4 if (!data || data.success === false) {
+ 11939   3 }
+ 11949   2 })
+ 11950   3 .catch(err => {
+ 11953   2 });
+ 11954   1 }
+ 11956   2 function updateMonthlySalesChart(monthlySalesData) {
+ 11964   3 if (canvas._animFrame) {
+ 11967   2 }
+ 11969   3 const chart = {
+ 11974   2 };
+ 11978   3 if (!data.length) {
+ 11991   2 }
+ 11998   3 const xFor = (i) => {
+ 12001   2 };
+ 12002   3 const yFor = (amount, progress) => {
+ 12006   2 };
+ 12008   3 const drawFrame = (progress, hoverIndex = -1) => {
+ 12023   4 for (let t = 0; t <= ticks; t++) {
+ 12035   3 }
+ 12039   4 data.forEach((item, i) => {
+ 12044   3 });
+ 12046   4 const points = data.map((item, i) => ({
+ 12051   3 }));
+ 12066   4 points.forEach((p, idx) => {
+ 12069   3 });
+ 12076   4 points.forEach((p, i) => {
+ 12085   3 });
+ 12087   4 if (hoverIndex >= 0 && points[hoverIndex]) {
+ 12106   3 }
+ 12109   4 if (last) {
+ 12120   3 }
+ 12122   4 if (progress >= 1) {
+ 12125   3 }
+ 12126   2 };
+ 12130   3 const animate = (now) => {
+ 12134   4 if (t < 1) {
+ 12136   3 }
+ 12137   2 };
+ 12139   3 if (!canvas._hoverBound) {
+ 12140   4 canvas.addEventListener('mousemove', (ev) => {
+ 12148   5 for (let i = 0; i < canvas._hitPoints.length; i++) {
+ 12150   6 if (dx < minDx) {
+ 12153   5 }
+ 12154   4 }
+ 12156   5 if (nearest < 0 || minDx > 28) {
+ 12158   6 if ((canvas._hoverIndex ?? -1) !== -1) {
+ 12161   5 }
+ 12163   4 }
+ 12166   5 if (tooltip && wrap && point) {
+ 12175   4 }
+ 12177   5 if ((canvas._hoverIndex ?? -1) !== nearest) {
+ 12180   4 }
+ 12181   3 });
+ 12183   4 canvas.addEventListener('mouseleave', () => {
+ 12185   5 if ((canvas._hoverIndex ?? -1) !== -1 && canvas._drawStatic) {
+ 12188   4 }
+ 12189   3 });
+ 12192   2 }
+ 12195   1 }
+ 12197   2 function escapeHtml(value) {
+ 12204   1 }
+ 12206   2 function formatDateReadable(raw) {
+ 12212   1 }
+ 12214   2 function formatReportSalesPeriodLabel(rawPeriod) {
+ 12216   3 switch (period) {
+ 12224   2 }
+ 12225   1 }
+ 12227   2 function applyReportSalesPeriodPreset() {
+ 12234   3 if (period === 'custom') {
+ 12238   2 }
+ 12242   3 const toIso = (d) => {
+ 12247   2 };
+ 12250   3 if (period === 'weekly') {
+ 12258   2 }
+ 12264   1 }
+ 12266   2 function getReportFilters() {
+ 12275   3 if (salesPeriod === 'custom' && dateFrom && dateTo && dateFrom > dateTo) {
+ 12278   2 }
+ 12281   1 }
+ 12283   2 function loadPrintableReports() {
+ 12297   3 .then(data => {
+ 12298   4 if (!data || data.success === false) {
+ 12301   3 }
+ 12303   2 })
+ 12304   3 .catch(err => {
+ 12307   2 });
+ 12308   1 }
+ 12310   2 function renderPrintableReports(data) {
+ 12320   3 if (meta) {
+ 12322   2 }
+ 12333   3 if (reportAgentSelect) {
+ 12339   2 }
+ 12341   3 const fillRows = (tbodyId, rows, columns, emptyColspan) => {
+ 12344   4 if (!rows || !rows.length) {
+ 12347   3 }
+ 12349   2 };
+ 12401   1 }
+ 12403   2 function downloadReportsFile() {
+ 12405   3 if (!area) {
+ 12408   2 }
+ 12440   1 }
+ 12442   2 window.addEventListener('resize', () => {
+ 12445   1 });
+ 12450   2 function resetForm(formId) {
+ 12452   3 if (form) {
+ 12455   4 previews.forEach(preview => {
+ 12458   3 });
+ 12459   2 }
+ 12460   1 }
+ 12465   2 function editAccount(id, type = 'admin') {
+ 12483   3 .then(text => {
+ 12485   4 try {
+ 12492   3 }
+ 12494   4 if (!account || !account.id) {
+ 12497   3 }
+ 12504   4 ${
+ 12508   3 }
+ 12549   4 if (type === 'agent') {
+ 12556   3 }
+ 12558   4 if (type === 'agent') {
+ 12565   3 }
+ 12567   4 if (type === 'user') {
+ 12574   3 }
+ 12588   2 })
+ 12589   3 .catch(err => {
+ 12592   2 });
+ 12593   1 }
+ 12595   2 function closeEditAccountModal() {
+ 12598   1 }
+ 12603   2 function openEditLotModal(lot) {
+ 12650   1 }
+ 12652   2 function closeEditLotModal() {
+ 12655   1 }
+ 12660   2 async function bulkDeleteLots() {
+ 12662   3 if (checkboxes.length === 0) {
+ 12665   2 }
+ 12676   3 .then(res => {
+ 12677   4 if (res.success) {
+ 12683   3 }
+ 12684   2 })
+ 12686   1 }
+ 12691   2 let pinModalData = {
+ 12696   1 };
+ 12698   2 function selectLotStatus(status) {
+ 12703   3 buttons.forEach(btn => {
+ 12706   4 if (btn === status) {
+ 12712   3 }
+ 12713   2 });
+ 12715   3 if (pinModalData.polygonPoints.length > 0) {
+ 12717   2 }
+ 12718   1 }
+ 12721   2 function openPinModal(lotId, lotData) {
+ 12727   3 .then(data => {
+ 12733   4 if (!data.blueprint) {
+ 12737   3 }
+ 12743   4 if(pzInstance) {
+ 12746   3 }
+ 12750   4 img.onload = () => {
+ 12771   5 if(data.all_pins) {
+ 12772   6 data.all_pins.forEach(pin => {
+ 12773   7 if(pin.coordinates && Array.isArray(pin.coordinates) && pin.lot_id != lotId) {
+ 12783   6 }
+ 12784   5 });
+ 12785   4 }
+ 12799   5 if (btn) {
+ 12802   4 }
+ 12804   3 };
+ 12805   2 })
+ 12806   3 .catch(err => {
+ 12809   2 });
+ 12810   1 }
+ 12813   2 function toggleDrawingMode() {
+ 12820   3 if(pinModalData.isDrawingMode) {
+ 12821   4 if (btn) {
+ 12824   3 }
+ 12835   4 layer.onpointerdown = e => {
+ 12839   3 };
+ 12841   4 layer.onpointerup = e => {
+ 12849   5 pinModalData.polygonPoints.push({
+ 12852   4 });
+ 12854   3 };
+ 12856   4 layer.ondblclick = e => {
+ 12858   5 if(pinModalData.polygonPoints.length > 2) {
+ 12860   4 }
+ 12861   3 };
+ 12864   2 }
+ 12865   1 }
+ 12867   2 function finishDrawing() {
+ 12872   3 if (btn) {
+ 12875   2 }
+ 12885   3 if(pinModalData.polygonPoints.length > 2) {
+ 12890   2 }
+ 12891   1 }
+ 12894   2 function drawLivePolygon(closed) {
+ 12914   3 if(!closed) {
+ 12915   4 pinModalData.polygonPoints.forEach(pt => {
+ 12925   3 });
+ 12926   2 }
+ 12927   1 }
+ 12930   2 function savePinLocation() {
+ 12931   3 if(pinModalData.polygonPoints.length < 3) {
+ 12934   2 }
+ 12942   3 fetch('', {method:'POST', body:fd}).then(r=>r.json()).then(res=>{
+ 12943   4 if(res.success) {
+ 12951   3 }
+ 12955   2 });
+ 12956   1 }
+ 12958   2 function closePinModal() {
+ 12960   3 if(pzInstance) {
+ 12965   2 }
+ 12966   1 }
+ 12970   2 function loadOwnerAccountsForRegistration() {
+ 12977   3 .then(data => {
+ 12980   4 users.forEach(u => {
+ 12982   3 });
+ 12983   2 })
+ 12984   3 .catch(() => {
+ 12986   2 });
+ 12987   1 }
+ 12995   2 function openAddLocationModal() {
+ 13000   3 setTimeout(() => {
+ 13001   4 if (!locationMap) {
+ 13004   5 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+ 13006   4 }).addTo(locationMap);
+ 13008   5 locationMap.on('click', function(e) {
+ 13018   6 if (locationMarker) {
+ 13020   5 }
+ 13023   6 locationMarker = L.marker([lat, lng], {
+ 13024   7 icon: L.icon({
+ 13031   6 })
+ 13032   5 }).addTo(locationMap);
+ 13037   6 .then(data => {
+ 13040   5 })
+ 13041   6 .catch(() => {
+ 13043   5 });
+ 13044   4 });
+ 13047   3 }
+ 13048   2 }, 100);
+ 13049   1 }
+ 13051   2 function closeAddLocationModal() {
+ 13062   3 if (locationMarker && locationMap) {
+ 13065   2 }
+ 13066   1 }
+ 13068   2 function previewBlueprintFile(input) {
+ 13072   3 reader.onload = function(e) {
+ 13077   2 };
+ 13079   1 }
+ 13081   2 function removeBlueprintPreview() {
+ 13086   1 }
+ 13088   2 function saveNewLocation(event) {
+ 13095   3 if (!locationName) {
+ 13098   2 }
+ 13100   3 if (!latitude || !longitude) {
+ 13103   2 }
+ 13112   3 if (blueprintFile) {
+ 13114   2 }
+ 13116   3 fetch(window.location.pathname, {
+ 13119   2 })
+ 13121   3 .then(text => {
+ 13123   4 try {
+ 13126   5 const firstBrace = text.indexOf('{');
+ 13127   4 const lastBrace = text.lastIndexOf('}');
+ 13128   5 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+ 13132   4 }
+ 13133   3 }
+ 13135   4 if (data.success) {
+ 13139   5 if (data.location_id) {
+ 13141   4 }
+ 13144   3 }
+ 13145   2 })
+ 13146   3 .catch(error => {
+ 13149   2 });
+ 13150   1 }
+ 13152   2 async function deleteSelectedLocation() {
+ 13154   3 if (!locationSelect || !locationSelect.value) {
+ 13157   2 }
+ 13167   3 fetch(window.location.pathname, {
+ 13170   2 })
+ 13172   3 .then(data => {
+ 13173   4 if (data.success) {
+ 13179   3 }
+ 13180   2 })
+ 13181   3 .catch(error => {
+ 13184   2 });
+ 13185   1 }
+ 13187   2 function exportAnalytics() {
+ 13188   3 const normalizeDateInput = (value) => {
+ 13194   4 if (slash) {
+ 13198   3 }
+ 13201   4 if (!Number.isNaN(parsed.getTime())) {
+ 13206   3 }
+ 13209   2 };
+ 13216   3 if (dateFrom && dateTo && dateFrom > dateTo) {
+ 13219   2 }
+ 13229   1 }

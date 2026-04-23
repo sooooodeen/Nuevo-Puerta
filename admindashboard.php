@@ -6,7 +6,7 @@
   session_start();
 
   // Show and clear error message from session
-  $error_message = null;
+// Show and clear error message from session
   if (isset($_SESSION['error_message'])) {
       $error_message = $_SESSION['error_message'];
       unset($_SESSION['error_message']);
@@ -1576,51 +1576,6 @@
       exit;
   }
 
-  // Bulk Edit lots
-  if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
-      isset($_POST['action']) && $_POST['action'] === 'bulk_edit') {
-
-      $ids = json_decode($_POST['lot_ids'], true);
-      if (!is_array($ids) || empty($ids)) {
-          header('Content-Type: application/json');
-          echo json_encode(['success' => false, 'error' => 'No lots selected']);
-          exit;
-      }
-
-      $idList = implode(',', array_map('intval', $ids));
-      $updates = [];
-      
-      if (!empty($_POST['block_number'])) {
-          $block = mysqli_real_escape_string($conn, $_POST['block_number']);
-          $updates[] = "block_number = '$block'";
-      }
-      if (!empty($_POST['lot_size'])) {
-          $size = mysqli_real_escape_string($conn, $_POST['lot_size']);
-          $updates[] = "lot_size = '$size'";
-      }
-      if (!empty($_POST['lot_price'])) {
-          $price = mysqli_real_escape_string($conn, $_POST['lot_price']);
-          // If setting a price, assume it's available by default unless specified
-          $updates[] = "lot_price = '$price'";
-      }
-
-      if (empty($updates)) {
-          header('Content-Type: application/json');
-          echo json_encode(['success' => false, 'error' => 'No data provided to update']);
-          exit;
-      }
-
-      $updateStr = implode(', ', $updates);
-      $updateQuery = "UPDATE lots SET $updateStr WHERE id IN ($idList)";
-      $success = mysqli_query($conn, $updateQuery);
-
-      header('Content-Type: application/json');
-      echo json_encode([
-          'success' => (bool)$success,
-          'message' => $success ? 'Lots updated successfully' : mysqli_error($conn)
-      ]);
-      exit;
-  }
 
   // =============================================
   // PIN LOCATION ENDPOINTS (AJAX)
@@ -2783,7 +2738,7 @@
       }
 
       // ----------------- UPDATE AGENT (AJAX) -----------------
-        if (($action ?? '') === 'update') {
+        if ($action === 'update') {
           $user_id       = intval($_POST['account_id'] ?? 0);
           $first_name    = mysqli_real_escape_string($conn, $_POST['first_name'] ?? '');
           $middle_name   = mysqli_real_escape_string($conn, $_POST['middle_name'] ?? '');
@@ -2792,6 +2747,9 @@
           $email         = mysqli_real_escape_string($conn, $_POST['email'] ?? '');
           $phone_number  = mysqli_real_escape_string($conn, $_POST['phone_number'] ?? ($_POST['mobile_number'] ?? ''));
           $address       = mysqli_real_escape_string($conn, $_POST['address'] ?? '');
+          $photo_path = null;
+          $availability = isset($_POST['availability']) ? 1 : 0;
+          if (isset($_FILES['photo']) && isset($_FILES['photo']['error']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
               $photo_path = handleFileUpload($_FILES['photo']);
           }
 
@@ -2811,7 +2769,7 @@
               $stmt->bind_param(
                 "sssssssissi",
                 $first_name, $middle_name, $last_name, $username, $email, $phone,
-                $address, $availability, $password, $photo_path, $agent_id
+                $address, $availability, $password, $photo_path, $user_id
               );
           } else {
               $sql = "UPDATE agent_accounts 
@@ -2823,11 +2781,11 @@
                   echo json_encode(['success' => false, 'error' => "Prepare failed: " . $conn->error]);
                   exit;
               }
-
+              
               $stmt->bind_param(
                 "sssssssisi",
                 $first_name, $middle_name, $last_name, $username, $email, $phone,
-                $address, $availability, $photo_path, $agent_id
+                $address, $availability, $photo_path, $user_id
               );
           }
 
@@ -2842,7 +2800,7 @@
       }
 
       // ----------------- DELETE AGENT (NORMAL FORM) -----------------
-      if ((($action ?? '')) === 'delete') {
+      if ($action === 'delete') {
           $agent_id = intval($_POST['agent_id']);
           $sql      = "DELETE FROM agent_accounts WHERE id = ?";
           $stmt     = $conn->prepare($sql);
@@ -2866,8 +2824,7 @@
             $stmt->close();
           }
       }
-
-
+  }
 
   // =====================================================
   // USER ACCOUNT CRUD (AJAX: user_action)
@@ -3310,12 +3267,22 @@
       }
     }
 
-    function buildMonthlySalesTrend($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod = 'monthly'): array {
+    function buildMonthlySalesTrend($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod = 'monthly', ?int $agent_id = null): array {
       $monthlySales = [];
       $salesPeriod = strtolower(trim($salesPeriod));
       $allowedSalesPeriods = ['daily', 'weekly', 'monthly', 'yearly'];
       if (!in_array($salesPeriod, $allowedSalesPeriods, true)) {
         $salesPeriod = 'monthly';
+      }
+
+      // Safe Agent Filter SQL Logic
+      $agentWhere = "";
+      if ($agent_id) {
+          $agCond = [];
+          if (columnExists($conn, 'lots', 'agent_id')) $agCond[] = "l.agent_id = " . (int)$agent_id;
+          if (tableExists($conn, 'user_accounts') && columnExists($conn, 'user_accounts', 'agent_id')) $agCond[] = "(SELECT u.agent_id FROM user_accounts u WHERE u.id = l.owner_id LIMIT 1) = " . (int)$agent_id;
+          if (tableExists($conn, 'viewings') && columnExists($conn, 'viewings', 'agent_id') && columnExists($conn, 'viewings', 'lot_id')) $agCond[] = "(SELECT v.agent_id FROM viewings v WHERE v.lot_id = l.id ORDER BY v.id DESC LIMIT 1) = " . (int)$agent_id;
+          $agentWhere = !empty($agCond) ? '(' . implode(' OR ', $agCond) . ')' : '0=1';
       }
 
       $periodConfig = [
@@ -3325,8 +3292,6 @@
           'group_expr' => 'DATE({date_col}) AS period_key',
           'group_by' => 'DATE({date_col})',
           'order_by' => 'DATE({date_col})',
-          'title' => 'Daily Sales Trend',
-          'window' => 'Last 30 Days',
         ],
         'weekly' => [
           'default_where' => 'WEEK',
@@ -3334,8 +3299,6 @@
           'group_expr' => "DATE_SUB(DATE({date_col}), INTERVAL WEEKDAY({date_col}) DAY) AS period_key",
           'group_by' => 'YEARWEEK({date_col}, 1)',
           'order_by' => 'YEARWEEK({date_col}, 1)',
-          'title' => 'Weekly Sales Trend',
-          'window' => 'Last 12 Weeks',
         ],
         'monthly' => [
           'default_where' => 'MONTH',
@@ -3343,8 +3306,6 @@
           'group_expr' => "DATE_FORMAT({date_col}, '%Y-%m-01') AS period_key",
           'group_by' => 'YEAR({date_col}), MONTH({date_col})',
           'order_by' => 'YEAR({date_col}) ASC, MONTH({date_col}) ASC',
-          'title' => 'Monthly Sales Trend',
-          'window' => 'Last 12 Months',
         ],
         'yearly' => [
           'default_where' => 'YEAR',
@@ -3352,8 +3313,6 @@
           'group_expr' => "STR_TO_DATE(CONCAT(YEAR({date_col}), '-01-01'), '%Y-%m-%d') AS period_key",
           'group_by' => 'YEAR({date_col})',
           'order_by' => 'YEAR({date_col}) ASC',
-          'title' => 'Yearly Sales Trend',
-          'window' => 'Last 5 Years',
         ],
       ];
 
@@ -3374,8 +3333,7 @@
         if (!empty($whereParts)) {
           $sql .= ' AND ' . implode(' AND ', $whereParts);
         }
-        $sql .= " GROUP BY {$groupBy}
-                 ORDER BY {$orderBy}";
+        $sql .= " GROUP BY {$groupBy} ORDER BY {$orderBy}";
 
         $res = mysqli_query($conn, $sql);
         if ($res) {
@@ -3387,64 +3345,40 @@
             ];
           }
         }
-
         return $rows;
       };
 
-      // Primary source: recorded payment transactions (actual collected amounts).
       if (tableExists($conn, 'lot_payment_transactions') && tableExists($conn, 'lots')) {
         $paymentWhere = [];
-        if ($date_from) {
-          $paymentWhere[] = "t.payment_date >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-        }
-        if ($date_to) {
-          $paymentWhere[] = "t.payment_date < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-        }
-        if ($location_id) {
-          $paymentWhere[] = "l.location_id = " . (int)$location_id;
-        }
-        if (!$date_from && !$date_to) {
-          if ($salesPeriod === 'daily') {
-            $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
-          } elseif ($salesPeriod === 'weekly') {
-            $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)";
-          } elseif ($salesPeriod === 'yearly') {
-            $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)";
-          } else {
-            $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
-          }
-        }
+        if ($date_from) $paymentWhere[] = "t.payment_date >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+        if ($date_to) $paymentWhere[] = "t.payment_date < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+        if ($location_id) $paymentWhere[] = "l.location_id = " . (int)$location_id;
+        if ($agent_id && $agentWhere !== "") $paymentWhere[] = $agentWhere;
 
+        if (!$date_from && !$date_to) {
+          if ($salesPeriod === 'daily') $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
+          elseif ($salesPeriod === 'weekly') $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)";
+          elseif ($salesPeriod === 'yearly') $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)";
+          else $paymentWhere[] = "t.payment_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
+        }
         $monthlySales = $buildTrendRows('lot_payment_transactions t INNER JOIN lots l ON l.id = t.lot_id', 't.payment_date', 't.amount', $paymentWhere);
       }
 
-      // Fallback to sales table if payment ledger has no result or is unavailable.
       if (empty($monthlySales) && $salesAmountExprRoot && $salesDateCol) {
         $salesWhere = [];
-        if ($date_from) {
-          $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-        }
-        if ($date_to) {
-          $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-        }
-        if ($salesLocationCol && $location_id) {
-          $salesWhere[] = "$salesLocationCol = " . (int)$location_id;
-        }
-        if (!$date_from && !$date_to) {
-          if ($salesPeriod === 'daily') {
-            $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
-          } elseif ($salesPeriod === 'weekly') {
-            $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)";
-          } elseif ($salesPeriod === 'yearly') {
-            $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)";
-          } else {
-            $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
-          }
-        }
+        if ($date_from) $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+        if ($date_to) $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+        if ($salesLocationCol && $location_id) $salesWhere[] = "$salesLocationCol = " . (int)$location_id;
+        if ($agent_id) $salesWhere[] = "agent_id = " . (int)$agent_id;
 
+        if (!$date_from && !$date_to) {
+          if ($salesPeriod === 'daily') $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
+          elseif ($salesPeriod === 'weekly') $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)";
+          elseif ($salesPeriod === 'yearly') $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)";
+          else $salesWhere[] = "$salesDateCol >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
+        }
         $monthlySales = $buildTrendRows('sales', $salesDateCol, $salesAmountExprRoot, $salesWhere);
       }
-
       return $monthlySales;
     }
 
@@ -3693,55 +3627,39 @@
     }
   }
 
-  function buildAnalyticsSnapshot($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod = 'monthly'): array {
+  function buildAnalyticsSnapshot($conn, ?string $date_from, ?string $date_to, ?int $location_id, ?string $salesDateCol, ?string $salesLocationCol, ?string $salesAmountExprRoot, string $salesPeriod = 'monthly', ?int $agent_id = null): array {
     $salesPeriod = strtolower(trim($salesPeriod));
     if (!in_array($salesPeriod, ['daily', 'weekly', 'monthly', 'yearly'], true)) {
       $salesPeriod = 'monthly';
     }
 
-    if (!$date_from && !$date_to) {
-      [$date_from, $date_to] = getAnalyticsPeriodRange($salesPeriod);
+    $agentWhere = "";
+    if ($agent_id) {
+        $agCond = [];
+        if (columnExists($conn, 'lots', 'agent_id')) $agCond[] = "l.agent_id = " . (int)$agent_id;
+        if (tableExists($conn, 'user_accounts') && columnExists($conn, 'user_accounts', 'agent_id')) $agCond[] = "(SELECT u.agent_id FROM user_accounts u WHERE u.id = l.owner_id LIMIT 1) = " . (int)$agent_id;
+        if (tableExists($conn, 'viewings') && columnExists($conn, 'viewings', 'agent_id') && columnExists($conn, 'viewings', 'lot_id')) $agCond[] = "(SELECT v.agent_id FROM viewings v WHERE v.lot_id = l.id ORDER BY v.id DESC LIMIT 1) = " . (int)$agent_id;
+        $agentWhere = !empty($agCond) ? '(' . implode(' OR ', $agCond) . ')' : '0=1';
     }
 
     if (tableExists($conn, 'lot_payment_transactions') && tableExists($conn, 'lots')) {
-      $salesQuery = "
-        SELECT IFNULL(SUM(t.amount), 0) as total
-        FROM lot_payment_transactions t
-        INNER JOIN lots l ON l.id = t.lot_id
-        WHERE 1
-      ";
+      $salesQuery = "SELECT IFNULL(SUM(t.amount), 0) as total FROM lot_payment_transactions t INNER JOIN lots l ON l.id = t.lot_id WHERE 1 ";
       $salesWhere = [];
-      if ($date_from) {
-        $salesWhere[] = "t.payment_date >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-      }
-      if ($date_to) {
-        $salesWhere[] = "t.payment_date < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-      }
-      if ($location_id) {
-        $salesWhere[] = "l.location_id = " . (int)$location_id;
-      }
-      if (!empty($salesWhere)) {
-        $salesQuery .= " AND " . implode(' AND ', $salesWhere);
-      }
+      if ($date_from) $salesWhere[] = "t.payment_date >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+      if ($date_to) $salesWhere[] = "t.payment_date < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+      if ($location_id) $salesWhere[] = "l.location_id = " . (int)$location_id;
+      if ($agent_id && $agentWhere !== "") $salesWhere[] = $agentWhere;
+      if (!empty($salesWhere)) $salesQuery .= " AND " . implode(' AND ', $salesWhere);
     } else {
-      $salesQuery = $salesAmountExprRoot
-        ? "SELECT IFNULL(SUM($salesAmountExprRoot), 0) as total FROM sales WHERE 1"
-        : "SELECT 0 as total";
-
+      $salesQuery = $salesAmountExprRoot ? "SELECT IFNULL(SUM($salesAmountExprRoot), 0) as total FROM sales WHERE 1" : "SELECT 0 as total";
       $salesWhere = [];
-      if ($salesDateCol && $date_from) {
-        $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-      }
-      if ($salesDateCol && $date_to) {
-        $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-      }
-      if ($salesLocationCol && $location_id) {
-        $salesWhere[] = "$salesLocationCol = " . (int)$location_id;
-      }
-      if (!empty($salesWhere)) {
-        $salesQuery .= " AND " . implode(' AND ', $salesWhere);
-      }
+      if ($salesDateCol && $date_from) $salesWhere[] = "$salesDateCol >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+      if ($salesDateCol && $date_to) $salesWhere[] = "$salesDateCol < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
+      if ($salesLocationCol && $location_id) $salesWhere[] = "$salesLocationCol = " . (int)$location_id;
+      if ($agent_id) $salesWhere[] = "agent_id = " . (int)$agent_id;
+      if (!empty($salesWhere)) $salesQuery .= " AND " . implode(' AND ', $salesWhere);
     }
+    
     $lotsQuery = "SELECT COUNT(*) as total FROM lots WHERE 1";
     $agentsQuery = "SELECT COUNT(*) as total FROM agent_accounts WHERE status = 'active' AND availability = 1";
 
@@ -3752,50 +3670,17 @@
     $closedSales = 0;
     $ongoingSales = 0;
     if (tableExists($conn, 'lots')) {
-      $normalizedStatusExpr = "CASE
-        WHEN l.status = 'Installments' THEN 'Installment'
-        WHEN l.status = 'Sold' THEN 'Paid'
-        WHEN l.status = '' OR l.status IS NULL THEN 'Available'
-        ELSE l.status
-      END";
-
-      $closedCond = "(
-        {$normalizedStatusExpr} = 'Paid'
-        OR l.payment_type = 'Fully Paid'
-        OR (IFNULL(tx.total_paid, 0) >= IFNULL(l.lot_price, 0) AND IFNULL(l.lot_price, 0) > 0)
-      )";
-      $ongoingCond = "(
-        {$normalizedStatusExpr} = 'Installment'
-        OR l.payment_type = 'Down Payment'
-        OR (
-          IFNULL(tx.total_paid, 0) > 0
-          AND IFNULL(l.lot_price, 0) > 0
-          AND IFNULL(tx.total_paid, 0) < IFNULL(l.lot_price, 0)
-        )
-      )";
+      $normalizedStatusExpr = "CASE WHEN l.status = 'Installments' THEN 'Installment' WHEN l.status = 'Sold' THEN 'Paid' WHEN l.status = '' OR l.status IS NULL THEN 'Available' ELSE l.status END";
+      $closedCond = "({$normalizedStatusExpr} = 'Paid' OR l.payment_type = 'Fully Paid' OR (IFNULL(tx.total_paid, 0) >= IFNULL(l.lot_price, 0) AND IFNULL(l.lot_price, 0) > 0))";
+      $ongoingCond = "({$normalizedStatusExpr} = 'Installment' OR l.payment_type = 'Down Payment' OR (IFNULL(tx.total_paid, 0) > 0 AND IFNULL(l.lot_price, 0) > 0 AND IFNULL(tx.total_paid, 0) < IFNULL(l.lot_price, 0)))";
 
       $lotSalesWhere = ["l.owner_id IS NOT NULL"];
-      if ($location_id) {
-        $lotSalesWhere[] = "l.location_id = " . (int)$location_id;
-      }
-      if (columnExists($conn, 'lots', 'created_at') && $date_from) {
-        $lotSalesWhere[] = "l.created_at >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
-      }
-      if (columnExists($conn, 'lots', 'created_at') && $date_to) {
-        $lotSalesWhere[] = "l.created_at < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
-      }
+      if ($location_id) $lotSalesWhere[] = "l.location_id = " . (int)$location_id;
+      if ($agent_id && $agentWhere !== "") $lotSalesWhere[] = $agentWhere;
+      if (columnExists($conn, 'lots', 'created_at') && $date_from) $lotSalesWhere[] = "l.created_at >= '" . mysqli_real_escape_string($conn, $date_from) . " 00:00:00'";
+      if (columnExists($conn, 'lots', 'created_at') && $date_to) $lotSalesWhere[] = "l.created_at < DATE_ADD('" . mysqli_real_escape_string($conn, $date_to) . "', INTERVAL 1 DAY)";
 
-      $lotSalesSql = "
-        SELECT
-          SUM(CASE WHEN {$closedCond} THEN 1 ELSE 0 END) AS closed_sales,
-          SUM(CASE WHEN ({$ongoingCond}) AND NOT ({$closedCond}) THEN 1 ELSE 0 END) AS ongoing_sales
-        FROM lots l
-        LEFT JOIN (
-          SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid
-          FROM lot_payment_transactions
-          GROUP BY lot_id
-        ) tx ON tx.lot_id = l.id
-        WHERE " . implode(' AND ', $lotSalesWhere);
+      $lotSalesSql = "SELECT SUM(CASE WHEN {$closedCond} THEN 1 ELSE 0 END) AS closed_sales, SUM(CASE WHEN ({$ongoingCond}) AND NOT ({$closedCond}) THEN 1 ELSE 0 END) AS ongoing_sales FROM lots l LEFT JOIN (SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid FROM lot_payment_transactions GROUP BY lot_id) tx ON tx.lot_id = l.id WHERE " . implode(' AND ', $lotSalesWhere);
 
       $lotSalesRes = mysqli_query($conn, $lotSalesSql);
       if ($lotSalesRes) {
@@ -3805,16 +3690,7 @@
       }
     }
 
-    $monthlySales = buildMonthlySalesTrend(
-      $conn,
-      $date_from,
-      $date_to,
-      $location_id,
-      $salesDateCol,
-      $salesLocationCol,
-      $salesAmountExprRoot,
-      $salesPeriod
-    );
+    $monthlySales = buildMonthlySalesTrend($conn, $date_from, $date_to, $location_id, $salesDateCol, $salesLocationCol, $salesAmountExprRoot, $salesPeriod, $agent_id);
 
     $salesResult = mysqli_query($conn, $salesQuery);
     $lotsResult = mysqli_query($conn, $lotsQuery);
@@ -3824,9 +3700,7 @@
     if ($location_id) {
       $locationLookup = mysqli_query($conn, "SELECT location_name FROM lot_locations WHERE id = " . (int)$location_id . " LIMIT 1");
       $locationRow = $locationLookup ? mysqli_fetch_assoc($locationLookup) : null;
-      if ($locationRow && !empty($locationRow['location_name'])) {
-        $locationName = (string)$locationRow['location_name'];
-      }
+      if ($locationRow && !empty($locationRow['location_name'])) $locationName = (string)$locationRow['location_name'];
     }
 
     return [
@@ -3840,51 +3714,26 @@
       ],
       'monthly_sales' => $monthlySales,
       'monthly_scope' => (!$date_from && !$date_to) ? 'default_period' : 'filtered_range',
-      'filters' => [
-        'date_from' => $date_from,
-        'date_to' => $date_to,
-        'location_id' => $location_id,
-        'location_name' => $locationName,
-        'sales_period' => $salesPeriod,
-      ],
+      'filters' => ['date_from' => $date_from, 'date_to' => $date_to, 'location_id' => $location_id, 'location_name' => $locationName, 'sales_period' => $salesPeriod],
     ];
   }
 
-  // Handle fetching analytics data
-  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'analytics') {
-      $date_from = normalizeAnalyticsDate($_GET['date_from'] ?? null);
-      $date_to = normalizeAnalyticsDate($_GET['date_to'] ?? null);
-      $location_id = isset($_GET['location_id']) ? intval($_GET['location_id']) : null;
-      $agent_id = isset($_GET['agent_id']) ? intval($_GET['agent_id']) : null; // <-- GRAB THE AGENT ID
-      $sales_period = strtolower(trim((string)($_GET['sales_period'] ?? 'monthly')));
-      if (!in_array($sales_period, ['daily', 'weekly', 'monthly', 'yearly'], true)) {
-        $sales_period = 'monthly';
-      }
 
-      if (($date_from === null && !empty($_GET['date_from'])) || ($date_to === null && !empty($_GET['date_to']))) {
-        header('Content-Type: application/json');
-        echo json_encode(['success' => false, 'error' => 'Invalid date format. Please use YYYY-MM-DD.']);
-        exit;
+// Lightweight agents list for analytics dropdown
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'agents') {
+    $agents = [];
+    if (tableExists($conn, 'agent_accounts')) {
+      $agentsSql = "SELECT id, TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) AS name FROM agent_accounts ORDER BY first_name ASC, last_name ASC";
+      $agentsRes = mysqli_query($conn, $agentsSql);
+      if ($agentsRes) {
+        while ($r = mysqli_fetch_assoc($agentsRes)) {
+          $agents[] = ['id' => (int)($r['id'] ?? 0), 'name' => trim((string)($r['name'] ?? '')) !== '' ? trim((string)$r['name']) : 'Agent'];
+        }
       }
-      if ($date_from && $date_to && strtotime($date_from) > strtotime($date_to)) {
-        header('Content-Type: application/json');
-        echo json_encode(['success' => false, 'error' => 'Date From cannot be later than Date To.']);
-        exit;
-      }
-
-      // If an agent is selected, we fetch the data from the Reports function instead, 
-      // because it already has all the complex Agent-filtering SQL logic built-in!
-      if ($agent_id) {
-          $_GET['sales_period'] = $sales_period; // Pass the period along
-          // This allows us to use your existing robust report logic without rewriting SQL
-          $snapshot = buildAnalyticsSnapshot($conn, $date_from, $date_to, $location_id, $salesDateCol, $salesLocationCol, $salesAmountExprRoot, $sales_period);
-      } else {
-          $snapshot = buildAnalyticsSnapshot($conn, $date_from, $date_to, $location_id, $salesDateCol, $salesLocationCol, $salesAmountExprRoot, $sales_period);
-      }
-
-      header('Content-Type: application/json');
-      echo json_encode(array_merge(['success' => true], $snapshot));
-      exit;
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['agents' => $agents]);
+    exit;
   }
 
   if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'reports_data') {
@@ -8098,11 +7947,9 @@
           </table>
 
 
-        <div class="lots-action-buttons" style="margin-top: 15px;">
-            <button onclick="addNewLot()">Add New Lot</button>
-            <button onclick="openBulkEditModal()" style="background:#2196f3; color:#fff; border:1px solid #2196f3;">✎ Bulk Edit Selected</button>
-            <button onclick="bulkDeleteLots()" class="btn btn-danger" style="background:#dc3545; color:#fff; border:1px solid #dc3545;">Delete Selected Lots</button>
-          </div>
+          <button onclick="addNewLot()">Add New Lot</button>
+          <button onclick="bulkDeleteLots()" class="btn btn-danger" style="margin-top:10px; background:#dc3545; color:#fff; border:1px solid #dc3545;">Delete Selected Lots</button>
+        </div>
       </div>
 
       <div id="editLotModal" style="
@@ -8133,29 +7980,6 @@
             <input type="hidden" name="lot_id" id="edit_lot_id">
             <div id="editLotFields"></div>
             <button type="submit" class="btn-primary" style="margin-top: 18px;">Save Changes</button>
-          </form>
-        </div>
-      </div>
-      
-      <div id="bulkEditModal" style="display:none; position:fixed; z-index:2100; inset:0; background:rgba(0,0,0,0.6); justify-content:center; align-items:center;">
-        <div style="background:#fff; padding:24px; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,0.3); width:95%; max-width:400px; position:relative;">
-          <span onclick="closeBulkEditModal()" style="color:#aaa; float:right; font-size:32px; font-weight:normal; line-height:1; cursor:pointer;">&times;</span>
-          <h3 style="color:#3e5f3e; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">Bulk Edit Lots</h3>
-          <p style="font-size:13px; color:#666; margin-bottom:15px;">Leave a field blank if you do not want to change it.</p>
-          <form id="bulkEditForm" onsubmit="submitBulkEdit(event)">
-            <div class="form-group">
-              <label>Set Block Number:</label>
-              <input type="text" id="bulk_block" placeholder="e.g. 5">
-            </div>
-            <div class="form-group">
-              <label>Set Lot Size (Sqm):</label>
-              <input type="number" id="bulk_size" placeholder="e.g. 150">
-            </div>
-            <div class="form-group">
-              <label>Set Lot Price (PHP):</label>
-              <input type="text" id="bulk_price" placeholder="e.g. 1,500,000">
-            </div>
-            <button type="submit" class="btn-primary" style="margin-top:18px; width:100%;">Apply to Selected Lots</button>
           </form>
         </div>
       </div>
@@ -8283,7 +8107,7 @@
         </div>
       </div>
       
-      </div><div id="section-viewings" class="section hidden">
+      <div id="section-viewings" class="section hidden">
         <div class="header">
           <div>
             <h2>Manage Viewing Requests</h2>
@@ -8512,21 +8336,25 @@
         </div>
 
         <div class="table-section" style="margin-bottom: 24px; padding: 18px;">
-          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 14px; align-items:end;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto auto; gap:10px; margin-bottom: 14px; align-items:end;">
             <input type="date" id="analytics_date_from" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date From">
             <input type="date" id="analytics_date_to" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;" placeholder="Date To">
+            
             <select id="analytics_location" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
               <option value="">All Locations</option>
             </select>
+            
             <select id="analytics_sales_period" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly" selected>Monthly</option>
               <option value="yearly">Yearly</option>
             </select>
+
             <select id="analytics_agent" style="padding:8px 10px; border:1px solid #ddd; border-radius:4px;">
               <option value="">All Agents</option>
             </select>
+            
             <button type="button" class="btn-primary" onclick="loadAnalyticsData()">Generate</button>
             <button type="button" class="btn" onclick="exportAnalytics()">Download Report</button>
           </div>
@@ -9202,6 +9030,19 @@
   // ================================
   // MAIN NAVIGATION & INITIAL SETUP
   // ================================
+
+  // Helper: Safely parse JSON responses and surface non-JSON payloads for debugging
+  function parseJsonResponse(response) {
+    const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
+    if (!ct.toLowerCase().includes('application/json')) {
+      return response.text().then(text => {
+        console.error('Expected JSON response but received:', text);
+        // Throw so promise chains go to .catch — include a short snippet for debugging
+        throw new Error('Non-JSON response received from server: ' + (text && text.substring ? text.substring(0, 300) : String(text)));
+      });
+    }
+    return response.json();
+  }
   document.addEventListener('DOMContentLoaded', function() {
     // Section navigation
     const sections = [
@@ -9223,25 +9064,21 @@
         const section = document.getElementById(sectionId);
         if (section) {
             const willShow = sectionId === targetId;
-            // use `active` class like user dashboard for smooth transitions
             section.classList.toggle('active', willShow);
-            // remove any legacy `hidden` class if present
             if (section.classList.contains('hidden')) section.classList.remove('hidden');
           }
       });
       
-      // Update active nav link
       document.querySelectorAll('[data-target]').forEach(link => {
         link.classList.toggle('active', link.dataset.target === targetId);
       });
 
-      // Load data based on section
       if (targetId === 'section-lots') {
         loadLocations();
         loadLots('');
       } else if (targetId === 'section-analytics') {
         loadLocations();
-        loadAgentsForAnalytics();
+        loadAgentsForAnalytics(); // ADDED
         loadAnalyticsData();
       } else if (targetId === 'section-reports') {
         loadPrintableReports();
@@ -9258,6 +9095,23 @@
         loadLotOwners();
       }
     }
+
+    function loadAgentsForAnalytics() {
+    const select = document.getElementById('analytics_agent');
+    if (!select) return;
+    
+    fetch(window.location.pathname + '?fetch=agents')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.agents && data.agents.length > 0) {
+          let html = '<option value="">All Agents</option>';
+          data.agents.forEach(agent => {
+            html += `<option value="${agent.id}">${agent.name}</option>`;
+          });
+          select.innerHTML = html;
+        }
+      }).catch(err => console.error('Error fetching agents:', err));
+  }
 
     // Handle navigation clicks
     document.querySelectorAll('[data-target]').forEach(link => {
@@ -9314,13 +9168,6 @@
     const analyticsSalesPeriodSelect = document.getElementById('analytics_sales_period');
     if (analyticsSalesPeriodSelect) {
       analyticsSalesPeriodSelect.addEventListener('change', function() {
-        loadAnalyticsData();
-      });
-    }
-
-    const analyticsAgentSelect = document.getElementById('analytics_agent');
-    if (analyticsAgentSelect) {
-      analyticsAgentSelect.addEventListener('change', function() {
         loadAnalyticsData();
       });
     }
@@ -9646,46 +9493,6 @@
     window.closeAddLocationModal   = closeAddLocationModal;
     window.saveNewLocation         = saveNewLocation;
     window.deleteSelectedLocation  = deleteSelectedLocation;
-    window.applyDocumentFilters         = applyDocumentFilters;
-    window.resetDocumentFilters         = resetDocumentFilters;
-    window.onUserChangeForUpload        = onUserChangeForUpload;
-    window.adminUploadDocument          = adminUploadDocument;
-    window.approveDocument              = approveDocument;
-    window.rejectDocument               = rejectDocument;
-
-    window.applyNotificationFilters     = applyNotificationFilters;
-    window.resetNotificationFilters     = resetNotificationFilters;
-
-    window.applyAuditFilters            = applyAuditFilters;
-    window.resetAuditFilters            = resetAuditFilters;
-
-    window.loadAnalyticsData            = loadAnalyticsData;
-    window.loadPrintableReports         = loadPrintableReports;
-    window.downloadReportsFile          = downloadReportsFile;
-
-    window.openInstallmentPlanModal     = openInstallmentPlanModal;
-    window.recordPaymentForLot          = recordPaymentForLot;
-    window.showPaymentHistory           = showPaymentHistory;
-    window.markTurnoverForLot           = markTurnoverForLot;
-    window.proceedRecordPaymentDetails  = proceedRecordPaymentDetails;
-    window.closeRecordPaymentModal      = closeRecordPaymentModal;
-    window.submitRecordPayment          = submitRecordPayment;
-    window.closeInstallmentPlanModal    = closeInstallmentPlanModal;
-    window.recalculateInstallmentPlan   = recalculateInstallmentPlan;
-    window.submitInstallmentPlan        = submitInstallmentPlan;
-    window.closePaymentHistoryModal     = closePaymentHistoryModal;
-    window.closeTurnoverModal           = closeTurnoverModal;
-    window.submitTurnoverUpdate         = submitTurnoverUpdate;
-
-    window.updateLotPaymentStatus       = updateLotPaymentStatus;
-    window.viewOwnerDetails             = viewOwnerDetails;
-    window.removeLotOwner               = removeLotOwner;
-    window.closeOwnerDetailsModal       = closeOwnerDetailsModal;
-
-    window.previewBlueprintFile         = previewBlueprintFile;
-    window.removeBlueprintPreview       = removeBlueprintPreview;
-    window.previewPhoto                 = previewPhoto;
-    window.submitBulkEdit               = submitBulkEdit;
 
     const userAccountsSearch = document.getElementById('userAccountsSearch');
     if (userAccountsSearch) {
@@ -9773,24 +9580,6 @@
         });
       })
       .catch(error => console.error('Error loading locations:', error));
-  }
-
-  // Add this right below the loadLocations() function
-  function loadAgentsForAnalytics() {
-    fetch(window.location.pathname + '?fetch=reports_data') // We can piggyback off reports_data for the agent list
-      .then(response => response.json())
-      .then(data => {
-        const select = document.getElementById('analytics_agent');
-        if (!select || !data.agents) return;
-        
-        let optionsHtml = '<option value="">All Agents</option>';
-        data.agents.forEach(agent => {
-          optionsHtml += `<option value="${agent.id}">${agent.name}</option>`;
-        });
-        
-        select.innerHTML = optionsHtml;
-      })
-      .catch(error => console.error('Error loading agents:', error));
   }
 
   function loadLots(locationId = '') {
@@ -11976,7 +11765,7 @@
     params.append('sales_scope', salesScope);
 
     fetch(window.location.pathname + '?' + params.toString())
-      .then(response => response.json())
+      .then(parseJsonResponse)
       .then(agents => {
         if (loading) loading.style.display = 'none';
         if (content) content.style.display = 'block';
@@ -12099,7 +11888,7 @@
     titleEl.textContent = `${periodText} Sales Trend`;
   }
 
-function applyAnalyticsFilters() {
+  function applyAnalyticsFilters() {
     const normalizeDateInput = (value) => {
       const raw = String(value || '').trim();
       if (!raw) return '';
@@ -12123,19 +11912,19 @@ function applyAnalyticsFilters() {
       return raw;
     };
 
-    const getFilters = () => {
+      const getFilters = () => {
       const dateFrom = normalizeDateInput(document.getElementById('analytics_date_from')?.value || '');
       const dateTo = normalizeDateInput(document.getElementById('analytics_date_to')?.value || '');
       const locationId = document.getElementById('analytics_location')?.value || '';
       const salesPeriod = document.getElementById('analytics_sales_period')?.value || 'monthly';
-      const agentId = document.getElementById('analytics_agent')?.value || ''; // <-- Added Agent Filter
+      const agentId = document.getElementById('analytics_agent')?.value || ''; // ADDED
 
       if (dateFrom && dateTo && dateFrom > dateTo) {
         alert('Date From cannot be later than Date To.');
         return null;
       }
 
-      return { dateFrom, dateTo, locationId, salesPeriod, agentId }; // <-- Returned Agent ID
+      return { dateFrom, dateTo, locationId, salesPeriod, agentId }; // ADDED
     };
 
     const filters = getFilters();
@@ -12145,15 +11934,14 @@ function applyAnalyticsFilters() {
     const dateTo = filters.dateTo;
     const locationId = filters.locationId;
     const salesPeriod = filters.salesPeriod;
-    const agentId = filters.agentId; // <-- Extracted Agent ID
 
     const params = new URLSearchParams();
     params.append('fetch', 'analytics');
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    if (locationId) params.append('location_id', locationId);
-    if (salesPeriod) params.append('sales_period', salesPeriod);
-    if (agentId) params.append('agent_id', agentId); // <-- Sent to PHP backend
+    if (filters.dateFrom) params.append('date_from', filters.dateFrom);
+    if (filters.dateTo) params.append('date_to', filters.dateTo);
+    if (filters.locationId) params.append('location_id', filters.locationId);
+    if (filters.salesPeriod) params.append('sales_period', filters.salesPeriod);
+    if (filters.agentId) params.append('agent_id', filters.agentId); // ADDED
 
     fetch(window.location.pathname + '?' + params.toString())
       .then(response => response.json())
@@ -12164,8 +11952,8 @@ function applyAnalyticsFilters() {
         }
 
         renderAnalyticsKpis(data);
-        updateSalesRangeLabel(dateFrom, dateTo, salesPeriod);
-        updateMonthlySalesTitle(data, dateFrom, dateTo, salesPeriod);
+        updateSalesRangeLabel(filters.dateFrom, filters.dateTo, filters.salesPeriod);
+        updateMonthlySalesTitle(data, filters.dateFrom, filters.dateTo, filters.salesPeriod);
 
         const monthly = Array.isArray(data.monthly_sales) ? data.monthly_sales : [];
         lastMonthlySalesData = monthly;
@@ -12518,7 +12306,7 @@ function applyAnalyticsFilters() {
     if (filters.salesPeriod) params.append('sales_period', filters.salesPeriod);
 
     fetch(window.location.pathname + '?' + params.toString())
-      .then(res => res.json())
+      .then(parseJsonResponse)
       .then(data => {
         if (!data || data.success === false) {
           alert((data && data.error) ? data.error : 'Failed to load reports data.');
@@ -12908,57 +12696,6 @@ function applyAnalyticsFilters() {
         }
       })
       .catch(() => alert('Failed to delete lots.'));
-  }
-
-function openBulkEditModal() {
-    const checkboxes = document.querySelectorAll('.lot-checkbox:checked');
-    if (checkboxes.length === 0) {
-      alert('Please select at least one lot using the checkboxes on the left.');
-      return;
-    }
-    document.getElementById('bulkEditForm').reset();
-    bindLotPriceFormatter(document.getElementById('bulk_price'));
-    document.getElementById('bulkEditModal').style.display = 'flex';
-  }
-
-  function closeBulkEditModal() {
-    document.getElementById('bulkEditModal').style.display = 'none';
-  }
-
-  function submitBulkEdit(event) {
-    event.preventDefault();
-    const checkboxes = document.querySelectorAll('.lot-checkbox:checked');
-    const ids = Array.from(checkboxes).map(cb => cb.value);
-    
-    const block = document.getElementById('bulk_block').value;
-    const size = document.getElementById('bulk_size').value;
-    const price = normalizeLotPriceValue(document.getElementById('bulk_price').value);
-
-    if (!block && !size && !price) {
-      alert("Please fill out at least one field to update.");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('action', 'bulk_edit');
-    formData.append('lot_ids', JSON.stringify(ids));
-    formData.append('block_number', block);
-    formData.append('lot_size', size);
-    formData.append('lot_price', price);
-
-    fetch(window.location.pathname, { method: 'POST', body: formData })
-      .then(r => r.json())
-      .then(res => {
-        if (res.success) {
-          showLotMessage(`Successfully updated ${ids.length} lots!`, true);
-          closeBulkEditModal();
-          const locSel = document.getElementById('location_id');
-          loadLots(locSel ? locSel.value : '');
-        } else {
-          alert('Error: ' + res.error);
-        }
-      })
-      .catch(() => alert('Failed to bulk edit lots.'));
   }
 
 // --- Mapper Globals ---
@@ -13488,7 +13225,6 @@ function closePinModal() {
     const dateTo = normalizeDateInput(document.getElementById('analytics_date_to')?.value || '');
     const locationId = document.getElementById('analytics_location')?.value || '';
     const salesPeriod = document.getElementById('analytics_sales_period')?.value || 'monthly';
-    const agentId = document.getElementById('analytics_agent')?.value || '';
 
     if (dateFrom && dateTo && dateFrom > dateTo) {
       alert('Date From cannot be later than Date To.');
@@ -13501,7 +13237,6 @@ function closePinModal() {
     if (dateTo) params.append('date_to', dateTo);
     if (locationId) params.append('location_id', locationId);
     if (salesPeriod) params.append('sales_period', salesPeriod);
-    if (agentId) params.append('agent_id', agentId);
 
     window.location.href = window.location.pathname + '?' + params.toString();
   }
@@ -13509,3 +13244,4 @@ function closePinModal() {
 
   </body>
   </html>
+      
