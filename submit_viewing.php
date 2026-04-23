@@ -1,10 +1,52 @@
 <?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 $servername = "localhost";
 $username   = "root";
 $password   = "";
 $dbname     = "nuevopuerta";
 
 header('Content-Type: application/json');
+require_once __DIR__ . '/includes/email_branding.php';
+
+if (!function_exists('formatViewingDateTimeLabel')) {
+    function formatViewingDateTimeLabel(string $value): string {
+        $ts = strtotime($value);
+        return $ts ? date('M d, Y h:i A', $ts) : $value;
+    }
+}
+
+if (!function_exists('sendAgentRequestEmail')) {
+    function sendAgentRequestEmail(string $toEmail, string $toName, string $subject, string $messageHtml, string $messageText): bool {
+        $toEmail = trim($toEmail);
+        if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        $html = buildNovoPuertaEmailHtml(
+            $subject,
+            $messageHtml,
+            [
+                'intro' => 'A new client viewing request was assigned to you.',
+                'footer_note' => 'Please review and respond in your agent dashboard.',
+            ]
+        );
+
+        $headers = [
+            'MIME-Version: 1.0',
+            'Content-type: text/html; charset=UTF-8',
+            'From: Nuevo Puerta <no-reply@nuevopuerta.local>',
+        ];
+
+        $ok = @mail($toEmail, $subject, $html, implode("\r\n", $headers));
+        if (!$ok) {
+            error_log('Failed sending agent request email to ' . $toEmail);
+        }
+        return $ok;
+    }
+}
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 if ($conn->connect_error) {
@@ -17,7 +59,8 @@ $conn->query("ALTER TABLE viewings ADD COLUMN IF NOT EXISTS appointment_type VAR
 
 // ---------------- READ POST DATA ----------------
 $agent_id          = isset($_POST['agent_id']) && $_POST['agent_id'] !== '' ? (int)$_POST['agent_id'] : null;
-$user_id           = null; // guests have no account
+$sessionUserId     = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+$user_id           = $sessionUserId > 0 ? $sessionUserId : null; // guests have no account
 
 $client_first_name  = trim($_POST['client_first_name']  ?? '');
 $client_middle_name = trim($_POST['client_middle_name'] ?? '');
@@ -161,12 +204,22 @@ if ($stmt->execute()) {
         $lotQuery->close();
     }
 
-    // --- Notify agent if this is an appointment ---
-    if (isset($_POST['appointment_type']) && $_POST['appointment_type'] === 'appointment' && $agent_id) {
+    // --- Notify assigned agent for both appointment and reservation requests ---
+    if ($agent_id) {
         // Create agent_notifications table if not exists
         $conn->query("CREATE TABLE IF NOT EXISTS agent_notifications (
             id INT AUTO_INCREMENT PRIMARY KEY,
             agent_id INT,
+            viewing_id INT NULL,
+            request_type VARCHAR(30) NULL,
+            client_name VARCHAR(180) NULL,
+            client_email VARCHAR(255) NULL,
+            client_phone VARCHAR(60) NULL,
+            lot_ref VARCHAR(120) NULL,
+            lot_size VARCHAR(60) NULL,
+            lot_price DECIMAL(14,2) NULL,
+            location_name VARCHAR(180) NULL,
+            preferred_at DATETIME NULL,
             title VARCHAR(255),
             message TEXT,
             is_read TINYINT(1) DEFAULT 0,
@@ -174,16 +227,104 @@ if ($stmt->execute()) {
             INDEX idx_agent (agent_id, is_read, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-        $notifTitle = 'New Appointment Request';
-        $notifMsg = 'A client has requested an appointment for Lot ' . htmlspecialchars($lot_no, ENT_QUOTES, 'UTF-8') .
-            (!empty($preferred_at) ? (' on ' . htmlspecialchars($preferred_at, ENT_QUOTES, 'UTF-8')) : '') .
-            '. Please review and approve or decline.';
-        $notifStmt = $conn->prepare("INSERT INTO agent_notifications (agent_id, title, message) VALUES (?, ?, ?)");
+        // Backward-compatible column additions for existing tables.
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS viewing_id INT NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS request_type VARCHAR(30) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS client_name VARCHAR(180) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS client_email VARCHAR(255) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS client_phone VARCHAR(60) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS lot_ref VARCHAR(120) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS lot_size VARCHAR(60) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS lot_price DECIMAL(14,2) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS location_name VARCHAR(180) NULL");
+        $conn->query("ALTER TABLE agent_notifications ADD COLUMN IF NOT EXISTS preferred_at DATETIME NULL");
+
+        $isAppointment = ($appointmentType === 'appointment');
+        $requestLabel = $isAppointment ? 'appointment' : 'reservation';
+        $requestLabelTitle = $isAppointment ? 'Appointment' : 'Reservation';
+        $formattedPreferredAt = $preferred_at !== '' ? formatViewingDateTimeLabel($preferred_at) : 'TBD';
+        $clientName = trim($client_first_name . ' ' . $client_last_name);
+        if ($clientName === '') {
+            $clientName = 'Client';
+        }
+
+        $notifTitle = $isAppointment ? 'New Book for Appointment Request' : ('New ' . $requestLabelTitle . ' Request');
+        $notifMsg = $isAppointment
+            ? 'A client submitted a book for appointment request. Please approve or decline.'
+            : 'A client submitted a reservation request. Please approve or decline.';
+
+        $locationName = '';
+        if ($location_id) {
+            $locStmt = $conn->prepare("SELECT location_name FROM lot_locations WHERE id=? LIMIT 1");
+            if ($locStmt) {
+                $locStmt->bind_param('i', $location_id);
+                $locStmt->execute();
+                $locRes = $locStmt->get_result();
+                if ($locRow = $locRes->fetch_assoc()) {
+                    $locationName = trim((string)($locRow['location_name'] ?? ''));
+                }
+                $locStmt->close();
+            }
+        }
+
+        $insertedViewingId = (int)$stmt->insert_id;
+        $lotRef = 'Lot ' . (string)$lot_no;
+        $lotSize = isset($lot_details['lot_size']) ? (string)$lot_details['lot_size'] : null;
+        $lotPrice = isset($lot_details['lot_price']) ? (float)$lot_details['lot_price'] : null;
+
+        $notifStmt = $conn->prepare("INSERT INTO agent_notifications
+            (agent_id, viewing_id, request_type, client_name, client_email, client_phone, lot_ref, lot_size, lot_price, location_name, preferred_at, title, message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         if ($notifStmt) {
-            $notifStmt->bind_param('iss', $agent_id, $notifTitle, $notifMsg);
+            $notifStmt->bind_param(
+                'iissssssdssss',
+                $agent_id,
+                $insertedViewingId,
+                $requestLabel,
+                $clientName,
+                $client_email,
+                $client_phone,
+                $lotRef,
+                $lotSize,
+                $lotPrice,
+                $locationName,
+                $preferred_at,
+                $notifTitle,
+                $notifMsg
+            );
             $notifStmt->execute();
             $notifStmt->close();
         }
+
+        $agentEmail = '';
+        $agentName = '';
+        $agentStmt = $conn->prepare("SELECT email, CONCAT(first_name, ' ', last_name) AS full_name FROM agent_accounts WHERE id=? LIMIT 1");
+        if ($agentStmt) {
+            $agentStmt->bind_param('i', $agent_id);
+            $agentStmt->execute();
+            $agentRes = $agentStmt->get_result();
+            if ($agentRow = $agentRes->fetch_assoc()) {
+                $agentEmail = trim((string)($agentRow['email'] ?? ''));
+                $agentName = trim((string)($agentRow['full_name'] ?? ''));
+            }
+            $agentStmt->close();
+        }
+
+        $emailSubject = $notifTitle;
+        $emailBodyHtml = '<p>Hello ' . htmlspecialchars($agentName !== '' ? $agentName : 'Agent', ENT_QUOTES, 'UTF-8') . ',</p>'
+            . '<p>A new client ' . htmlspecialchars($requestLabel, ENT_QUOTES, 'UTF-8') . ' request has been assigned to you.</p>'
+            . '<p><strong>Client:</strong> ' . htmlspecialchars($clientName, ENT_QUOTES, 'UTF-8') . '<br>'
+            . '<strong>Lot:</strong> ' . htmlspecialchars((string)$lot_no, ENT_QUOTES, 'UTF-8') . '<br>'
+            . '<strong>Date & Time:</strong> ' . htmlspecialchars($formattedPreferredAt, ENT_QUOTES, 'UTF-8') . '</p>'
+            . '<p>Please log in to your dashboard to approve or decline this request.</p>';
+        $emailBodyText = "Hello " . ($agentName !== '' ? $agentName : 'Agent') . ",\n\n"
+            . "A new client {$requestLabel} request has been assigned to you.\n"
+            . "Client: {$clientName}\n"
+            . "Lot: {$lot_no}\n"
+            . "Date & Time: {$formattedPreferredAt}\n\n"
+            . "Please log in to your dashboard to approve or decline this request.";
+
+        sendAgentRequestEmail($agentEmail, $agentName, $emailSubject, $emailBodyHtml, $emailBodyText);
     }
 
     echo json_encode([

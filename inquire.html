@@ -1,51 +1,110 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Request a Viewing</title>
+  <style>
+    body { margin: 0; padding: 20px; min-height: 100vh; background: #f3f6fb; color: #111827; font-family: Arial, sans-serif; }
+    .page-shell { max-width: 640px; margin: 0 auto; }
+    h2 { margin: 0 0 18px; font-size: 1.75rem; line-height: 1.2; }
+    form { background: #ffffff; border-radius: 18px; padding: 24px; box-shadow: 0 14px 42px rgba(15, 23, 42, 0.12); }
+    .form-row { margin-bottom: 16px; }
+    label { display: block; margin-bottom: 8px; font-size: 0.95rem; font-weight: 700; }
+    input[type="text"], input[type="email"], select, textarea { width: 100%; padding: 12px 14px; border: 1px solid #d1d5db; border-radius: 12px; background: #fff; font-size: 0.95rem; transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+    input[type="text"]:focus, input[type="email"]:focus, select:focus, textarea:focus { outline: none; border-color: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15); }
+    textarea { min-height: 120px; resize: vertical; }
+    .checkbox-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; }
+    .checkbox-row input { margin-top: 4px; }
+    button { width: 100%; border: none; border-radius: 14px; padding: 14px; background: #10b981; color: #ffffff; font-size: 1rem; font-weight: 700; cursor: pointer; transition: background 0.2s ease; }
+    button:hover { background: #059669; }
+    a { color: #059669; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    @media (max-width: 600px) { body { padding: 16px; } form { padding: 18px; } }
+  </style>
 </head>
 <body>
-  <h2>Request a Viewing</h2>
-  <form method="POST" action="submit_lead.php">
-    <input type="text" name="first_name" placeholder="First Name" required>
-    <input type="text" name="last_name" placeholder="Last Name" required>
-    <input type="email" name="email" placeholder="Email" required>
-    <input type="text" name="phone" placeholder="Mobile Number" required>
-    <input type="text" name="location" placeholder="Preferred Location or Lot">
-
-    <!-- Agent selection -->
-    <label for="agent_id">Select Agent:</label>
-    <select name="agent_id" id="agent_id" required>
-      <option value="">-- Select Agent --</option>
-    </select>
-
-    <!-- Date selection (populated by JS) -->
-    <label for="available_date">Available Date:</label>
-    <select name="available_date" id="available_date" required>
-      <option value="">-- Select Date --</option>
-    </select>
-
-    <!-- Time slot selection (populated by JS) -->
-    <label for="time_slot">Available Time:</label>
-    <select name="time_slot" id="time_slot" required>
-      <option value="">-- Select Time --</option>
-    </select>
-
-    <textarea name="note" placeholder="Notes or questions"></textarea>
-    <label>
-      <input type="checkbox" name="consent" required>
-      I agree to the privacy policy and to be contacted.
-    </label>
-    <p style="font-size:13px;color:#555;">
-      By submitting this form, you agree to our <a href="privacy.html" target="_blank">privacy policy</a>.
-    </p>
-    <input type="hidden" name="location_id" value="">
-    <input type="hidden" name="lot_id" value="">
-    <button type="submit">Submit Request</button>
-  </form>
+  <div class="page-shell">
+    <h2>Request a Viewing</h2>
+    <form method="POST" action="submit_lead.php">
+      <div class="form-row">
+        <label for="first_name">First Name</label>
+        <input type="text" name="first_name" id="first_name" placeholder="First Name" required>
+      </div>
+      <div class="form-row">
+        <label for="last_name">Last Name</label>
+        <input type="text" name="last_name" id="last_name" placeholder="Last Name" required>
+      </div>
+      <div class="form-row">
+        <label for="email">Email</label>
+        <input type="email" name="email" id="email" placeholder="Email" required>
+      </div>
+      <div class="form-row">
+        <label for="phone">Mobile Number</label>
+        <input type="text" name="phone" id="phone" placeholder="Mobile Number" required>
+      </div>
+      <div class="form-row">
+        <label for="location">Preferred Location or Lot</label>
+        <input type="text" name="location" id="location" placeholder="Preferred Location or Lot">
+      </div>
+      <div class="form-row">
+        <label for="agent_id">Select Agent</label>
+        <select name="agent_id" id="agent_id" required>
+          <option value="">-- Select Agent --</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="available_date">Available Date</label>
+        <select name="available_date" id="available_date" required>
+          <option value="">-- Select Date --</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="time_slot">Available Time</label>
+        <select name="time_slot" id="time_slot" required>
+          <option value="">-- Select Time --</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="note">Notes or questions</label>
+        <textarea name="note" id="note" placeholder="Notes or questions"></textarea>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" name="consent" id="consent" required>
+        <label for="consent" style="font-weight:400;">I agree to the privacy policy and to be contacted.</label>
+      </div>
+      <p style="font-size:13px;color:#555; margin-bottom: 16px;">By submitting this form, you agree to our <a href="privacy.html" target="_blank">privacy policy</a>.</p>
+      <input type="hidden" name="location_id" value="">
+      <input type="hidden" name="lot_id" value="">
+      <button type="submit">Submit Request</button>
+    </form>
+  </div>
 
   <script>
-    // Fetch agents and their available slots
+    function formatDateLabel(value) {
+      const date = new Date(value + 'T00:00:00');
+      if (isNaN(date.getTime())) {
+        return value;
+      }
+      return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function formatTimeLabel(slot) {
+      if (!slot.available_date || !slot.time_slot) {
+        return slot.time_slot || '';
+      }
+      const dateTime = new Date(slot.available_date + 'T' + slot.time_slot);
+      if (isNaN(dateTime.getTime())) {
+        return slot.time_slot;
+      }
+      const interval = slot.slot_interval_minutes || 60;
+      const endDateTime = new Date(dateTime.getTime() + interval * 60000);
+      const formattedStartTime = dateTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const formattedEndTime = endDateTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const weekday = dateTime.toLocaleDateString('en-US', { weekday: 'long' });
+      return `${formattedStartTime} - ${formattedEndTime} (${weekday})`;
+    }
+
     async function fetchAgents() {
       const res = await fetch('get_all_agents.php');
       const agents = await res.json();
@@ -53,45 +112,55 @@
       agents.forEach(agent => {
         const opt = document.createElement('option');
         opt.value = agent.id;
-        opt.textContent = agent.first_name + ' ' + agent.last_name;
+        opt.textContent = `${agent.first_name} ${agent.last_name}`;
         agentSelect.appendChild(opt);
       });
     }
 
     async function fetchDates(agentId) {
-      const res = await fetch('get_agent_slots.php?agent_id=' + agentId);
+      const res = await fetch(`get_agent_slots.php?agent_id=${encodeURIComponent(agentId)}`);
       const slots = await res.json();
       const dateSelect = document.getElementById('available_date');
       dateSelect.innerHTML = '<option value="">-- Select Date --</option>';
-      const uniqueDates = [...new Set(slots.map(s => s.available_date))];
+      const uniqueDates = [...new Set(slots.map(s => s.available_date))].sort();
       uniqueDates.forEach(date => {
         const opt = document.createElement('option');
         opt.value = date;
-        opt.textContent = date;
+        opt.textContent = formatDateLabel(date);
         dateSelect.appendChild(opt);
       });
       document.getElementById('time_slot').innerHTML = '<option value="">-- Select Time --</option>';
     }
 
     async function fetchTimes(agentId, date) {
-      const res = await fetch('get_agent_slots.php?agent_id=' + agentId + '&date=' + date);
+      const res = await fetch(`get_agent_slots.php?agent_id=${encodeURIComponent(agentId)}&date=${encodeURIComponent(date)}`);
       const slots = await res.json();
       const timeSelect = document.getElementById('time_slot');
       timeSelect.innerHTML = '<option value="">-- Select Time --</option>';
       slots.forEach(slot => {
         const opt = document.createElement('option');
         opt.value = slot.time_slot;
-        opt.textContent = slot.time_slot;
+        opt.textContent = formatTimeLabel(slot);
         timeSelect.appendChild(opt);
       });
     }
 
-    document.getElementById('agent_id').addEventListener('change', function() {
-      if (this.value) fetchDates(this.value);
+    document.getElementById('agent_id').addEventListener('change', function () {
+      if (this.value) {
+        fetchDates(this.value);
+      } else {
+        document.getElementById('available_date').innerHTML = '<option value="">-- Select Date --</option>';
+        document.getElementById('time_slot').innerHTML = '<option value="">-- Select Time --</option>';
+      }
     });
-    document.getElementById('available_date').addEventListener('change', function() {
+
+    document.getElementById('available_date').addEventListener('change', function () {
       const agentId = document.getElementById('agent_id').value;
-      if (agentId && this.value) fetchTimes(agentId, this.value);
+      if (agentId && this.value) {
+        fetchTimes(agentId, this.value);
+      } else {
+        document.getElementById('time_slot').innerHTML = '<option value="">-- Select Time --</option>';
+      }
     });
 
     fetchAgents();

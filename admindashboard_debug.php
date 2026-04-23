@@ -23,6 +23,7 @@
       die("Connection Failed: " . $conn->connect_error);
   }
   $conn->set_charset('utf8mb4');
+  require_once __DIR__ . '/includes/email_branding.php';
 
     function tableExists($conn, $tableName): bool {
       $tableName = trim((string)$tableName);
@@ -824,31 +825,14 @@
     }
 
     function buildSystemEmailHtml(string $bodyText, ?string $logoSrc = null): string {
-      $safeBody = nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8'));
-      $year = date('Y');
-      $logoHtml = '';
-
-      if ($logoSrc !== null && $logoSrc !== '') {
-        $safeLogo = htmlspecialchars($logoSrc, ENT_QUOTES, 'UTF-8');
-        $logoHtml = "<div style=\"margin:0 0 16px 0;\"><div style=\"display:inline-block;background:#1f3b2d;border-radius:14px;padding:10px 12px;\"><img src=\"{$safeLogo}\" alt=\"Nuevo Puerta Logo\" style=\"display:block;max-width:190px;height:auto;\"></div></div>";
-      }
-
-      return '<!DOCTYPE html>'
-        . '<html><body style="margin:0;padding:0;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;background:#f6f8fb;">'
-        . '<tr><td align="center">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
-        . '<tr><td style="padding:22px 24px 14px 24px;">'
-        . $logoHtml
-        . '<div style="font-size:15px;line-height:1.65;">' . $safeBody . '</div>'
-        . '</td></tr>'
-        . '<tr><td style="padding:14px 24px 20px 24px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">'
-        . '&copy; ' . $year . ' Nuevo Puerta Real Estate. All rights reserved.'
-        . '</td></tr>'
-        . '</table>'
-        . '</td></tr>'
-        . '</table>'
-        . '</body></html>';
+      return buildNovoPuertaEmailHtml(
+        'Nuevo Puerta Notification',
+        nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8')),
+        [
+          'intro' => 'This is an automated message from Nuevo Puerta Real Estate.',
+          'footer_note' => 'Please keep this email for your records.',
+        ]
+      );
     }
 
     function sendSystemEmail($to, $toName, $subject, $body, &$errorMessage = ''): bool {

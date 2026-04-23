@@ -2620,9 +2620,14 @@ window.addEventListener('click', function (event) {
 function loadAgentSlots(agentId) {
   console.log('Loading slots for agent:', agentId);
   const select = document.getElementById('agentTimeSlot');
+  const lotId = (document.getElementById('lot_id')?.value || '').trim();
+  const locationId = (document.getElementById('location_id')?.value || '').trim();
   select.disabled = true;
   select.innerHTML = '<option value="">Loading available slots...</option>';
-  fetch('get_agent_slots.php?agent_id=' + agentId)
+  const params = new URLSearchParams({ agent_id: String(agentId) });
+  if (lotId) params.append('lot_id', lotId);
+  if (locationId) params.append('location_id', locationId);
+  fetch('get_agent_slots.php?' + params.toString())
     .then(res => res.json())
     .then(slots => {
       console.log('Slots received:', slots);
@@ -2642,20 +2647,26 @@ function loadAgentSlots(agentId) {
         const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
         if (dateObj < today) return; // Skip past dates
         const optgroup = document.createElement('optgroup');
-        // Format date as e.g. December 25, 2025
-        const dateLabel = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        // Format date as e.g. Monday, December 25, 2025
+        const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         optgroup.label = dateLabel;
         grouped[date].forEach(slot => {
-          // Format time as e.g. 12:05 PM
+          // Format time as e.g. 10:00 AM - parse directly from HH:MM:SS server format
           const timeLabel = slot.time_slot.length > 5 ? slot.time_slot.slice(0,5) : slot.time_slot;
-          const [h, m] = timeLabel.split(':');
-          const d = new Date(); d.setHours(h, m);
-          const formattedTime = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          const [hStr, mStr] = timeLabel.split(':');
+          const h = parseInt(hStr, 10);
+          const m = parseInt(mStr, 10);
+          const period = h >= 12 ? 'PM' : 'AM';
+          const displayH = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+          const formattedTime = String(displayH).padStart(1, ' ') + ':' + String(m).padStart(2, '0') + ' ' + period;
           const opt = document.createElement('option');
           opt.value = date + ' ' + slot.time_slot;
           let label = formattedTime;
+          if (slot.lot_ref) {
+            label += ` • ${slot.lot_ref}`;
+          }
           if (slot.max_clients > 1) {
-            label += ` (${slot.booked_count}/${slot.max_clients} slots taken)`;
+            label += ` (${slot.booked_count}/${slot.max_clients} booked)`;
           } else {
             label += slot.booked_count >= slot.max_clients ? ' (Full)' : ' (Available)';
           }

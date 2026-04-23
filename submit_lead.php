@@ -1,5 +1,6 @@
 <?php
 require_once 'dbconn.php';
+require_once __DIR__ . '/includes/email_branding.php';
 
 $ip_address = $_SERVER['REMOTE_ADDR'];
 $res = $conn->query("SELECT COUNT(*) AS c FROM leads WHERE ip_address='$ip_address' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)");
@@ -48,20 +49,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute();
     $stmt->close();
 
+    $subject = "Your Viewing Request Received";
+    $messageHtml = '<p>Thank you for your request.</p>'
+        . '<p><strong>Reference #:</strong> ' . htmlspecialchars((string)$ref, ENT_QUOTES, 'UTF-8') . '</p>'
+        . '<p>We will review your submission and contact you shortly.</p>';
+    $html = buildNovoPuertaEmailHtml(
+        $subject,
+        $messageHtml,
+        ['intro' => 'We received your viewing request.', 'footer_note' => 'Please keep this email for your records.']
+    );
+    $headers = [
+        'MIME-Version: 1.0',
+        'Content-type: text/html; charset=UTF-8',
+        'From: Nuevo Puerta <no-reply@nuevopuerta.local>',
+    ];
+    mail($email, $subject, $html, implode("\r\n", $headers));
+
     // Redirect with token
     header("Location: thank_you.html?ref=$ref&token=$track_token");
     exit;
 }
-
-// submit_lead.php (after saving lead)
-$to = $email;
-$subject = "Your Viewing Request Received";
-$message = "Thank you for your request! Reference #: $ref";
-mail($to, $subject, $message);
-
-// admin_lead_schedule.php (after scheduling)
-$to = $lead['email'];
-$subject = "Viewing Scheduled";
-$message = "Your viewing is scheduled for " . $scheduled_at . " at " . $meeting_location;
-mail($to, $subject, $message);
 ?>

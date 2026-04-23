@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/dbconn.php';
+require_once __DIR__ . '/includes/email_branding.php';
 
 date_default_timezone_set('Asia/Manila');
 
@@ -56,31 +57,14 @@ function resolveEmailLogoPath(): ?string {
 }
 
 function buildBrandedEmailHtml(string $messageText, ?string $logoSrc = null): string {
-    $safeMessage = nl2br(htmlspecialchars($messageText, ENT_QUOTES, 'UTF-8'));
-    $year = date('Y');
-    $logoHtml = '';
-
-    if ($logoSrc !== null && $logoSrc !== '') {
-        $safeLogoSrc = htmlspecialchars($logoSrc, ENT_QUOTES, 'UTF-8');
-        $logoHtml = "<div style=\"margin-bottom:16px;\"><div style=\"display:inline-block;background:#1f3b2d;border-radius:14px;padding:10px 12px;\"><img src=\"{$safeLogoSrc}\" alt=\"Nuevo Puerta Logo\" style=\"display:block;max-width:180px;height:auto;\"></div></div>";
-    }
-
-    return '<!DOCTYPE html>'
-        . '<html><body style="margin:0;padding:0;background-color:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f6f8fb;padding:24px 12px;">'
-        . '<tr><td align="center">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
-        . '<tr><td style="padding:22px 24px 14px 24px;">'
-        . $logoHtml
-        . '<div style="font-size:15px;line-height:1.65;">' . $safeMessage . '</div>'
-        . '</td></tr>'
-        . '<tr><td style="padding:14px 24px 20px 24px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">'
-        . '&copy; ' . $year . ' Nuevo Puerta. All rights reserved.'
-        . '</td></tr>'
-        . '</table>'
-        . '</td></tr>'
-        . '</table>'
-        . '</body></html>';
+    return buildNovoPuertaEmailHtml(
+        'Nuevo Puerta Reminder',
+        nl2br(htmlspecialchars($messageText, ENT_QUOTES, 'UTF-8')),
+        [
+            'intro' => 'This is an automated reminder from Nuevo Puerta Real Estate.',
+            'footer_note' => 'Please keep this email for your records.',
+        ]
+    );
 }
 
 function sendEmail(string $to, string $toName, string $subject, string $body, ?string &$error = null): bool {

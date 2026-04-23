@@ -23,6 +23,7 @@
       die("Connection Failed: " . $conn->connect_error);
   }
   $conn->set_charset('utf8mb4');
+  require_once __DIR__ . '/includes/email_branding.php';
 
     function tableExists($conn, $tableName): bool {
       $tableName = trim((string)$tableName);
@@ -824,31 +825,14 @@
     }
 
     function buildSystemEmailHtml(string $bodyText, ?string $logoSrc = null): string {
-      $safeBody = nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8'));
-      $year = date('Y');
-      $logoHtml = '';
-
-      if ($logoSrc !== null && $logoSrc !== '') {
-        $safeLogo = htmlspecialchars($logoSrc, ENT_QUOTES, 'UTF-8');
-        $logoHtml = "<div style=\"margin:0 0 16px 0;\"><div style=\"display:inline-block;background:#1f3b2d;border-radius:14px;padding:10px 12px;\"><img src=\"{$safeLogo}\" alt=\"Nuevo Puerta Logo\" style=\"display:block;max-width:190px;height:auto;\"></div></div>";
-      }
-
-      return '<!DOCTYPE html>'
-        . '<html><body style="margin:0;padding:0;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;background:#f6f8fb;">'
-        . '<tr><td align="center">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
-        . '<tr><td style="padding:22px 24px 14px 24px;">'
-        . $logoHtml
-        . '<div style="font-size:15px;line-height:1.65;">' . $safeBody . '</div>'
-        . '</td></tr>'
-        . '<tr><td style="padding:14px 24px 20px 24px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">'
-        . '&copy; ' . $year . ' Nuevo Puerta Real Estate. All rights reserved.'
-        . '</td></tr>'
-        . '</table>'
-        . '</td></tr>'
-        . '</table>'
-        . '</body></html>';
+      return buildNovoPuertaEmailHtml(
+        'Nuevo Puerta Notification',
+        nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8')),
+        [
+          'intro' => 'This is an automated message from Nuevo Puerta Real Estate.',
+          'footer_note' => 'Please keep this email for your records.',
+        ]
+      );
     }
 
     function sendSystemEmail($to, $toName, $subject, $body, &$errorMessage = '', array $attachments = []): bool {
@@ -1335,6 +1319,37 @@
 
       header('Content-Type: application/json');
       echo json_encode(['success' => true, 'transactions' => $transactions]);
+      exit;
+  }
+
+  if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch']) && $_GET['fetch'] === 'lot_history') {
+      header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+      header('Pragma: no-cache');
+      header('Expires: 0');
+      $lot_id = intval($_GET['lot_id'] ?? 0);
+      if (!$lot_id) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      $rows = [];
+      if (isset($conn) && (is_resource($conn) || $conn instanceof mysqli) && hasTable($conn, 'lot_status_history')) {
+          $historyQuery = "SELECT event_type, event_date, previous_owner_id, previous_owner_name, previous_owner_email, paid_amount, refund_amount, company_amount, remarks, created_at FROM lot_status_history WHERE lot_id = ? ORDER BY event_date DESC, id DESC";
+          $stmt = $conn->prepare($historyQuery);
+          if ($stmt) {
+              $stmt->bind_param('i', $lot_id);
+              $stmt->execute();
+              $res = $stmt->get_result();
+              while ($row = $res->fetch_assoc()) {
+                  $rows[] = $row;
+              }
+              $stmt->close();
+          }
+      }
+
+      header('Content-Type: application/json');
+      echo json_encode(['success' => true, 'history' => $rows]);
       exit;
   }
 
@@ -3065,6 +3080,24 @@
 
           header('Content-Type: application/json');
           echo json_encode($locations);
+          exit;
+      }
+
+      if ($_GET['fetch'] === 'surrendered_lots') {
+          $rows = [];
+          $check = $conn->query("SHOW TABLES LIKE 'lot_status_history'");
+          if ($check && $check->num_rows > 0) {
+              $sql = "SELECT h.id, h.lot_id, h.previous_owner_name, h.previous_owner_email, h.paid_amount, h.refund_amount, h.company_amount, h.remarks, h.event_date, l.block_number, l.lot_number, COALESCE(ll.location_name, '') AS location_name FROM lot_status_history h LEFT JOIN lots l ON l.id = h.lot_id LEFT JOIN lot_locations ll ON ll.id = l.location_id WHERE h.event_type = 'surrender' ORDER BY h.event_date DESC LIMIT 300";
+              $result = $conn->query($sql);
+              if ($result) {
+                  while ($row = $result->fetch_assoc()) {
+                      $rows[] = $row;
+                  }
+              }
+          }
+
+          header('Content-Type: application/json');
+          echo json_encode($rows);
           exit;
       }
   }
@@ -7286,6 +7319,13 @@
             <span>Lot Owners</span>
           </a>
 
+          <a data-target="section-lot-status">
+            <svg width="24" height="24" viewBox="0 0 24 24" class="nav-icon" style="fill:white;">
+              <path d="M4 6h16v2H4V6zm0 4h16v2H4v-2zm0 4h16v6H4v-6zm6 4h4v2h-4v-2z"/>
+            </svg>
+            <span>Lot Status</span>
+          </a>
+
           <a href="#" onclick="confirmLogout()">
             <img src="assets/ic_baseline-logout.png" alt="Logout Icon" class="nav-icon logout-icon">
             <span>Logout</span>
@@ -9099,6 +9139,35 @@
         </div>
       </div>
 
+      <div id="section-lot-status" class="section hidden">
+        <div class="header">
+          <div>
+            <h2>Lot Status</h2>
+            <small>Review surrendered lot records and history.</small>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <h3>Surrendered Lots</h3>
+          <table class="accounts-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+            <thead>
+              <tr>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Date</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Lot</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Client</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Paid / Refund</th>
+                <th style="padding: 12px 15px; text-align: left; font-weight: 500; color: #666; font-size: 13px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa;">Remarks</th>
+              </tr>
+            </thead>
+            <tbody id="lot-status-tbody">
+              <tr>
+                <td colspan="5" style="text-align:center; padding:20px; color:#666;">Loading surrendered lots...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="ownerDetailsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10040;align-items:center;justify-content:center;">
         <div style="background:#fff; width:95%; max-width:520px; border-radius:10px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,0.2);">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -9141,6 +9210,7 @@
       'section-documents',
       'section-payments',
       'section-lot-owners',
+      'section-lot-status',
       'section-notifications',
       'section-audit-logs'
     ];
@@ -9182,6 +9252,8 @@
       } else if (targetId === 'section-lot-owners') {
         loadLotOwnerLocationOptions();
         loadLotOwners();
+      } else if (targetId === 'section-lot-status') {
+        loadSurrenderedLots();
       }
     }
 
@@ -11089,10 +11161,14 @@
     content.innerHTML = '<div style="padding:16px; color:#6c757d; text-align:center;">Loading payment history...</div>';
     showModalById('paymentHistoryModal');
 
-    fetch(`${window.location.pathname}?fetch=payment_transactions&lot_id=${lotId}&_=${Date.now()}`)
-      .then(r => r.json())
-      .then(data => {
-        if (!data.success) {
+    Promise.all([
+      fetch(`${window.location.pathname}?fetch=payment_transactions&lot_id=${lotId}&_=${Date.now()}`)
+        .then(r => r.json()),
+      fetch(`${window.location.pathname}?fetch=lot_history&lot_id=${lotId}&_=${Date.now()}`)
+        .then(r => r.json())
+    ])
+      .then(([paymentsData, historyData]) => {
+        if (!paymentsData.success) {
           content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history.</div>';
           return;
         }
@@ -11100,7 +11176,6 @@
         const getDateKey = (value) => {
           const raw = String(value || '').trim();
           if (!raw) return 0;
-          // Fast path for ISO-like yyyy-mm-dd
           const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
           if (iso) {
             const y = Number(iso[1]);
@@ -11108,7 +11183,6 @@
             const d = Number(iso[3]);
             return (y * 10000) + (m * 100) + d;
           }
-          // Fallback parser for values like "Feb 25, 2027"
           const parsed = new Date(raw);
           if (!Number.isNaN(parsed.getTime())) {
             return (parsed.getFullYear() * 10000) + ((parsed.getMonth() + 1) * 100) + parsed.getDate();
@@ -11116,44 +11190,76 @@
           return 0;
         };
 
-        const rows = (data.transactions || []).slice().sort((a, b) => {
+        const rows = (paymentsData.transactions || []).slice().sort((a, b) => {
           const ta = getDateKey(a.payment_date);
           const tb = getDateKey(b.payment_date);
           if (ta !== tb) return ta - tb;
           return Number(a.id || 0) - Number(b.id || 0);
         });
-        if (!rows.length) {
-          content.innerHTML = '<div style="padding:16px; color:#6c757d; text-align:center;">No payment records for this lot yet.</div>';
-          return;
-        }
 
-        content.innerHTML = `
-          <table style="width:100%; border-collapse:collapse;">
-            <thead>
-              <tr style="background:#f8f9fa;">
-                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Date</th>
-                <th style="padding:10px 12px; text-align:right; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Amount</th>
-                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Method</th>
-                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Paid By</th>
-                <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Remarks</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(tx => {
-                const amountText = Number(tx.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                return `
-                  <tr>
-                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_date || 'N/A')}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#111827; text-align:right; font-weight:600;">PHP ${amountText}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_method || 'N/A')}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.paid_by || 'N/A')}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#495057;">${escapeText(tx.remarks || '')}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        `;
+        const history = (historyData.success && Array.isArray(historyData.history)) ? historyData.history : [];
+
+        const paymentSection = rows.length ? `
+          <div style="margin-bottom:18px;">
+            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:10px;">Payment History</div>
+            <table style="width:100%; border-collapse:collapse;">
+              <thead>
+                <tr style="background:#f8f9fa;">
+                  <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Date</th>
+                  <th style="padding:10px 12px; text-align:right; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Amount</th>
+                  <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Method</th>
+                  <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Paid By</th>
+                  <th style="padding:10px 12px; text-align:left; border-bottom:1px solid #dee2e6; font-size:12px; color:#495057;">Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(tx => {
+                  const amountText = Number(tx.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  return `
+                    <tr>
+                      <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_date || 'N/A')}</td>
+                      <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#111827; text-align:right; font-weight:600;">PHP ${amountText}</td>
+                      <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.payment_method || 'N/A')}</td>
+                      <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#343a40;">${escapeText(tx.paid_by || 'N/A')}</td>
+                      <td style="padding:10px 12px; border-bottom:1px solid #f1f3f5; font-size:13px; color:#495057;">${escapeText(tx.remarks || '')}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : '<div style="padding:16px; color:#6c757d; text-align:center;">No payment records for this lot yet.</div>';
+
+        const historySection = history.length ? `
+          <div>
+            <div style="font-size:14px; font-weight:700; color:#111827; margin-bottom:10px;">Lot Status History</div>
+            ${history.map(entry => {
+              const paidAmount = Number(entry.paid_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const refundAmount = Number(entry.refund_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const companyAmount = Number(entry.company_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const eventDate = entry.event_date || entry.created_at || 'N/A';
+              return `
+                <div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin-bottom:12px; background:#ffffff;">
+                  <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:8px;">
+                    <div>
+                      <div style="font-size:13px; font-weight:700; color:#111827; text-transform:capitalize;">${escapeText(entry.event_type || 'Event')}</div>
+                      <div style="font-size:12px; color:#64748b; margin-top:4px;">${escapeText(eventDate)}</div>
+                    </div>
+                    <div style="font-size:12px; color:#475569; text-align:right; line-height:1.5;">
+                      <div>Paid: PHP ${paidAmount}</div>
+                      <div>Refund: PHP ${refundAmount}</div>
+                      <div>Company: PHP ${companyAmount}</div>
+                    </div>
+                  </div>
+                  <div style="font-size:13px; color:#334155; margin-bottom:8px;">${escapeText(entry.remarks || '')}</div>
+                  <div style="font-size:12px; color:#475569;">Previous owner: ${escapeText(entry.previous_owner_name || 'N/A')}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : '<div style="padding:16px; color:#6c757d; text-align:center;">No lot status history records found.</div>';
+
+        content.innerHTML = paymentSection + historySection;
       })
       .catch(err => {
         console.error(err);
@@ -11318,6 +11424,41 @@
       .catch(error => {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #dc3545;">Failed to load lot owners.</td></tr>';
         console.error('Error loading lot owners:', error);
+      });
+  }
+
+  function loadSurrenderedLots() {
+    const tbody = document.getElementById('lot-status-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#666;">Loading surrendered lots...</td></tr>';
+
+    fetch(window.location.pathname + '?fetch=surrendered_lots')
+      .then(response => response.json())
+      .then(records => {
+        if (!records || records.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#666;">No surrendered lot records found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = records.map(record => {
+          const lotLabel = record.location_name ? `${record.location_name} - ` : '';
+          const paid = record.paid_amount ? `PHP ${Number(record.paid_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}` : 'PHP 0.00';
+          const refund = record.refund_amount ? ` / Refund: PHP ${Number(record.refund_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}` : '';
+          return `
+          <tr>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${record.event_date || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${lotLabel}Block ${record.block_number || 'N/A'}, Lot ${record.lot_number || 'N/A'}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${record.previous_owner_name || 'N/A'}<br>${record.previous_owner_email || ''}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${paid}${refund}</td>
+            <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">${record.remarks || ''}</td>
+          </tr>
+        `;
+        }).join('');
+      })
+      .catch(error => {
+        console.error('Failed to load surrendered lots:', error);
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#dc3545;">Failed to load surrendered lots.</td></tr>';
       });
   }
 

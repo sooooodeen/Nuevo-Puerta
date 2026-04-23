@@ -4,6 +4,7 @@ session_start();
 require_once __DIR__ . '/../vendor/phpmailer/src/PHPMailer.php';
 require_once __DIR__ . '/../vendor/phpmailer/src/SMTP.php';
 require_once __DIR__ . '/../vendor/phpmailer/src/Exception.php';
+require_once __DIR__ . '/../includes/email_branding.php';
 
 function sendVerificationEmail(string $recipientEmail, string $recipientName, string $verificationLink, ?string &$errorInfo = null): bool {
     $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
@@ -23,13 +24,18 @@ function sendVerificationEmail(string $recipientEmail, string $recipientName, st
 
         $safeName = htmlspecialchars($recipientName !== '' ? $recipientName : 'Customer', ENT_QUOTES, 'UTF-8');
         $safeLink = htmlspecialchars($verificationLink, ENT_QUOTES, 'UTF-8');
-        $mail->Body = "
-            <p>Hello {$safeName},</p>
-            <p>Please verify your Nuevo Puerta account using the link below:</p>
-            <p><a href=\"{$safeLink}\">Verify my email</a></p>
-            <p>If you did not request this, you can ignore this email.</p>
-        ";
-        $mail->AltBody = "Hello {$recipientName},\n\nPlease verify your account: {$verificationLink}";
+        $mail->Body = buildNovoPuertaEmailHtml(
+            'Verify your email address',
+            '<p>Hello ' . $safeName . ',</p>'
+                . '<p>Please verify your Nuevo Puerta account using the link below:</p>'
+                . '<p><a href="' . $safeLink . '" style="display:inline-block;background:#14532d;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:700;">Verify my email</a></p>'
+                . '<p>If you did not request this, you can ignore this email.</p>',
+            ['intro' => 'A verification email was requested for your Nuevo Puerta account.', 'footer_note' => 'If you did not request this, you can ignore this email.']
+        );
+        $mail->AltBody = buildNovoPuertaEmailAltBody(
+            "Hello {$recipientName},\n\nPlease verify your account: {$verificationLink}",
+            'If you did not request this, you can ignore this email.'
+        );
 
         $mail->send();
         return true;

@@ -20,6 +20,26 @@ if (!isset($conn) || !($conn instanceof mysqli)) {
 }
 if ($conn->connect_error) { die("Connection failed: " . $conn->connect_error); }
 $conn->set_charset('utf8mb4');
+require_once __DIR__ . '/includes/email_branding.php';
+
+if (!class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
+  $phpmailerPathA = __DIR__ . '/vendor/phpmailer/src/PHPMailer.php';
+  $phpmailerPathB = __DIR__ . '/vendor/phpmailer/phpmailer/src/PHPMailer.php';
+  $smtpPathA = __DIR__ . '/vendor/phpmailer/src/SMTP.php';
+  $smtpPathB = __DIR__ . '/vendor/phpmailer/phpmailer/src/SMTP.php';
+  $exceptionPathA = __DIR__ . '/vendor/phpmailer/src/Exception.php';
+  $exceptionPathB = __DIR__ . '/vendor/phpmailer/phpmailer/src/Exception.php';
+
+  if (is_file($phpmailerPathA) && is_file($smtpPathA) && is_file($exceptionPathA)) {
+    require_once $phpmailerPathA;
+    require_once $smtpPathA;
+    require_once $exceptionPathA;
+  } elseif (is_file($phpmailerPathB) && is_file($smtpPathB) && is_file($exceptionPathB)) {
+    require_once $phpmailerPathB;
+    require_once $smtpPathB;
+    require_once $exceptionPathB;
+  }
+}
 
 date_default_timezone_set('Asia/Manila');
 
@@ -90,6 +110,373 @@ function hasTableColumn(mysqli $conn, string $table, string $column): bool {
   if (!$res) return false;
   $row = $res->fetch_assoc();
   return ((int)($row['c'] ?? 0)) > 0;
+}
+
+function hasTable(mysqli $conn, string $table): bool {
+  $tbl = $conn->real_escape_string($table);
+  $res = $conn->query("SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='$tbl'");
+  if (!$res) return false;
+  $row = $res->fetch_assoc();
+  return ((int)($row['c'] ?? 0)) > 0;
+}
+
+function normalizeWeeklyStartDate(string $dateValue): ?string {
+  if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateValue)) {
+    return null;
+  }
+  $dt = DateTime::createFromFormat('Y-m-d', $dateValue);
+  if (!$dt) {
+    return null;
+  }
+  $dt->setTime(0, 0, 0);
+  return $dt->format('Y-m-d');
+}
+
+function sendClientApprovalEmail(string $toEmail, string $toName, string $subject, string $messageBody): bool {
+  $toEmail = trim($toEmail);
+  if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+    return false;
+  }
+
+  $systemSmtpUser = trim((string)(getenv('SYSTEM_SMTP_USER') ?: ''));
+  $systemSmtpPass = trim((string)(getenv('SYSTEM_SMTP_PASS') ?: ''));
+  $legacyHost = trim((string)(getenv('SMTP_HOST') ?: 'smtp.gmail.com'));
+  $legacyUser = trim((string)(getenv('SMTP_USER') ?: 'carlomallari01471@gmail.com'));
+  $legacyPass = trim((string)(getenv('SMTP_PASS') ?: 'rsmv pipf ijxf phha'));
+
+  $useSystemCreds = ($systemSmtpUser !== '' && $systemSmtpPass !== '');
+  $smtpHost = trim((string)(getenv('SYSTEM_SMTP_HOST') ?: $legacyHost));
+  $smtpUser = $useSystemCreds ? $systemSmtpUser : $legacyUser;
+  $smtpPass = $useSystemCreds ? $systemSmtpPass : $legacyPass;
+  $smtpPort = (int)(getenv('SYSTEM_SMTP_PORT') ?: getenv('SMTP_PORT') ?: 587);
+  $smtpSecure = trim((string)(getenv('SYSTEM_SMTP_SECURE') ?: getenv('SMTP_SECURE') ?: 'tls'));
+  $fromEmail = trim((string)(getenv('SYSTEM_SMTP_FROM_EMAIL') ?: $smtpUser));
+  $fromName = trim((string)(getenv('SYSTEM_SMTP_FROM_NAME') ?: 'Nuevo Puerta Real Estate'));
+  $htmlBody = buildNovoPuertaEmailHtml(
+    $subject,
+    nl2br(htmlspecialchars($messageBody, ENT_QUOTES, 'UTF-8')),
+    [
+      'intro' => 'The agent has approved your request. Please review the details below and expect a call shortly.',
+      'footer_note' => '<strong>Next step:</strong> Our agent will call you after this approval to confirm the next steps and answer any questions.',
+      'subject_line' => $subject,
+    ]
+  );
+
+  $canUseSmtp = ($smtpHost !== '' && $smtpUser !== '' && $smtpPass !== '' && class_exists('PHPMailer\\PHPMailer\\PHPMailer'));
+  if ($canUseSmtp) {
+    try {
+      $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+      $mail->isSMTP();
+      $mail->Host = $smtpHost;
+      $mail->SMTPAuth = true;
+      $mail->Username = $smtpUser;
+      $mail->Password = $smtpPass;
+      $mail->SMTPSecure = $smtpSecure;
+      $mail->Port = $smtpPort;
+      $mail->setFrom($fromEmail, $fromName);
+      $mail->addAddress($toEmail, $toName !== '' ? $toName : $toEmail);
+      $mail->isHTML(true);
+      $mail->Subject = $subject;
+      $mail->Body = $htmlBody;
+      $mail->AltBody = buildNovoPuertaEmailAltBody(
+        $messageBody,
+        'Next step: Our agent will call you after this approval to confirm the next steps and answer any questions.'
+      );
+      $mail->send();
+      return true;
+    } catch (\Throwable $e) {
+      error_log('Approval email (SMTP) failed: ' . $e->getMessage());
+    }
+  }
+
+  $headers = "From: {$fromName} <{$fromEmail}>\r\n";
+  $headers .= "Reply-To: {$fromEmail}\r\n";
+  $headers .= "MIME-Version: 1.0\r\n";
+  $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
+  $ok = @mail($toEmail, $subject, $htmlBody, $headers);
+  if (!$ok) {
+    error_log('Approval email (mail fallback) failed for: ' . $toEmail);
+  }
+  return $ok;
+}
+
+function findClientUserId(mysqli $conn, string $clientEmail, string $clientPhone): int {
+  $email = strtolower(trim($clientEmail));
+  $phone = preg_replace('/\D+/', '', $clientPhone);
+
+  if ($email !== '') {
+    $stmt = $conn->prepare("SELECT id FROM user_accounts WHERE LOWER(TRIM(email))=? LIMIT 1");
+    if ($stmt) {
+      $stmt->bind_param('s', $email);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      if ($row = $res->fetch_assoc()) {
+        $stmt->close();
+        return (int)$row['id'];
+      }
+      $stmt->close();
+    }
+  }
+
+  if ($phone !== '') {
+    $phoneColumn = null;
+    if (hasTableColumn($conn, 'user_accounts', 'phone_number')) {
+      $phoneColumn = 'phone_number';
+    } elseif (hasTableColumn($conn, 'user_accounts', 'mobile_number')) {
+      $phoneColumn = 'mobile_number';
+    }
+
+    if ($phoneColumn !== null) {
+      $query = "SELECT id FROM user_accounts WHERE REGEXP_REPLACE($phoneColumn, '[^0-9]', '')=? LIMIT 1";
+      $stmt = $conn->prepare($query);
+      if ($stmt) {
+        $stmt->bind_param('s', $phone);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($row = $res->fetch_assoc()) {
+          $stmt->close();
+          return (int)$row['id'];
+        }
+        $stmt->close();
+      }
+    }
+  }
+
+  return 0;
+}
+
+function insertUserDashboardNotification(mysqli $conn, int $userId, string $title, string $message, string $type = 'info'): bool {
+  if ($userId <= 0) {
+    return false;
+  }
+
+  $conn->query("CREATE TABLE IF NOT EXISTS user_notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    title VARCHAR(180) NOT NULL,
+    message TEXT NOT NULL,
+    type VARCHAR(30) DEFAULT 'info',
+    is_read TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_notifications_user (user_id, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+  $stmt = $conn->prepare("INSERT INTO user_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, ?, 0, NOW())");
+  if (!$stmt) {
+    return false;
+  }
+
+  $stmt->bind_param('isss', $userId, $title, $message, $type);
+  $ok = (bool)$stmt->execute();
+  $stmt->close();
+  return $ok;
+}
+
+function insertPrimaryNotificationForUser(mysqli $conn, int $userId, string $title, string $message, string $type = 'info'): bool {
+  if ($userId <= 0) {
+    return false;
+  }
+
+  $hasNotifications = $conn->query("SHOW TABLES LIKE 'notifications'");
+  if (!$hasNotifications || $hasNotifications->num_rows === 0) {
+    return false;
+  }
+
+  $fields = [];
+  $placeholders = [];
+  $types = '';
+  $values = [];
+
+  if (hasTableColumn($conn, 'notifications', 'title')) {
+    $fields[] = 'title';
+    $placeholders[] = '?';
+    $types .= 's';
+    $values[] = $title;
+  }
+  if (hasTableColumn($conn, 'notifications', 'message')) {
+    $fields[] = 'message';
+    $placeholders[] = '?';
+    $types .= 's';
+    $values[] = $message;
+  }
+  if (hasTableColumn($conn, 'notifications', 'type')) {
+    $fields[] = 'type';
+    $placeholders[] = '?';
+    $types .= 's';
+    $values[] = $type;
+  }
+  if (hasTableColumn($conn, 'notifications', 'recipient_type')) {
+    $fields[] = 'recipient_type';
+    $placeholders[] = '?';
+    $types .= 's';
+    $values[] = 'user';
+  }
+  if (hasTableColumn($conn, 'notifications', 'recipient_id')) {
+    $fields[] = 'recipient_id';
+    $placeholders[] = '?';
+    $types .= 'i';
+    $values[] = $userId;
+  } elseif (hasTableColumn($conn, 'notifications', 'user_id')) {
+    $fields[] = 'user_id';
+    $placeholders[] = '?';
+    $types .= 'i';
+    $values[] = $userId;
+  }
+  if (hasTableColumn($conn, 'notifications', 'is_read')) {
+    $fields[] = 'is_read';
+    $placeholders[] = '?';
+    $types .= 'i';
+    $values[] = 0;
+  }
+  if (hasTableColumn($conn, 'notifications', 'created_at')) {
+    $fields[] = 'created_at';
+    $placeholders[] = 'NOW()';
+  }
+
+  if (count($fields) < 2) {
+    return false;
+  }
+
+  $sql = 'INSERT INTO notifications (' . implode(', ', $fields) . ') VALUES (' . implode(', ', $placeholders) . ')';
+  $stmt = $conn->prepare($sql);
+  if (!$stmt) {
+    return false;
+  }
+
+  if ($types !== '') {
+    $bindArgs = [$types];
+    foreach ($values as $k => $v) {
+      $bindArgs[] = &$values[$k];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+  }
+
+  $ok = (bool)$stmt->execute();
+  $stmt->close();
+  return $ok;
+}
+
+function approveViewingRequestForAgent(mysqli $conn, int $agentId, int $viewingId): array {
+  $result = [
+    'approved' => false,
+    'popup' => null,
+    'message' => 'Viewing request not found or already processed.'
+  ];
+
+  if ($viewingId <= 0) {
+    return $result;
+  }
+
+  $conn->query("ALTER TABLE viewings ADD COLUMN IF NOT EXISTS appointment_type VARCHAR(32) DEFAULT 'appointment'");
+
+  $viewingType = 'appointment';
+  $viewingClientEmail = '';
+  $viewingClientPhone = '';
+  $viewingClientFirstName = '';
+  $viewingClientLastName = '';
+  $viewingUserId = 0;
+  $viewingLotNo = '';
+  $viewingLotId = 0;
+
+  $typeRow = $conn->query("SELECT appointment_type, user_id, client_email, client_phone, client_first_name, client_last_name, lot_no, lot_id FROM viewings WHERE id=$viewingId AND agent_id=$agentId LIMIT 1");
+  if ($typeRow && ($typeData = $typeRow->fetch_assoc())) {
+    $viewingType = strtolower(trim((string)($typeData['appointment_type'] ?? 'appointment')));
+    if ($viewingType === '') {
+      $viewingType = 'appointment';
+    }
+    $viewingUserId = (int)($typeData['user_id'] ?? 0);
+    $viewingClientEmail = (string)($typeData['client_email'] ?? '');
+    $viewingClientPhone = (string)($typeData['client_phone'] ?? '');
+    $viewingClientFirstName = trim((string)($typeData['client_first_name'] ?? ''));
+    $viewingClientLastName = trim((string)($typeData['client_last_name'] ?? ''));
+    $viewingLotNo = trim((string)($typeData['lot_no'] ?? ''));
+    $viewingLotId = (int)($typeData['lot_id'] ?? 0);
+  } else {
+    return $result;
+  }
+
+  $wasApproved = false;
+  if ($stmt = $conn->prepare("UPDATE viewings SET status='scheduled' WHERE id=? AND agent_id=? AND status IN ('pending','requested')")) {
+    $stmt->bind_param('ii', $viewingId, $agentId);
+    $stmt->execute();
+    $wasApproved = ($stmt->affected_rows > 0);
+    $stmt->close();
+  }
+
+  if (!$wasApproved) {
+    return $result;
+  }
+
+  if ($viewingType === 'reservation' && $viewingLotId > 0) {
+    $conn->query("UPDATE lots SET status='Reserved' WHERE id=$viewingLotId AND COALESCE(NULLIF(status,''),'Available')='Available'");
+    $conn->query("UPDATE pin_locations SET pin_status='reserved' WHERE lot_id=$viewingLotId AND LOWER(COALESCE(pin_status,'available'))='available'");
+  }
+
+  $clientName = trim($viewingClientFirstName . ' ' . $viewingClientLastName);
+  if ($clientName === '') {
+    $clientName = 'Client';
+  }
+
+  $lotDetails = [
+    'lot_id' => $viewingLotId,
+    'lot_no' => $viewingLotNo,
+    'block_number' => '',
+    'lot_number' => '',
+    'location_name' => '',
+    'lot_size' => '',
+    'lot_price' => '',
+  ];
+
+  if ($viewingLotId > 0) {
+    $lotDetailsRow = $conn->query("SELECT l.lot_number, l.block_number, l.lot_size, l.lot_price, ll.location_name
+      FROM lots l
+      LEFT JOIN lot_locations ll ON ll.id = l.location_id
+      WHERE l.id = $viewingLotId
+      LIMIT 1");
+    if ($lotDetailsRow && ($ld = $lotDetailsRow->fetch_assoc())) {
+      $lotDetails['lot_number'] = trim((string)($ld['lot_number'] ?? ''));
+      $lotDetails['block_number'] = trim((string)($ld['block_number'] ?? ''));
+      $lotDetails['lot_size'] = trim((string)($ld['lot_size'] ?? ''));
+      $lotDetails['lot_price'] = trim((string)($ld['lot_price'] ?? ''));
+      $lotDetails['location_name'] = trim((string)($ld['location_name'] ?? ''));
+    }
+  }
+
+  $agentName = 'Your agent';
+  $agentNameRow = $conn->query("SELECT CONCAT(first_name,' ',last_name) AS name FROM agent_accounts WHERE id=$agentId LIMIT 1");
+  if ($agentNameRow && ($agRow = $agentNameRow->fetch_assoc())) {
+    $agentName = trim((string)($agRow['name'] ?? '')) ?: 'Your agent';
+  }
+
+  $isReservation = ($viewingType === 'reservation');
+  $requestLabel = $isReservation ? 'reservation' : 'appointment';
+  $requestLabelTitle = $isReservation ? 'Reservation' : 'Appointment';
+  $lotRef = ($viewingLotNo !== '') ? (' for Lot ' . $viewingLotNo) : '';
+
+  $emailSubject = "Your {$requestLabelTitle} Has Been Approved";
+  $emailBody = "Hi {$clientName},\n\nYour {$requestLabel}{$lotRef} has been approved by {$agentName}.\n\nOur agent will call you after this approval to discuss the next steps.\n\nThank you.";
+  sendClientApprovalEmail($viewingClientEmail, $clientName, $emailSubject, $emailBody);
+
+  $clientUserId = $viewingUserId > 0 ? $viewingUserId : findClientUserId($conn, $viewingClientEmail, $viewingClientPhone);
+  $notifTitle = "{$requestLabelTitle} Approved";
+  $notifMessage = "Hi {$clientName}, your {$requestLabel}{$lotRef} has been approved by {$agentName}. Our agent will call you after this approval.";
+  insertUserDashboardNotification($conn, $clientUserId, $notifTitle, $notifMessage, 'success');
+  insertPrimaryNotificationForUser($conn, $clientUserId, $notifTitle, $notifMessage, 'success');
+
+  $popup = [
+    'title' => $notifTitle,
+    'client_name' => $clientName,
+    'client_email' => $viewingClientEmail,
+    'client_phone' => $viewingClientPhone,
+    'request_type' => $requestLabelTitle,
+    'lot_ref' => trim($viewingLotNo) !== '' ? ('Lot ' . $viewingLotNo) : '',
+    'lot_details' => $lotDetails,
+  ];
+
+  $result['approved'] = true;
+  $result['popup'] = $popup;
+  $result['message'] = 'Viewing request approved.';
+  return $result;
 }
 
 function normalizeEmailKey(string $email): string {
@@ -322,32 +709,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   /* Agent approves pending viewing (from Upcoming Viewings table) */
   if (isset($_POST['approve_viewing_id'])) {
     $vid = (int)$_POST['approve_viewing_id'];
-    // Ensure appointment_type column exists
-    $conn->query("ALTER TABLE viewings ADD COLUMN IF NOT EXISTS appointment_type VARCHAR(32) DEFAULT 'appointment'");
-    // Check if this is a reservation or just an appointment
-    $viewingType = 'appointment';
-    $typeRow = $conn->query("SELECT appointment_type FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
-    if ($typeRow && $typeData = $typeRow->fetch_assoc()) {
-      $viewingType = $typeData['appointment_type'] ?? 'appointment';
+    $approval = approveViewingRequestForAgent($conn, $agentId, $vid);
+    if (!empty($approval['approved']) && !empty($approval['popup'])) {
+      $_SESSION['approval_call_popup'] = $approval['popup'];
     }
-    if ($stmt = $conn->prepare("UPDATE viewings SET status='scheduled' WHERE id=? AND agent_id=? AND status='pending'")) {
-      $stmt->bind_param('ii', $vid, $agentId);
+
+    header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
+    exit;
+  }
+
+  // Approve request directly from notifications panel
+  if (isset($_POST['approve_notif'])) {
+    $notif_id = (int)$_POST['approve_notif'];
+    $viewingId = 0;
+
+    $stmt = $conn->prepare("SELECT viewing_id FROM agent_notifications WHERE id=? AND agent_id=? LIMIT 1");
+    if ($stmt) {
+      $stmt->bind_param('ii', $notif_id, $agentId);
       $stmt->execute();
+      $res = $stmt->get_result();
+      if ($row = $res->fetch_assoc()) {
+        $viewingId = (int)($row['viewing_id'] ?? 0);
+      }
       $stmt->close();
     }
-    // Only reserve lot if this is a reservation, not an appointment
-    if ($viewingType === 'reservation') {
-      $lotRow = $conn->query("SELECT lot_id FROM viewings WHERE id=$vid AND agent_id=$agentId LIMIT 1");
-      if ($lotRow) {
-        $lr = $lotRow->fetch_assoc();
-        $lotId = (int)($lr['lot_id'] ?? 0);
-        if ($lotId > 0) {
-          $conn->query("UPDATE lots SET status='Reserved' WHERE id=$lotId AND COALESCE(NULLIF(status,''),'Available')='Available'");
-          $conn->query("UPDATE pin_locations SET pin_status='reserved' WHERE lot_id=$lotId AND LOWER(COALESCE(pin_status,'available'))='available'");
-        }
+
+    if ($viewingId <= 0) {
+      header('Content-Type: application/json');
+      echo json_encode(['success' => false, 'message' => 'Notification is not linked to a viewing request.']);
+      exit;
+    }
+
+    $approval = approveViewingRequestForAgent($conn, $agentId, $viewingId);
+    if (!empty($approval['approved'])) {
+      if ($stmt = $conn->prepare("UPDATE agent_notifications SET is_read=1 WHERE id=? AND agent_id=?")) {
+        $stmt->bind_param('ii', $notif_id, $agentId);
+        $stmt->execute();
+        $stmt->close();
+      }
+      if (!empty($approval['popup'])) {
+        $_SESSION['approval_call_popup'] = $approval['popup'];
       }
     }
-    header('Location: agent_dashboard.php#' . ($_POST['redirect_to'] ?? 'dashboard'));
+
+    header('Content-Type: application/json');
+    echo json_encode([
+      'success' => (bool)($approval['approved'] ?? false),
+      'popup' => $approval['popup'] ?? null,
+      'message' => (string)($approval['message'] ?? '')
+    ]);
     exit;
   }
 
@@ -727,6 +1137,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     exit;
   }
 
+  if ($_GET['fetch'] === 'notifications_count') {
+    $count = 0;
+    $check = $conn->query("SHOW TABLES LIKE 'agent_notifications'");
+    if ($check && $check->num_rows > 0) {
+      $hasIsRead = false;
+      $colCheck = $conn->query("SHOW COLUMNS FROM agent_notifications LIKE 'is_read'");
+      if ($colCheck && $colCheck->num_rows > 0) {
+        $hasIsRead = true;
+      }
+
+      if ($hasIsRead) {
+        $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM agent_notifications WHERE agent_id=? AND COALESCE(is_read,0)=0");
+      } else {
+        $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM agent_notifications WHERE agent_id=?");
+      }
+
+      if ($stmt) {
+        $stmt->bind_param('i', $agentId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($row = $res->fetch_assoc()) {
+          $count = (int)($row['c'] ?? 0);
+        }
+        $stmt->close();
+      }
+    }
+
+    header('Content-Type: application/json');
+    echo json_encode(['count' => $count]);
+    exit;
+  }
+
   if ($_GET['fetch'] === 'messages') {
     $messages = [];
     $stmt = $conn->prepare("SELECT * FROM messages WHERE agent_id=? ORDER BY created_at DESC LIMIT 50");
@@ -741,6 +1183,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['fetch'])) {
     }
     header('Content-Type: application/json');
     echo json_encode($messages);
+    exit;
+  }
+
+  if ($_GET['fetch'] === 'surrendered_lots') {
+    $records = [];
+    $historyCheck = $conn->query("SHOW TABLES LIKE 'lot_status_history'");
+    if ($historyCheck && $historyCheck->num_rows > 0) {
+      $hasViewings = false;
+      $hasLotsAgent = false;
+      $viewingsCheck = $conn->query("SHOW TABLES LIKE 'viewings'");
+      if ($viewingsCheck && $viewingsCheck->num_rows > 0) {
+        $colCheck = $conn->query("SHOW COLUMNS FROM viewings LIKE 'agent_id'");
+        $colCheck2 = $conn->query("SHOW COLUMNS FROM viewings LIKE 'client_email'");
+        if ($colCheck && $colCheck->num_rows > 0 && $colCheck2 && $colCheck2->num_rows > 0) {
+          $hasViewings = true;
+        }
+      }
+      $lotsCheck = $conn->query("SHOW COLUMNS FROM lots LIKE 'agent_id'");
+      if ($lotsCheck && $lotsCheck->num_rows > 0) {
+        $hasLotsAgent = true;
+      }
+
+      if ($hasViewings) {
+        $sql = "SELECT h.id, h.lot_id, h.previous_owner_name, h.previous_owner_email, h.paid_amount, h.refund_amount, h.company_amount, h.remarks, h.event_date, l.location_id, l.block_number, l.lot_number, COALESCE(ll.location_name, '') AS location_name FROM lot_status_history h LEFT JOIN lots l ON l.id = h.lot_id LEFT JOIN lot_locations ll ON ll.id = l.location_id WHERE h.event_type = 'surrender' AND (EXISTS (SELECT 1 FROM viewings v WHERE v.lot_id = h.lot_id AND v.agent_id = ? AND LOWER(TRIM(v.client_email)) = LOWER(TRIM(h.previous_owner_email)))";
+        if ($hasLotsAgent) {
+          $sql .= " OR l.agent_id = ?";
+        }
+        $sql .= ") ORDER BY h.event_date DESC LIMIT 300";
+      } elseif ($hasLotsAgent) {
+        $sql = "SELECT h.id, h.lot_id, h.previous_owner_name, h.previous_owner_email, h.paid_amount, h.refund_amount, h.company_amount, h.remarks, h.event_date, l.location_id, l.block_number, l.lot_number, COALESCE(ll.location_name, '') AS location_name FROM lot_status_history h LEFT JOIN lots l ON l.id = h.lot_id LEFT JOIN lot_locations ll ON ll.id = l.location_id WHERE h.event_type = 'surrender' AND l.agent_id = ? ORDER BY h.event_date DESC LIMIT 300";
+      } else {
+        $sql = "SELECT h.id, h.lot_id, h.previous_owner_name, h.previous_owner_email, h.paid_amount, h.refund_amount, h.company_amount, h.remarks, h.event_date, l.location_id, l.block_number, l.lot_number, COALESCE(ll.location_name, '') AS location_name FROM lot_status_history h LEFT JOIN lots l ON l.id = h.lot_id LEFT JOIN lot_locations ll ON ll.id = l.location_id WHERE h.event_type = 'surrender' ORDER BY h.event_date DESC LIMIT 300";
+      }
+
+      if ($stmt = $conn->prepare($sql)) {
+        if ($hasViewings && $hasLotsAgent) {
+          $stmt->bind_param('ii', $agentId, $agentId);
+        } elseif ($hasViewings || $hasLotsAgent) {
+          $stmt->bind_param('i', $agentId);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+          $records[] = $row;
+        }
+        $stmt->close();
+      }
+    }
+    header('Content-Type: application/json');
+    echo json_encode($records);
     exit;
   }
 
@@ -1378,11 +1870,15 @@ if ($stmt = $conn->prepare("SELECT ar.rating, ar.review_text, ar.updated_at, ua.
 
 /* ---- Upcoming viewings list (DASHBOARD) ---- */
 $viewings = [];
+$viewingTypeSelect = $hasViewingAppointmentTypeColumn
+  ? "COALESCE(NULLIF(TRIM(v.appointment_type), ''), 'appointment') AS appointment_type,"
+  : "'appointment' AS appointment_type,";
 if ($stmt = $conn->prepare("
   SELECT v.id,
          v.client_first_name, v.client_last_name,
          v.client_email, v.client_phone,
          v.preferred_at, v.status,
+         $viewingTypeSelect
          v.lot_no,
          l.block_number, l.lot_number,
          ll.location_name
@@ -1506,6 +2002,126 @@ if ($checkLeads && $checkLeads->num_rows > 0) {
     }
 }
 
+// Timeslot flash messages (persist across redirect)
+$slot_success = $_SESSION['slot_success'] ?? null;
+$slot_error = $_SESSION['slot_error'] ?? null;
+unset($_SESSION['slot_success'], $_SESSION['slot_error']);
+
+// Ensure timeslot table exists with uniqueness per agent/date/time.
+$conn->query("CREATE TABLE IF NOT EXISTS agent_time_slots (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id INT,
+    available_date DATE,
+    time_slot TIME,
+    max_clients INT DEFAULT 1,
+    lot_id INT NULL,
+    location_id INT NULL,
+    UNIQUE KEY uniq_agent_date_time (agent_id, available_date, time_slot)
+)");
+
+if (!hasTableColumn($conn, 'agent_time_slots', 'lot_id')) {
+  $conn->query("ALTER TABLE agent_time_slots ADD COLUMN lot_id INT NULL");
+}
+if (!hasTableColumn($conn, 'agent_time_slots', 'location_id')) {
+  $conn->query("ALTER TABLE agent_time_slots ADD COLUMN location_id INT NULL");
+}
+
+// Weekly recurring schedule table (Monday-Sunday), kept alongside date-based slots.
+$conn->query("CREATE TABLE IF NOT EXISTS agent_weekly_schedules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id INT NOT NULL,
+    weekday TINYINT NOT NULL,
+    start_date DATE NULL,
+    time_slot TIME NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    slot_interval_minutes INT NOT NULL DEFAULT 60,
+    max_clients INT NOT NULL DEFAULT 1,
+    lot_id INT NULL,
+    location_id INT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_agent_weekly (agent_id, weekday, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+if (hasTableColumn($conn, 'agent_weekly_schedules', 'location_id') === false) {
+  $conn->query("ALTER TABLE agent_weekly_schedules ADD COLUMN location_id INT NULL");
+}
+if (hasTableColumn($conn, 'agent_weekly_schedules', 'time_slot') === false) {
+  $conn->query("ALTER TABLE agent_weekly_schedules ADD COLUMN time_slot TIME NULL AFTER weekday");
+}
+if (hasTableColumn($conn, 'agent_weekly_schedules', 'start_date') === false) {
+  $conn->query("ALTER TABLE agent_weekly_schedules ADD COLUMN start_date DATE NULL AFTER weekday");
+}
+if (hasTableColumn($conn, 'agent_weekly_schedules', 'is_active') === false) {
+  $conn->query("ALTER TABLE agent_weekly_schedules ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+}
+
+$weekdayLabels = [
+  0 => 'Sunday',
+  1 => 'Monday',
+  2 => 'Tuesday',
+  3 => 'Wednesday',
+  4 => 'Thursday',
+  5 => 'Friday',
+  6 => 'Saturday',
+];
+
+$agentAssignableLots = [];
+if (hasTable($conn, 'lots') && hasTableColumn($conn, 'lots', 'id') && hasTableColumn($conn, 'lots', 'lot_number')) {
+  $hasLotAgentColumn = hasTableColumn($conn, 'lots', 'agent_id');
+  $hasLotLocationColumn = hasTableColumn($conn, 'lots', 'location_id');
+  $canJoinLocations = $hasLotLocationColumn && hasTable($conn, 'lot_locations') && hasTableColumn($conn, 'lot_locations', 'id') && hasTableColumn($conn, 'lot_locations', 'location_name');
+
+  if ($hasLotAgentColumn) {
+    $lotSql = "SELECT l.id, l.block_number, l.lot_number" . ($canJoinLocations ? ", l.location_id, ll.location_name" : ", NULL AS location_id, '' AS location_name") . "
+               FROM lots l" . ($canJoinLocations ? " LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+               WHERE l.agent_id = ?
+               ORDER BY l.block_number ASC, l.lot_number ASC";
+    $lotStmt = $conn->prepare($lotSql);
+    if ($lotStmt) {
+      $lotStmt->bind_param('i', $agentId);
+      $lotStmt->execute();
+      $lotRes = $lotStmt->get_result();
+      if ($lotRes) {
+        $agentAssignableLots = $lotRes->fetch_all(MYSQLI_ASSOC);
+      }
+      $lotStmt->close();
+    }
+  }
+}
+
+if (empty($agentAssignableLots) && hasTable($conn, 'viewings') && hasTableColumn($conn, 'viewings', 'agent_id') && hasTableColumn($conn, 'viewings', 'lot_id') && hasTable($conn, 'lots')) {
+  $canJoinLocations = hasTableColumn($conn, 'lots', 'location_id') && hasTable($conn, 'lot_locations') && hasTableColumn($conn, 'lot_locations', 'id') && hasTableColumn($conn, 'lot_locations', 'location_name');
+  $lotSql = "SELECT DISTINCT l.id, l.block_number, l.lot_number" . ($canJoinLocations ? ", l.location_id, ll.location_name" : ", NULL AS location_id, '' AS location_name") . "
+             FROM viewings v
+             INNER JOIN lots l ON l.id = v.lot_id" . ($canJoinLocations ? " LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
+             WHERE v.agent_id = ? AND v.lot_id IS NOT NULL
+             ORDER BY l.block_number ASC, l.lot_number ASC";
+  $lotStmt = $conn->prepare($lotSql);
+  if ($lotStmt) {
+    $lotStmt->bind_param('i', $agentId);
+    $lotStmt->execute();
+    $lotRes = $lotStmt->get_result();
+    if ($lotRes) {
+      $agentAssignableLots = $lotRes->fetch_all(MYSQLI_ASSOC);
+    }
+    $lotStmt->close();
+  }
+}
+
+$slotUniqueIdxCheck = $conn->query("SELECT COUNT(*) AS c
+  FROM information_schema.statistics
+  WHERE table_schema = DATABASE()
+    AND table_name = 'agent_time_slots'
+    AND index_name = 'uniq_agent_date_time'");
+if ($slotUniqueIdxCheck) {
+  $slotUniqueIdxRow = $slotUniqueIdxCheck->fetch_assoc();
+  if ((int)($slotUniqueIdxRow['c'] ?? 0) === 0) {
+    $conn->query("ALTER TABLE agent_time_slots ADD UNIQUE KEY uniq_agent_date_time (agent_id, available_date, time_slot)");
+  }
+}
+
 // Handle agent time slot form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
   csrf_check();
@@ -1516,15 +2132,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
   if (!$avail_date || !$time_slot || $max_clients < 1) {
     $errors[] = 'All fields are required and max clients must be at least 1.';
   }
+
+  $selectedTs = strtotime($avail_date . ' ' . $time_slot);
+  if ($selectedTs === false) {
+    $errors[] = 'Invalid date or time slot selected.';
+  } elseif ($selectedTs < time()) {
+    $errors[] = 'You cannot add a past date/time slot.';
+  }
   
-  // Ensure table exists
-  $conn->query("CREATE TABLE IF NOT EXISTS agent_time_slots (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      agent_id INT,
-      available_date DATE,
-      time_slot TIME,
-      max_clients INT DEFAULT 1
-  )");
+  if (empty($errors)) {
+    $dupStmt = $conn->prepare("SELECT id FROM agent_time_slots WHERE agent_id=? AND available_date=? AND time_slot=? LIMIT 1");
+    if ($dupStmt) {
+      $dupStmt->bind_param('iss', $agentId, $avail_date, $time_slot);
+      $dupStmt->execute();
+      $dupRes = $dupStmt->get_result();
+      if ($dupRes && $dupRes->fetch_assoc()) {
+        $errors[] = 'This date/time slot already exists.';
+      }
+      $dupStmt->close();
+    }
+  }
 
   if (empty($errors)) {
     $stmt = $conn->prepare("INSERT INTO agent_time_slots (agent_id, available_date, time_slot, max_clients) VALUES (?, ?, ?, ?)");
@@ -1533,7 +2160,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
     } else {
       $stmt->bind_param('issi', $agentId, $avail_date, $time_slot, $max_clients);
       if (!$stmt->execute()) {
-        $slot_error = 'Execute failed: ' . $stmt->error;
+        $slot_error = ((int)$stmt->errno === 1062)
+          ? 'This date/time slot already exists.'
+          : ('Execute failed: ' . $stmt->error);
       } else {
         $slot_success = true;
       }
@@ -1542,6 +2171,232 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_time_slot'])) {
   } else {
     $slot_error = implode(' ', $errors);
   }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_weekly_schedule'])) {
+  csrf_check();
+  $weekday = (int)($_POST['weekly_weekday'] ?? -1);
+  $weeklyStartDateInput = trim((string)($_POST['weekly_start_date'] ?? ''));
+  $startTime = trim((string)($_POST['start_time'] ?? ''));
+  $endTime = trim((string)($_POST['end_time'] ?? ''));
+  $normalizedStartDate = null;
+  $manualTimeSlot = ''; // Generate slots from start to end time
+  $slotInterval = 60; // 60 minutes interval
+  $maxClients = (int)($_POST['weekly_max_clients'] ?? 1);
+  $lotId = (int)($_POST['weekly_lot_id'] ?? 0);
+  $locationId = (int)($_POST['weekly_location_id'] ?? 0);
+  $errors = [];
+
+  if ($weekday < 0 || $weekday > 6) {
+    $errors[] = 'Please select a valid day of week.';
+  }
+
+  if ($weeklyStartDateInput !== '') {
+    $normalizedStartDate = normalizeWeeklyStartDate($weeklyStartDateInput);
+    if ($normalizedStartDate === null) {
+      $errors[] = 'Please provide a valid start date.';
+    }
+  }
+
+  $startTs = strtotime('1970-01-01 ' . $startTime);
+  $endTs = strtotime('1970-01-01 ' . $endTime);
+  if ($startTime === '' || $endTime === '' || $startTs === false || $endTs === false || $endTs < $startTs) {
+    $errors[] = 'Please provide a valid start and end time range.';
+  }
+
+  if ($maxClients < 1 || $maxClients > 200) {
+    $errors[] = 'Max clients must be between 1 and 200.';
+  }
+
+  if (empty($errors)) {
+    if ($lotId > 0) {
+      $dupStmt = $conn->prepare("SELECT id FROM agent_weekly_schedules
+                                 WHERE agent_id = ? AND weekday = ?
+                                   AND start_time = ? AND end_time = ?
+                                   AND COALESCE(start_date, '1000-01-01') = COALESCE(?, '1000-01-01')
+                                   AND (lot_id = ? OR lot_id IS NULL)
+                                 LIMIT 1");
+      if ($dupStmt) {
+        $dupStmt->bind_param('iisssi', $agentId, $weekday, $startTime, $endTime, $normalizedStartDate, $lotId);
+      }
+    } else {
+      $dupStmt = $conn->prepare("SELECT id FROM agent_weekly_schedules
+                                 WHERE agent_id = ? AND weekday = ?
+                                   AND start_time = ? AND end_time = ?
+                                   AND COALESCE(start_date, '1000-01-01') = COALESCE(?, '1000-01-01')
+                                 LIMIT 1");
+      if ($dupStmt) {
+        $dupStmt->bind_param('iisss', $agentId, $weekday, $startTime, $endTime, $normalizedStartDate);
+      }
+    }
+
+    if ($dupStmt) {
+      $dupStmt->execute();
+      $dupRes = $dupStmt->get_result();
+      if ($dupRes && $dupRes->fetch_assoc()) {
+        $errors[] = 'This weekday/time slot already exists for the selected lot/place, or a generic schedule already covers it.';
+      }
+      $dupStmt->close();
+    }
+  }
+
+  if (empty($errors)) {
+    $stmt = $conn->prepare("INSERT INTO agent_weekly_schedules (agent_id, weekday, start_date, time_slot, start_time, end_time, slot_interval_minutes, max_clients, lot_id, location_id, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0), NULLIF(?, 0), 1)");
+    if ($stmt) {
+      $stmt->bind_param('iissssiiii', $agentId, $weekday, $normalizedStartDate, $manualTimeSlot, $startTime, $endTime, $slotInterval, $maxClients, $lotId, $locationId);
+      if ($stmt->execute()) {
+        $selectedDayLabel = $weekdayLabels[$weekday] ?? '';
+        $slot_success = 'Weekly schedule added: ' . $selectedDayLabel;
+        if ($normalizedStartDate !== null) {
+          $slot_success .= ', ' . date('M d, Y', strtotime($normalizedStartDate)) . '.';
+        } else {
+          $slot_success .= '.';
+        }
+      } else {
+        $slot_error = 'Unable to add weekly schedule: ' . $stmt->error;
+      }
+      $stmt->close();
+    } else {
+      $slot_error = 'Unable to prepare weekly schedule insert.';
+    }
+  } else {
+    $slot_error = implode(' ', $errors);
+  }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_weekly_schedule'])) {
+  csrf_check();
+  $weeklyId = (int)($_POST['weekly_id'] ?? 0);
+  $weekday = (int)($_POST['weekly_weekday'] ?? -1);
+  $weeklyStartDateInput = trim((string)($_POST['weekly_start_date'] ?? ''));
+  $startTime = trim((string)($_POST['start_time'] ?? ''));
+  $endTime = trim((string)($_POST['end_time'] ?? ''));
+  $normalizedStartDate = null;
+  $manualTimeSlot = ''; // Generate slots from start to end time
+  $slotInterval = 60; // 60 minutes interval
+  $maxClients = (int)($_POST['weekly_max_clients'] ?? 1);
+  $lotId = (int)($_POST['weekly_lot_id'] ?? 0);
+  $locationId = (int)($_POST['weekly_location_id'] ?? 0);
+  $errors = [];
+
+  if ($weeklyId < 1) {
+    $errors[] = 'Invalid weekly schedule selected.';
+  }
+
+  if ($weekday < 0 || $weekday > 6) {
+    $errors[] = 'Please select a valid day of week.';
+  }
+
+  if ($weeklyStartDateInput !== '') {
+    $normalizedStartDate = normalizeWeeklyStartDate($weeklyStartDateInput);
+    if ($normalizedStartDate === null) {
+      $errors[] = 'Please provide a valid start date.';
+    }
+  }
+
+  $startTs = strtotime('1970-01-01 ' . $startTime);
+  $endTs = strtotime('1970-01-01 ' . $endTime);
+  if ($startTime === '' || $endTime === '' || $startTs === false || $endTs === false || $endTs < $startTs) {
+    $errors[] = 'Please provide a valid start and end time range.';
+  }
+
+  if ($maxClients < 1 || $maxClients > 200) {
+    $errors[] = 'Max clients must be between 1 and 200.';
+  }
+
+  if (empty($errors)) {
+    if ($lotId > 0) {
+      $dupStmt = $conn->prepare("SELECT id FROM agent_weekly_schedules
+                                 WHERE agent_id = ? AND weekday = ?
+                                   AND start_time = ? AND end_time = ?
+                                   AND COALESCE(start_date, '1000-01-01') = COALESCE(?, '1000-01-01')
+                                   AND (lot_id = ? OR lot_id IS NULL)
+                                   AND id <> ?
+                                 LIMIT 1");
+      if ($dupStmt) {
+        $dupStmt->bind_param('iisssii', $agentId, $weekday, $startTime, $endTime, $normalizedStartDate, $lotId, $weeklyId);
+      }
+    } else {
+      $dupStmt = $conn->prepare("SELECT id FROM agent_weekly_schedules
+                                 WHERE agent_id = ? AND weekday = ?
+                                   AND start_time = ? AND end_time = ?
+                                   AND COALESCE(start_date, '1000-01-01') = COALESCE(?, '1000-01-01')
+                                   AND id <> ?
+                                 LIMIT 1");
+      if ($dupStmt) {
+        $dupStmt->bind_param('iisssi', $agentId, $weekday, $startTime, $endTime, $normalizedStartDate, $weeklyId);
+      }
+    }
+    if ($dupStmt) {
+      $dupStmt->execute();
+      $dupRes = $dupStmt->get_result();
+      if ($dupRes && $dupRes->fetch_assoc()) {
+        $errors[] = 'This weekday/time slot already exists for the selected lot/place, or a generic schedule already covers it.';
+      }
+      $dupStmt->close();
+    }
+  }
+
+  if (empty($errors)) {
+    $stmt = $conn->prepare("UPDATE agent_weekly_schedules
+                            SET weekday=?, start_date=?, time_slot=?, start_time=?, end_time=?, slot_interval_minutes=?, max_clients=?, lot_id=NULLIF(?, 0), location_id=NULLIF(?, 0)
+                            WHERE id=? AND agent_id=?");
+    if ($stmt) {
+      $stmt->bind_param('issssiiiiii', $weekday, $normalizedStartDate, $manualTimeSlot, $startTime, $endTime, $slotInterval, $maxClients, $lotId, $locationId, $weeklyId, $agentId);
+      if ($stmt->execute()) {
+        $slot_success = 'Weekly schedule updated successfully.';
+      } else {
+        $slot_error = 'Unable to update weekly schedule: ' . $stmt->error;
+      }
+      $stmt->close();
+    } else {
+      $slot_error = 'Unable to prepare weekly schedule update.';
+    }
+  } else {
+    $slot_error = implode(' ', $errors);
+  }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_weekly_schedule'])) {
+  csrf_check();
+  $weeklyId = (int)($_POST['weekly_id'] ?? 0);
+  if ($weeklyId < 1) {
+    $slot_error = 'Invalid weekly schedule selected.';
+  } else {
+    $stmt = $conn->prepare("DELETE FROM agent_weekly_schedules WHERE id=? AND agent_id=?");
+    if ($stmt) {
+      $stmt->bind_param('ii', $weeklyId, $agentId);
+      if ($stmt->execute() && $stmt->affected_rows > 0) {
+        $slot_success = 'Weekly schedule deleted successfully.';
+      } else {
+        $slot_error = 'Weekly schedule not found.';
+      }
+      $stmt->close();
+    } else {
+      $slot_error = 'Unable to prepare weekly schedule delete.';
+    }
+  }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
 }
 
 // Handle agent time slot update
@@ -1557,6 +2412,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_time_slot'])) 
     $errors[] = 'A valid date, time slot, and max clients value are required.';
   }
 
+  $selectedTs = strtotime($avail_date . ' ' . $time_slot);
+  if ($selectedTs === false) {
+    $errors[] = 'Invalid date or time slot selected.';
+  } elseif ($selectedTs < time()) {
+    $errors[] = 'You cannot set a past date/time slot.';
+  }
+
+  if (empty($errors)) {
+    $dupStmt = $conn->prepare("SELECT id FROM agent_time_slots WHERE agent_id=? AND available_date=? AND time_slot=? AND id<>? LIMIT 1");
+    if ($dupStmt) {
+      $dupStmt->bind_param('issi', $agentId, $avail_date, $time_slot, $slot_id);
+      $dupStmt->execute();
+      $dupRes = $dupStmt->get_result();
+      if ($dupRes && $dupRes->fetch_assoc()) {
+        $errors[] = 'Another slot already uses this date and time.';
+      }
+      $dupStmt->close();
+    }
+  }
+
   if (empty($errors)) {
     $stmt = $conn->prepare("UPDATE agent_time_slots SET available_date=?, time_slot=?, max_clients=? WHERE id=? AND agent_id=?");
     if ($stmt === false) {
@@ -1564,7 +2439,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_time_slot'])) 
     } else {
       $stmt->bind_param('ssiii', $avail_date, $time_slot, $max_clients, $slot_id, $agentId);
       if (!$stmt->execute()) {
-        $slot_error = 'Execute failed: ' . $stmt->error;
+        $slot_error = ((int)$stmt->errno === 1062)
+          ? 'Another slot already uses this date and time.'
+          : ('Execute failed: ' . $stmt->error);
       } elseif ($stmt->affected_rows >= 0) {
         $slot_success = 'Time slot updated successfully!';
       }
@@ -1573,21 +2450,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_time_slot'])) 
   } else {
     $slot_error = implode(' ', $errors);
   }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
 }
 
 // Handle agent time slot delete
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_time_slot'])) {
   csrf_check();
   $slot_id = (int)($_POST['slot_id'] ?? 0);
+  $slot_date = trim((string)($_POST['slot_date'] ?? ''));
+  $slot_time = trim((string)($_POST['slot_time_exact'] ?? ''));
 
   if ($slot_id < 1) {
     $slot_error = 'Invalid time slot selected.';
   } else {
-    $stmt = $conn->prepare("DELETE FROM agent_time_slots WHERE id=? AND agent_id=?");
+    $hasExactDate = ($slot_date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $slot_date));
+    $hasExactTime = ($slot_time !== '' && preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $slot_time));
+    if ($hasExactTime && strlen($slot_time) === 5) {
+      $slot_time .= ':00';
+    }
+
+    if ($hasExactDate && $hasExactTime) {
+      $stmt = $conn->prepare("DELETE FROM agent_time_slots WHERE id=? AND agent_id=? AND available_date=? AND time_slot=? LIMIT 1");
+    } else {
+      $stmt = $conn->prepare("DELETE FROM agent_time_slots WHERE id=? AND agent_id=? LIMIT 1");
+    }
+
     if ($stmt === false) {
       $slot_error = 'Prepare failed: ' . $conn->error;
     } else {
-      $stmt->bind_param('ii', $slot_id, $agentId);
+      if ($hasExactDate && $hasExactTime) {
+        $stmt->bind_param('iiss', $slot_id, $agentId, $slot_date, $slot_time);
+      } else {
+        $stmt->bind_param('ii', $slot_id, $agentId);
+      }
       if (!$stmt->execute()) {
         $slot_error = 'Execute failed: ' . $stmt->error;
       } elseif ($stmt->affected_rows > 0) {
@@ -1598,6 +2497,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_time_slot'])) 
       $stmt->close();
     }
   }
+
+  $_SESSION['slot_success'] = $slot_success;
+  $_SESSION['slot_error'] = $slot_error;
+  header('Location: agent_dashboard.php#dashboard');
+  exit;
 }
 
 // Fetch agent's time slots
@@ -1614,6 +2518,26 @@ if ($checkSlots && $checkSlots->num_rows > 0) {
         }
         $stmt->close();
     }
+}
+
+$weekly_schedules = [];
+if (hasTable($conn, 'agent_weekly_schedules')) {
+  $weeklySql = "SELECT ws.*, l.block_number, l.lot_number, ll.location_name
+                FROM agent_weekly_schedules ws
+                LEFT JOIN lots l ON l.id = ws.lot_id
+                LEFT JOIN lot_locations ll ON ll.id = COALESCE(ws.location_id, l.location_id)
+                WHERE ws.agent_id = ?
+                ORDER BY ws.weekday ASC, ws.start_time ASC";
+  $stmt = $conn->prepare($weeklySql);
+  if ($stmt) {
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($res) {
+      $weekly_schedules = $res->fetch_all(MYSQLI_ASSOC);
+    }
+    $stmt->close();
+  }
 }
 ?>
 <!DOCTYPE html>
@@ -1640,6 +2564,11 @@ aside::-webkit-scrollbar, .sidebar::-webkit-scrollbar { width:0; height:0; }
   font-size: 15px;
   margin: 6px 14px;
   border-radius: 8px;
+}
+
+/* Add extra space below the last nav item (Leads) */
+#spa-nav li:last-child {
+  margin-bottom: 32px;
 }
 
 #spa-nav a:hover,
@@ -1809,6 +2738,15 @@ input[type="submit"]:hover,
           </a>
         </li>
         <li>
+          <a href="#lot-status" data-target="section-lot-status"
+             class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
+            <svg class="w-5 h-5 mr-3 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 6h16v2H4V6zm0 4h16v2H4v-2zm0 4h16v6H4v-6zm6 4h4v2h-4v-2z"/>
+            </svg>
+            Lot Status
+          </a>
+        </li>
+        <li>
           <a href="#notifications" data-target="section-notifications"
              class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
             <svg class="w-5 h-5 mr-3 text-white" viewBox="0 0 24 24" fill="currentColor">
@@ -1849,19 +2787,10 @@ input[type="submit"]:hover,
             Document Review
           </a>
         </li>
-        <li>
-          <a href="#leads" data-target="section-leads"
-             class="flex items-center px-8 py-3 rounded transition hover:bg-green-800">
-            <svg class="w-5 h-5 mr-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm7 7h2v2h-2v-2z"/>
-            </svg>
-            Leads
-          </a>
-        </li>
       </ul>
       <ul class="w-full" style="margin-top:4px; margin-bottom:8px;">
-        <li style="margin-top:8px;">
-          <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800 logout-link" style="margin-top:0;">
+          <li style="margin-top:32px;">
+            <a href="#" onclick="confirmLogout()" class="flex items-center px-8 py-3 rounded transition hover:bg-green-800 logout-link" style="margin-top:12px;">
             <svg class="w-5 h-5 mr-3 text-white logout-icon" viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 13v-2H7V8l-5 4 5 4v-3zM20 3h-8v2h8v14h-8v2h8a2 2 0 002-2V5a2 2 0 00-2-2z"/>
             </svg>
@@ -2073,7 +3002,7 @@ input[type="submit"]:hover,
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="12" rx="9" ry="6" fill="#2e7d32"/><circle cx="12" cy="12" r="2.5" fill="#fff"/></svg>
             </span> Set Your Availability
           </div>
-          <div style="max-height:520px; overflow-y:auto; padding-right:6px;">
+          <div class="space-y-6 pr-1 overflow-visible">
           <?php if (!empty($availability_success)): ?>
             <div class="mb-3 p-2 rounded bg-green-100 text-green-800 text-sm">Availability saved!</div>
           <?php elseif (!empty($availability_error)): ?>
@@ -2109,16 +3038,302 @@ input[type="submit"]:hover,
 
               return confirm('Delete this time slot?');
             }
+
+            function toggleWeeklyEdit(scheduleId, shouldOpen) {
+              document.querySelectorAll('[id^="weekly-edit-row-"]').forEach(function(row) {
+                if (!shouldOpen || row.id !== 'weekly-edit-row-' + scheduleId) {
+                  row.classList.add('hidden');
+                }
+              });
+
+              var targetRow = document.getElementById('weekly-edit-row-' + scheduleId);
+              if (!targetRow) return;
+
+              if (shouldOpen) {
+                targetRow.classList.remove('hidden');
+              } else {
+                targetRow.classList.add('hidden');
+              }
+            }
+
+            function syncWeeklyLocation(selectEl, targetId) {
+              var target = document.getElementById(targetId);
+              if (!selectEl || !target) return;
+              var chosen = selectEl.options[selectEl.selectedIndex];
+              if (!chosen) {
+                target.value = '';
+                return;
+              }
+              var locationId = chosen.getAttribute('data-location-id') || '';
+              target.value = locationId;
+            }
+
+            function getWeekdayName(index) {
+              var names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+              return names[index] || '';
+            }
+
+            function getNextDateForWeekday(weekdayIndex, fromDate) {
+              // Parse fromDate as local time, not UTC
+              var parts = fromDate.split('-');
+              var base = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+              if (isNaN(base.getTime())) {
+                base = new Date();
+              }
+              var current = base.getDay();
+              var diff = (weekdayIndex - current + 7) % 7;
+              base.setDate(base.getDate() + diff);
+              // Format as YYYY-MM-DD using local time
+              var year = base.getFullYear();
+              var month = String(base.getMonth() + 1).padStart(2, '0');
+              var date = String(base.getDate()).padStart(2, '0');
+              return year + '-' + month + '-' + date;
+            }
+
+            function updateWeeklyDayBadge(dateInputId, badgeId, daySelectId) {
+              var dateInput = document.getElementById(dateInputId);
+              var badge = document.getElementById(badgeId);
+              var daySelect = daySelectId ? document.getElementById(daySelectId) : null;
+              if (!dateInput || !badge) return;
+
+              var raw = dateInput.value;
+              if (!raw) {
+                if (daySelect && daySelect.value !== '') {
+                  badge.textContent = '(' + getWeekdayName(parseInt(daySelect.value, 10)) + ')';
+                } else {
+                  badge.textContent = '';
+                }
+                return;
+              }
+
+              // Parse date as local time, not UTC, to avoid timezone offset issues
+              var parts = raw.split('-');
+              var selected = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+              if (isNaN(selected.getTime())) {
+                badge.textContent = '';
+                return;
+              }
+
+              var weekday = selected.getDay();
+              badge.textContent = '(' + getWeekdayName(weekday) + ')';
+              if (daySelect) {
+                daySelect.value = weekday.toString();
+              }
+            }
+
+            function selectWeeklyDay(dateInputId, daySelectId, badgeId) {
+              var dateInput = document.getElementById(dateInputId);
+              var daySelect = document.getElementById(daySelectId);
+              if (!dateInput || !daySelect) return;
+
+              var fromDate = dateInput.value || new Date().toISOString().slice(0, 10);
+              var nextDate = getNextDateForWeekday(parseInt(daySelect.value, 10), fromDate);
+              dateInput.value = nextDate;
+              updateWeeklyDayBadge(dateInputId, badgeId, daySelectId);
+            }
+
+            document.addEventListener('DOMContentLoaded', function() {
+              updateWeeklyDayBadge('weekly-start-date-create', 'weekly-day-create', 'weekly-weekday-create');
+              document.querySelectorAll('input[data-weekly-day-target]').forEach(function(input) {
+                var badgeId = input.getAttribute('data-weekly-day-target');
+                var selectId = input.getAttribute('data-weekly-day-select');
+                if (badgeId) {
+                  updateWeeklyDayBadge(input.id, badgeId, selectId);
+                }
+              });
+            });
+
           </script>
+
+          <div class="mt-6 p-4 rounded-xl border border-green-200 bg-green-50/40">
+            <div class="font-semibold text-gray-800 mb-2">Weekly Schedule</div>
+            <div class="text-xs text-gray-600 mb-4">Set recurring schedule by start date with start/end time, lot/place, and capacity. Date-based slots below are still available for one-off overrides.</div>
+            <form method="post" class="flex flex-wrap gap-4 items-end">
+              <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+              <input type="hidden" name="weekly_location_id" id="weekly-location-id-create" value="">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Day</label>
+                <select id="weekly-weekday-create" name="weekly_weekday" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" onchange="selectWeeklyDay('weekly-start-date-create', 'weekly-weekday-create', 'weekly-day-create')">
+                  <option value="1">Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6">Saturday</option>
+                  <option value="0">Sunday</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Start Date <span id="weekly-day-create" class="text-xs text-green-700 font-semibold"></span></label>
+                <input type="date" id="weekly-start-date-create" name="weekly_start_date" data-weekly-day-target="weekly-day-create" data-weekly-day-select="weekly-weekday-create" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="" onchange="updateWeeklyDayBadge('weekly-start-date-create', 'weekly-day-create', 'weekly-weekday-create')">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                <input type="time" name="start_time" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" required>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                <input type="time" name="end_time" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" required>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients / Slot</label>
+                <input type="number" name="weekly_max_clients" class="border rounded px-3 py-2 w-36" min="1" max="200" value="1" required>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Lot / Place</label>
+                <select name="weekly_lot_id" class="border rounded px-3 py-2 min-w-[220px]" onchange="syncWeeklyLocation(this, 'weekly-location-id-create')">
+                  <option value="" data-location-id="">All assigned lots</option>
+                  <?php foreach ($agentAssignableLots as $optLot): ?>
+                    <?php
+                      $lotLabelParts = [];
+                      if (!empty($optLot['block_number']) && !empty($optLot['lot_number'])) {
+                        $lotLabelParts[] = 'Block ' . $optLot['block_number'] . ', Lot ' . $optLot['lot_number'];
+                      } elseif (!empty($optLot['lot_number'])) {
+                        $lotLabelParts[] = 'Lot ' . $optLot['lot_number'];
+                      } else {
+                        $lotLabelParts[] = 'Lot #' . (int)($optLot['id'] ?? 0);
+                      }
+                      if (!empty($optLot['location_name'])) {
+                        $lotLabelParts[] = $optLot['location_name'];
+                      }
+                    ?>
+                    <option value="<?php echo (int)$optLot['id']; ?>" data-location-id="<?php echo h((string)($optLot['location_id'] ?? '')); ?>"><?php echo h(implode(' - ', $lotLabelParts)); ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <button type="submit" name="save_weekly_schedule" class="bg-green-700 text-white px-5 py-2 rounded font-semibold hover:bg-green-800">Add Weekly Schedule</button>
+            </form>
+
+            <?php if (!empty($weekly_schedules)): ?>
+              <div class="mt-5">
+                <div class="font-semibold text-gray-700 mb-2">Your Weekly Schedules</div>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full border rounded text-sm bg-white">
+                    <thead>
+                      <tr class="bg-gray-50 text-gray-700">
+                        <th class="py-2 px-4 text-left border">Start Date</th>
+                        <th class="py-2 px-4 text-left border">Start Time</th>
+                        <th class="py-2 px-4 text-left border">End Time</th>
+                        <th class="py-2 px-4 text-left border">Max Clients</th>
+                        <th class="py-2 px-4 text-left border">Lot / Place</th>
+                        <th class="py-2 px-4 text-left border">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <?php foreach ($weekly_schedules as $weekly): ?>
+                        <?php
+                          $weeklyLotParts = [];
+                          if (!empty($weekly['block_number']) && !empty($weekly['lot_number'])) {
+                            $weeklyLotParts[] = 'Block ' . $weekly['block_number'] . ', Lot ' . $weekly['lot_number'];
+                          } elseif (!empty($weekly['lot_number'])) {
+                            $weeklyLotParts[] = 'Lot ' . $weekly['lot_number'];
+                          }
+                          if (!empty($weekly['location_name'])) {
+                            $weeklyLotParts[] = $weekly['location_name'];
+                          }
+                          $weeklyLotLabel = !empty($weeklyLotParts) ? implode(' - ', $weeklyLotParts) : 'All assigned lots';
+                        ?>
+                        <tr class="border-t">
+                          <td class="py-2 px-4 border"><?php echo h(!empty($weekly['start_date']) ? date('M d, Y', strtotime((string)$weekly['start_date'])) . ' (' . date('l', strtotime((string)$weekly['start_date'])) . ')' : 'N/A'); ?></td>
+                          <td class="py-2 px-4 border"><?php echo h(!empty($weekly['start_time']) ? date('h:i A', strtotime((string)$weekly['start_time'])) : 'N/A'); ?></td>
+                          <td class="py-2 px-4 border"><?php echo h(!empty($weekly['end_time']) ? date('h:i A', strtotime((string)$weekly['end_time'])) : 'N/A'); ?></td>
+                          <td class="py-2 px-4 border"><?php echo h((string)$weekly['max_clients']); ?></td>
+                          <td class="py-2 px-4 border"><?php echo h($weeklyLotLabel); ?></td>
+                          <td class="py-2 px-4 border">
+                            <div class="flex flex-wrap gap-2">
+                              <button type="button" class="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700" onclick="toggleWeeklyEdit(<?php echo (int)$weekly['id']; ?>, true)">Edit</button>
+                              <form method="post" class="inline-block m-0">
+                                <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                                <input type="hidden" name="weekly_id" value="<?php echo (int)$weekly['id']; ?>">
+                                <input type="hidden" name="delete_weekly_schedule" value="1">
+                                <button type="submit" class="px-4 py-2 rounded font-semibold" style="background:#dc3545 !important; color:#fff !important; border:1px solid #dc3545 !important;" onclick="return confirmSlotDelete(event, this.form);">Delete</button>
+                              </form>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr id="weekly-edit-row-<?php echo (int)$weekly['id']; ?>" class="border-t bg-gray-50 hidden">
+                          <td colspan="6" class="py-3 px-4 border">
+                            <form method="post" class="flex flex-wrap gap-3 items-end">
+                              <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                              <input type="hidden" name="weekly_id" value="<?php echo (int)$weekly['id']; ?>">
+                              <input type="hidden" name="weekly_location_id" id="weekly-location-id-edit-<?php echo (int)$weekly['id']; ?>" value="<?php echo h((string)($weekly['location_id'] ?? '')); ?>">
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Day</label>
+                                <select id="weekly-weekday-edit-<?php echo (int)$weekly['id']; ?>" name="weekly_weekday" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" onchange="selectWeeklyDay('weekly-start-date-edit-<?php echo (int)$weekly['id']; ?>', 'weekly-weekday-edit-<?php echo (int)$weekly['id']; ?>', 'weekly-day-edit-<?php echo (int)$weekly['id']; ?>')">
+                                  <option value="1"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 1) ? ' selected' : ''; ?>>Monday</option>
+                                  <option value="2"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 2) ? ' selected' : ''; ?>>Tuesday</option>
+                                  <option value="3"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 3) ? ' selected' : ''; ?>>Wednesday</option>
+                                  <option value="4"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 4) ? ' selected' : ''; ?>>Thursday</option>
+                                  <option value="5"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 5) ? ' selected' : ''; ?>>Friday</option>
+                                  <option value="6"<?php echo (!empty($weekly['weekday']) && (int)$weekly['weekday'] === 6) ? ' selected' : ''; ?>>Saturday</option>
+                                  <option value="0"<?php echo (isset($weekly['weekday']) && (int)$weekly['weekday'] === 0) ? ' selected' : ''; ?>>Sunday</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Start Date <span id="weekly-day-edit-<?php echo (int)$weekly['id']; ?>" class="text-xs text-green-700 font-semibold"><?php echo h(!empty($weekly['start_date']) ? '(' . date('l', strtotime((string)$weekly['start_date'])) . ')' : ''); ?></span></label>
+                                <input type="date" id="weekly-start-date-edit-<?php echo (int)$weekly['id']; ?>" data-weekly-day-target="weekly-day-edit-<?php echo (int)$weekly['id']; ?>" data-weekly-day-select="weekly-weekday-edit-<?php echo (int)$weekly['id']; ?>" name="weekly_start_date" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="<?php echo h(!empty($weekly['start_date']) ? (string)$weekly['start_date'] : ''); ?>" onchange="updateWeeklyDayBadge('weekly-start-date-edit-<?php echo (int)$weekly['id']; ?>', 'weekly-day-edit-<?php echo (int)$weekly['id']; ?>', 'weekly-weekday-edit-<?php echo (int)$weekly['id']; ?>')">
+                              </div>
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                                <input type="time" name="start_time" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="<?php echo h(!empty($weekly['start_time']) ? date('H:i', strtotime((string)$weekly['start_time'])) : date('H:i', strtotime((string)($weekly['time_slot'] ?: '00:00:00')))); ?>" required>
+                              </div>
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                                <input type="time" name="end_time" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="<?php echo h(!empty($weekly['end_time']) ? date('H:i', strtotime((string)$weekly['end_time'])) : date('H:i', strtotime((string)($weekly['time_slot'] ?: '00:00:00')))); ?>" required>
+                              </div>
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients / Slot</label>
+                                <input type="number" name="weekly_max_clients" class="border rounded px-3 py-2 w-36" min="1" max="200" value="<?php echo h((string)$weekly['max_clients']); ?>" required>
+                              </div>
+                              <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Lot / Place</label>
+                                <select name="weekly_lot_id" class="border rounded px-3 py-2 min-w-[220px]" onchange="syncWeeklyLocation(this, 'weekly-location-id-edit-<?php echo (int)$weekly['id']; ?>')">
+                                  <option value="" data-location-id="">All assigned lots</option>
+                                  <?php foreach ($agentAssignableLots as $optLot): ?>
+                                    <?php
+                                      $lotLabelParts = [];
+                                      if (!empty($optLot['block_number']) && !empty($optLot['lot_number'])) {
+                                        $lotLabelParts[] = 'Block ' . $optLot['block_number'] . ', Lot ' . $optLot['lot_number'];
+                                      } elseif (!empty($optLot['lot_number'])) {
+                                        $lotLabelParts[] = 'Lot ' . $optLot['lot_number'];
+                                      } else {
+                                        $lotLabelParts[] = 'Lot #' . (int)($optLot['id'] ?? 0);
+                                      }
+                                      if (!empty($optLot['location_name'])) {
+                                        $lotLabelParts[] = $optLot['location_name'];
+                                      }
+                                    ?>
+                                    <option value="<?php echo (int)$optLot['id']; ?>" data-location-id="<?php echo h((string)($optLot['location_id'] ?? '')); ?>" <?php echo ((int)($weekly['lot_id'] ?? 0) === (int)($optLot['id'] ?? 0)) ? 'selected' : ''; ?>><?php echo h(implode(' - ', $lotLabelParts)); ?></option>
+                                  <?php endforeach; ?>
+                                </select>
+                              </div>
+                              <div class="flex gap-2">
+                                <button type="submit" name="update_weekly_schedule" value="1" class="bg-green-700 text-white px-4 py-2 rounded font-semibold hover:bg-green-800">Update</button>
+                                <button type="button" class="bg-gray-500 text-white px-4 py-2 rounded font-semibold hover:bg-gray-600" onclick="toggleWeeklyEdit(<?php echo (int)$weekly['id']; ?>, false)">Cancel</button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
+                      <?php endforeach; ?>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            <?php endif; ?>
+          </div>
+
+          <div class="mt-6 p-4 rounded-xl border border-gray-200 bg-white">
+            <div class="font-semibold text-gray-800 mb-2">Date-Specific Time Slots (One-off)</div>
+            <div class="text-xs text-gray-600 mb-4">Use this for specific-date overrides. Weekly schedule above remains the main recurring setup.</div>
           <form method="post" class="flex flex-wrap gap-4 items-end">
             <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
-              <input type="date" name="avail_date" class="border rounded px-3 py-2" required>
+              <input type="date" name="avail_date" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" required>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Time Slot</label>
-              <input type="time" name="time_slot" class="border rounded px-3 py-2" required>
+              <input type="time" name="time_slot" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" required>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients (for this slot)</label>
@@ -2152,6 +3367,8 @@ input[type="submit"]:hover,
                             <form method="post" class="inline-block m-0">
                               <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                               <input type="hidden" name="slot_id" value="<?php echo (int)$slot['id']; ?>">
+                              <input type="hidden" name="slot_date" value="<?php echo h((string)$slot['available_date']); ?>">
+                              <input type="hidden" name="slot_time_exact" value="<?php echo h((string)$slot['time_slot']); ?>">
                               <input type="hidden" name="delete_time_slot" value="1">
                               <button type="submit" class="px-4 py-2 rounded font-semibold" style="background:#dc3545 !important; color:#fff !important; border:1px solid #dc3545 !important;" onclick="return confirmSlotDelete(event, this.form);">Delete</button>
                             </form>
@@ -2165,11 +3382,11 @@ input[type="submit"]:hover,
                             <input type="hidden" name="slot_id" value="<?php echo (int)$slot['id']; ?>">
                             <div>
                               <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                              <input type="date" name="avail_date" class="border rounded px-3 py-2" value="<?php echo h($slot['available_date']); ?>" required>
+                              <input type="date" name="avail_date" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="<?php echo h($slot['available_date']); ?>" required>
                             </div>
                             <div>
                               <label class="block text-sm font-medium text-gray-700 mb-1">Time Slot</label>
-                              <input type="time" name="time_slot" class="border rounded px-3 py-2" value="<?php echo h(date('H:i', strtotime($slot['time_slot']))); ?>" required>
+                              <input type="time" name="time_slot" class="border rounded-lg px-3 py-2 min-h-[44px] bg-white focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-500" value="<?php echo h(date('H:i', strtotime($slot['time_slot']))); ?>" required>
                             </div>
                             <div>
                               <label class="block text-sm font-medium text-gray-700 mb-1">Max Clients</label>
@@ -2188,6 +3405,7 @@ input[type="submit"]:hover,
               </div>
             </div>
           <?php endif; ?>
+          </div>
           </div>
         </div>
         <script>
@@ -2255,10 +3473,21 @@ input[type="submit"]:hover,
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-1">
                     <span class="font-semibold text-gray-900 text-sm"><?php echo h($v['client_first_name'].' '.$v['client_last_name']); ?></span>
+                    <?php $appointmentType = strtolower(trim((string)($v['appointment_type'] ?? 'appointment'))); ?>
+                    <?php $isReservation = ($appointmentType === 'reservation'); ?>
+                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full <?php echo $isReservation ? 'bg-cyan-50 text-cyan-700 border border-cyan-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'; ?>">
+                      <span class="w-1.5 h-1.5 rounded-full <?php echo $isReservation ? 'bg-cyan-500' : 'bg-indigo-500'; ?>"></span>
+                      <?php echo $isReservation ? 'Reservation' : 'Book for an Appointment'; ?>
+                    </span>
                     <?php if (!empty($v['is_existing_client'])): ?>
                       <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200" title="Matched registered account<?php echo !empty($v['matched_username']) ? ': ' . h($v['matched_username']) : ''; ?>">
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                         Existing Client
+                      </span>
+                    <?php else: ?>
+                      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-700 border border-slate-200" title="Client has no registered account">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        Guest Client
                       </span>
                     <?php endif; ?>
                     <span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full <?php echo $cfg['bg']; ?> <?php echo $cfg['text']; ?> border <?php echo $cfg['border']; ?>">
@@ -2278,13 +3507,22 @@ input[type="submit"]:hover,
                 </div>
                 <!-- Right: Action -->
                 <div class="flex-shrink-0 flex items-center gap-2">
-                  <?php if ($st === 'pending'): ?>
+                  <?php if ($st === 'pending' || $st === 'requested'): ?>
                     <form method="post">
                       <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                       <input type="hidden" name="approve_viewing_id" value="<?php echo (int)$v['id']; ?>">
                       <button type="submit" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 shadow-sm transition">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
                         Approve
+                      </button>
+                    </form>
+                    <form method="post">
+                      <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+                      <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
+                      <input type="hidden" name="viewing_action" value="cancelled">
+                      <button type="submit" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 shadow-sm transition" onclick="return confirm('Decline this request?');">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                        Decline
                       </button>
                     </form>
                   <?php endif; ?>
@@ -2454,6 +3692,29 @@ input[type="submit"]:hover,
 
         <div class="mt-6 flex gap-4">
           <span id="sales-auto-note" class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded">Auto sync enabled: sales are generated from your actual handled lots and transactions.</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="section-lot-status" class="hidden">
+      <h2 class="text-3xl font-bold text-green-900 mb-4">Lot Status</h2>
+      <p class="text-gray-700 mb-1" style="line-height: 0.5em; margin-top: -0.5em; margin-bottom: 1.5em;">View surrendered lots and client lot status history.</p>
+      <div class="bg-white rounded-2xl border shadow p-6">
+        <div class="overflow-x-auto">
+          <table class="min-w-full border rounded text-sm">
+            <thead>
+              <tr class="bg-gray-50 text-gray-700">
+                <th class="py-2 px-4 text-left">Date</th>
+                <th class="py-2 px-4 text-left">Property</th>
+                <th class="py-2 px-4 text-left">Client</th>
+                <th class="py-2 px-4 text-left">Amounts</th>
+                <th class="py-2 px-4 text-left">Remarks</th>
+              </tr>
+            </thead>
+            <tbody id="lot-status-rows">
+              <tr><td colspan="5" class="py-6 text-center text-gray-600">Loading surrendered lots...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -2669,6 +3930,11 @@ input[type="submit"]:hover,
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                         Existing Client
                       </span>
+                    <?php else: ?>
+                      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-700 border border-slate-200" title="Client has no registered account">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        Guest Client
+                      </span>
                     <?php endif; ?>
                     <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full <?php echo $cfg['bg']; ?> <?php echo $cfg['text']; ?> border <?php echo $cfg['border']; ?>">
                       <span class="w-1.5 h-1.5 rounded-full <?php echo $cfg['dot']; ?>"></span>
@@ -2735,17 +4001,18 @@ input[type="submit"]:hover,
                         </button>
                       </form>
                     <?php endif; ?>
-                    <button type="button" class="vw-btn vw-btn-cancel cancel-init-btn" id="cancel-init-btn-<?php echo (int)$v['id']; ?>" onclick="showCancelReason(this, <?php echo (int)$v['id']; ?>)">
+                    <?php $isRequest = ($st === 'pending' || $st === 'requested'); ?>
+                    <button type="button" class="vw-btn vw-btn-cancel <?php echo $isRequest ? 'decline-action' : ''; ?> cancel-init-btn" id="cancel-init-btn-<?php echo (int)$v['id']; ?>" onclick="showCancelReason(this, <?php echo (int)$v['id']; ?>)">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
-                      Cancel
+                      <?php echo $isRequest ? 'Decline' : 'Cancel'; ?>
                     </button>
                     <form method="post" class="cancel-reason-form" id="cancel-reason-form-<?php echo (int)$v['id']; ?>" style="display:none;width:100%;max-width:280px;">
                       <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
                       <input type="hidden" name="viewing_id" value="<?php echo (int)$v['id']; ?>">
                       <input type="hidden" name="redirect_to" value="viewings">
-                      <textarea name="cancellation_reason" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs mt-1 focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none resize-none" placeholder="Reason for cancellation (required)" required></textarea>
+                      <textarea name="cancellation_reason" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs mt-1 focus:ring-2 focus:ring-red-200 focus:border-red-400 outline-none resize-none" placeholder="<?php echo $isRequest ? 'Reason for decline (required)' : 'Reason for cancellation (required)'; ?>" required></textarea>
                       <div class="flex gap-1.5 mt-1.5">
-                        <button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel">Submit</button>
+                        <button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel <?php echo $isRequest ? 'decline-action' : ''; ?>"><?php echo $isRequest ? 'Decline Request' : 'Submit'; ?></button>
                         <button type="button" class="vw-btn vw-btn-secondary" onclick="hideCancelReason(<?php echo (int)$v['id']; ?>)">Back</button>
                       </div>
                     </form>
@@ -3094,11 +4361,12 @@ input[type="submit"]:hover,
           background: #f8fdf9;
           border: 1px solid #e2efe7;
           border-radius: 12px;
-          padding: 8px 12px;
-          min-width: 56px;
+          padding: 8px 10px;
+          min-width: 65px;
         }
-        .vwm-date-badge .mn { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+        .vwm-date-badge .mn { font-size: 9px; font-weight: 700; color: #1f2937; text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; }
         .vwm-date-badge .dy { font-size: 22px; font-weight: 800; color: #166534; line-height: 1.1; }
+        .vwm-date-badge .mo { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
         .vwm-date-badge .tm { font-size: 10px; color: #94a3b8; font-weight: 500; }
         .vwm-body { flex: 1; min-width: 0; }
         .vwm-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 7px; }
@@ -3176,6 +4444,14 @@ input[type="submit"]:hover,
           box-shadow: 0 6px 12px rgba(251, 146, 60, 0.2);
         }
 
+        .vw-row .vw-btn-cancel.decline-action,
+        .vw-row .vw-btn-cancel.decline-action:hover {
+          background: #dc2626 !important;
+          color: #fff !important;
+          border-color: #b91c1c !important;
+          box-shadow: 0 6px 12px rgba(220, 38, 38, 0.2);
+        }
+
         .vw-row .vw-btn-secondary {
           background: #f8fafc !important;
           color: #475569 !important;
@@ -3214,6 +4490,7 @@ input[type="submit"]:hover,
           return [
             'id'                  => (int)($v['id'] ?? 0),
             'status'              => (string)($v['status'] ?? ''),
+            'appointment_type'    => (string)($v['appointment_type'] ?? 'appointment'),
             'preferred_at'        => (function($d) {
               $s = (string)($d ?? '');
               // Reject zero/invalid MySQL datetime placeholders
@@ -3239,6 +4516,13 @@ input[type="submit"]:hover,
         }, $all_viewings ?? []), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 
         const vwCsrfToken = <?php echo json_encode($_SESSION['csrf_token'] ?? ''); ?>;
+        const approvalCallPopup = <?php
+          $approvalCallPopup = $_SESSION['approval_call_popup'] ?? null;
+          if (isset($_SESSION['approval_call_popup'])) {
+            unset($_SESSION['approval_call_popup']);
+          }
+          echo json_encode($approvalCallPopup, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        ?>;
 
         let viewingCalendarMonth = null;
         let viewingSelectedDate = null;
@@ -3517,17 +4801,23 @@ input[type="submit"]:hover,
           if (dateSource) {
             const dt = new Date(dateSource.replace(' ', 'T'));
             const mon = dt.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+            const dow = dt.toLocaleString('en-US', { weekday: 'long' }).toUpperCase();
             const dy  = dt.getDate();
             const tm  = v.preferred_at && !v.preferred_at.startsWith('0000')
               ? dt.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
               : 'Requested';
-            dateBadge = '<div class="mn">' + mon + '</div><div class="dy">' + dy + '</div><div class="tm">' + esc(tm) + '</div>';
+            dateBadge = '<div class="mn">' + dow + '</div><div class="dy">' + dy + '</div><div class="mo">' + mon + '</div><div class="tm">' + esc(tm) + '</div>';
           }
 
           const existingBadge = v.is_existing_client
             ? '<span class="vwm-badge" style="background:#ecfdf5;color:#065f46;border-color:#6ee7b7;"><span style="width:6px;height:6px;border-radius:999px;background:#10b981;display:inline-block;"></span>Existing Client</span>'
-            : '';
+            : '<span class="vwm-badge" style="background:#f8fafc;color:#334155;border-color:#cbd5e1;"><span style="width:6px;height:6px;border-radius:999px;background:#94a3b8;display:inline-block;"></span>Guest Client</span>';
           const statusBadge = '<span class="vwm-badge" style="background:' + cfg.bg + ';color:' + cfg.color + ';border-color:' + cfg.border + ';"><span style="width:6px;height:6px;border-radius:999px;background:' + cfg.dot + ';display:inline-block;"></span>' + esc(cfg.label) + '</span>';
+          const normalizedType = String(v.appointment_type || 'appointment').trim().toLowerCase();
+          const isReservationType = normalizedType === 'reservation';
+          const appointmentBadge = isReservationType
+            ? '<span class="vwm-badge" style="background:#ecfeff;color:#0e7490;border-color:#a5f3fc;"><span style="width:6px;height:6px;border-radius:999px;background:#06b6d4;display:inline-block;"></span>Reservation</span>'
+            : '<span class="vwm-badge" style="background:#eef2ff;color:#4338ca;border-color:#c7d2fe;"><span style="width:6px;height:6px;border-radius:999px;background:#6366f1;display:inline-block;"></span>Book for an Appointment</span>';
           const priceHtml = v.lot_price ? '<span class="vwm-price">&#8369;' + parseFloat(v.lot_price).toLocaleString('en-PH', {minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' : '';
 
           const notesHtml = v.notes
@@ -3548,14 +4838,19 @@ input[type="submit"]:hover,
                 '<input type="hidden" name="redirect_to" value="viewings">' +
                 '<button type="submit" class="vw-btn vw-btn-approve vwm-action-btn">&#10003; Approve</button></form>';
             }
-            const cancelBtnHtml = '<button type="button" class="vw-btn vw-btn-cancel vwm-action-btn" onclick="showModalCancelForm(' + v.id + ')" id="vwm-cancel-init-' + v.id + '">&#x2715; Cancel</button>' +
+            const isRequestStatus = (v.status === 'pending' || v.status === 'requested');
+            const cancelBtnLabel = isRequestStatus ? 'Decline' : 'Cancel';
+            const cancelPlaceholder = isRequestStatus ? 'Reason for decline (required)' : 'Reason for cancellation (required)';
+            const cancelSubmitLabel = isRequestStatus ? 'Decline Request' : 'Submit';
+            const declineClass = isRequestStatus ? ' decline-action' : '';
+            const cancelBtnHtml = '<button type="button" class="vw-btn vw-btn-cancel' + declineClass + ' vwm-action-btn" onclick="showModalCancelForm(' + v.id + ')" id="vwm-cancel-init-' + v.id + '">&#x2715; ' + cancelBtnLabel + '</button>' +
               '<form method="post" id="vwm-cancel-form-' + v.id + '" style="display:none;width:100%;">' +
               '<input type="hidden" name="csrf_token" value="' + esc(vwCsrfToken) + '">' +
               '<input type="hidden" name="viewing_id" value="' + v.id + '">' +
               '<input type="hidden" name="redirect_to" value="viewings">' +
-              '<textarea name="cancellation_reason" rows="2" style="width:100%;border:1px solid #fca5a5;border-radius:8px;padding:8px 10px;font-size:12px;resize:none;outline:none;margin-top:6px;box-sizing:border-box;" placeholder="Reason for cancellation (required)" required></textarea>' +
+              '<textarea name="cancellation_reason" rows="2" style="width:100%;border:1px solid #fca5a5;border-radius:8px;padding:8px 10px;font-size:12px;resize:none;outline:none;margin-top:6px;box-sizing:border-box;" placeholder="' + cancelPlaceholder + '" required></textarea>' +
               '<div style="display:flex;gap:6px;margin-top:6px;">' +
-              '<button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel vwm-action-btn">Submit</button>' +
+              '<button name="viewing_action" value="cancelled" class="vw-btn vw-btn-cancel' + declineClass + ' vwm-action-btn">' + cancelSubmitLabel + '</button>' +
               '<button type="button" class="vw-btn vw-btn-secondary vwm-action-btn" onclick="hideModalCancelForm(' + v.id + ')">Back</button>' +
               '</div></form>';
             actionsHtml = '<div class="vwm-actions">' + approveBtnHtml + cancelBtnHtml + '</div>';
@@ -3566,7 +4861,7 @@ input[type="submit"]:hover,
             '<div class="vwm-body">' +
               '<div class="vwm-name-row">' +
                 '<span class="vwm-name">' + esc(v.client_first_name + ' ' + v.client_last_name) + '</span>' +
-                existingBadge + statusBadge + priceHtml +
+                appointmentBadge + existingBadge + statusBadge + priceHtml +
               '</div>' +
               '<div class="vwm-info-row">' +
                 '<span class="vwm-info-item"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' + esc(locText) + '</span>' +
@@ -3720,87 +5015,83 @@ input[type="submit"]:hover,
 </div>
 
 <script>
-const links = document.querySelectorAll('#spa-nav a[data-target]');
-let sections = [
-  'section-dashboard',
-  'section-profile',
-  'section-viewings',
-  'section-sales',
-  'section-notifications',
-  'section-messages',
-  'section-leads',
-  'section-audit-logs',
-  'section-documents'
-].map(id => document.getElementById(id));
+document.addEventListener('DOMContentLoaded', function() {
+  const links = document.querySelectorAll('#spa-nav a[data-target]');
+  const sections = [
+    'section-dashboard',
+    'section-profile',
+    'section-viewings',
+    'section-sales',
+    'section-lot-status',
+    'section-notifications',
+    'section-messages',
+    'section-leads',
+    'section-audit-logs',
+    'section-documents'
+  ]
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
 
-// Ensure every section element has the `.section` class and remove Tailwind's `hidden`
-sections.forEach(s => {
-  if (!s) return;
-  if (!s.classList.contains('section')) s.classList.add('section');
-  if (s.classList.contains('hidden')) s.classList.remove('hidden');
-});
-
-// Rebuild sections array to only include existing elements
-sections = sections.filter(Boolean);
-
-// If none are active, set dashboard active by default to avoid stuck UI
-if (!sections.some(s => s.classList.contains('active'))) {
-  const dash = document.getElementById('section-dashboard');
-  if (dash) dash.classList.add('active');
-}
-
-function showSection(id) {
-  const current = sections.find(s => s && s.classList.contains('active'));
-  const target = sections.find(s => s && s.id === id);
-
-  links.forEach(a => a.classList.toggle('nav-active', a.dataset.target === id));
-
-  if (id === 'section-notifications') {
-    const badge = document.getElementById('agent-notifications-badge');
-    if (badge) badge.style.display = 'none';
-  }
-
-  function triggerLoads(sectionId) {
-    if (sectionId === 'section-notifications') loadAgentNotifications();
-    else if (sectionId === 'section-messages') loadAgentMessages();
-    else if (sectionId === 'section-audit-logs') loadAgentAuditLogs();
-    else if (sectionId === 'section-documents') loadAgentDocuments();
-  }
-
-  // Immediate swap of `active` class — transitions handle the fade.
-  if (current && current !== target) {
-    current.classList.remove('active');
-  }
-  if (target) {
-    target.classList.add('active');
-    requestAnimationFrame(() => triggerLoads(id));
-  }
-}
-
-// handle clicks
-links.forEach(a => {
-  a.addEventListener('click', (e) => {
-    e.preventDefault();
-    const id = a.dataset.target;
-    history.replaceState(null, '', a.getAttribute('href'));
-    showSection(id);
+  sections.forEach(s => {
+    if (!s.classList.contains('section')) s.classList.add('section');
+    if (s.classList.contains('hidden')) s.classList.remove('hidden');
   });
-});
 
-// initial route based on hash
-const hash = location.hash.replace('#','');
-const map = {
-  'dashboard': 'section-dashboard',
-  'profile': 'section-profile',
-  'viewings': 'section-viewings',
-  'sales': 'section-sales',
-  'notifications': 'section-notifications',
-  'messages': 'section-messages',
-  'leads': 'section-leads',
-  'audit-logs': 'section-audit-logs',
-  'documents': 'section-documents'
-};
-showSection(map[hash] || 'section-dashboard');
+  if (!sections.some(s => s.classList.contains('active'))) {
+    const dash = document.getElementById('section-dashboard');
+    if (dash) dash.classList.add('active');
+  }
+
+  function showSection(id) {
+    const current = sections.find(s => s.classList.contains('active'));
+    const target = sections.find(s => s.id === id);
+
+    links.forEach(a => a.classList.toggle('nav-active', a.dataset.target === id));
+
+    if (id === 'section-notifications') {
+      refreshAgentNotificationBadge();
+    }
+
+    if (current && current !== target) {
+      current.classList.remove('active');
+    }
+    if (target) {
+      target.classList.add('active');
+    }
+
+    requestAnimationFrame(() => {
+      if (id === 'section-notifications') loadAgentNotifications();
+      else if (id === 'section-messages') loadAgentMessages();
+      else if (id === 'section-lot-status') loadAgentSurrenderedLots();
+    });
+  }
+
+  links.forEach(a => {
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      const id = this.dataset.target;
+      history.replaceState(null, '', this.getAttribute('href'));
+      showSection(id);
+    });
+  });
+
+  const hash = location.hash.replace('#','');
+  const map = {
+    'dashboard': 'section-dashboard',
+    'profile': 'section-profile',
+    'viewings': 'section-viewings',
+    'sales': 'section-sales',
+    'lot-status': 'section-lot-status',
+    'notifications': 'section-notifications',
+    'messages': 'section-messages',
+    'leads': 'section-leads',
+    'audit-logs': 'section-audit-logs',
+    'documents': 'section-documents'
+  };
+
+  showSection(map[hash] || 'section-dashboard');
+  refreshAgentNotificationBadge();
+});
 
 // Admin-style dynamic logout confirm modal
 function confirmLogout(e) {
@@ -3848,9 +5139,106 @@ function confirmLogout(e) {
 }
 
 // Notifications
+function refreshAgentNotificationBadge() {
+  fetch(window.location.pathname + '?fetch=notifications_count')
+    .then(response => response.json())
+    .then(data => {
+      const count = Math.max(0, Number(data?.count || 0));
+      const badgeHost = document.querySelector('a[data-target="section-notifications"]');
+      if (!badgeHost) return;
+
+      let badge = document.getElementById('agent-notifications-badge');
+      if (count <= 0) {
+        if (badge) badge.remove();
+        return;
+      }
+
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.id = 'agent-notifications-badge';
+        badge.style.marginLeft = '10px';
+        badge.style.minWidth = '20px';
+        badge.style.height = '20px';
+        badge.style.padding = '0 6px';
+        badge.style.borderRadius = '999px';
+        badge.style.background = '#ef4444';
+        badge.style.color = '#fff';
+        badge.style.fontSize = '12px';
+        badge.style.fontWeight = '700';
+        badge.style.display = 'inline-flex';
+        badge.style.alignItems = 'center';
+        badge.style.justifyContent = 'center';
+        badge.style.lineHeight = '1';
+        badgeHost.appendChild(badge);
+      }
+
+      badge.textContent = count > 99 ? '99+' : String(count);
+    })
+    .catch(() => {
+      // Keep existing badge state on transient request errors.
+    });
+}
+
 function loadAgentNotifications() {
   const container = document.getElementById('notifications-container');
   if (!container) return;
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getViewingCategoryLabel(notification) {
+    const text = ((notification?.title || '') + ' ' + (notification?.message || '')).toLowerCase();
+    if (!text) return '';
+
+    if (text.includes('reservation') || text.includes('reserve')) {
+      return 'Reservation';
+    }
+
+    if (text.includes('appointment') || text.includes('viewing') || text.includes('book')) {
+      return 'Book for an Appointment';
+    }
+
+    return '';
+  }
+
+  function renderCategoryBadge(label) {
+    if (!label) return '';
+    const isReservation = label === 'Reservation';
+    const colors = isReservation
+      ? 'background:#ecfeff;color:#0e7490;border:1px solid #a5f3fc;'
+      : 'background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;';
+    const dot = isReservation ? '#06b6d4' : '#6366f1';
+    return `<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;${colors}"><span style="width:6px;height:6px;border-radius:999px;background:${dot};display:inline-block;"></span>${label}</span>`;
+  }
+
+  function formatNotifDateTime(value) {
+    if (!value) return 'N/A';
+    const raw = String(value).trim();
+    const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+    const dateObj = new Date(normalized);
+    if (isNaN(dateObj.getTime())) return escapeHtml(raw);
+    return dateObj.toLocaleString('en-PH', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  }
+
+  function formatLotPrice(value) {
+    const num = Number(value);
+    if (!isFinite(num)) return '';
+    return 'PHP ' + num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   container.innerHTML = '<p class="text-gray-600">Loading notifications...</p>';
   fetch(window.location.pathname + '?fetch=notifications')
     .then(response => response.json())
@@ -3861,19 +5249,78 @@ function loadAgentNotifications() {
       }
       container.innerHTML = notifications.map(n => `
         <div class="mb-4 p-4 rounded border ${n.is_read ? 'bg-gray-50' : 'bg-green-50'}">
-          <div class="font-semibold text-green-900">${n.title}</div>
-          <div class="text-gray-700 mb-2">${n.message}</div>
-          <div class="text-xs text-gray-500">${new Date(n.created_at).toLocaleString()}</div>
+          <div class="flex flex-wrap items-center gap-2 mb-1">
+            <div class="font-semibold text-green-900">${escapeHtml(n.title)}</div>
+            ${renderCategoryBadge(getViewingCategoryLabel(n))}
+          </div>
+          <div class="text-gray-700 mb-2">${escapeHtml(n.message)}</div>
+          <div class="text-xs text-gray-500">${formatNotifDateTime(n.created_at)}</div>
           <div class="mt-2 flex gap-2">
-            ${!n.is_read ? `<button class=\"px-3 py-1 text-xs\" style=\"background:#22c55e !important; color:#fff !important; border:1px solid #16a34a !important;\" onclick=\"markNotificationRead(${n.id})\">Approved</button>` : ''}
-            <button class="px-3 py-1 text-xs" style="background:#dc2626 !important; color:#fff !important; border:1px solid #dc2626 !important;" onclick="deleteNotification(${n.id})">Decline</button>
+            ${(!n.is_read && Number(n.viewing_id || 0) > 0) ? `<button class=\"px-3 py-1 text-xs\" style=\"background:#22c55e !important; color:#fff !important; border:1px solid #16a34a !important;\" onclick=\"approveNotification(${n.id})\">Accept</button>` : ''}
+            ${!n.is_read ? `<button class=\"px-3 py-1 text-xs\" style=\"background:#dc2626 !important; color:#fff !important; border:1px solid #dc2626 !important;\" onclick=\"deleteNotification(${n.id})\">Decline</button>` : `<button class=\"px-3 py-1 text-xs\" style=\"background:#64748b !important; color:#fff !important; border:1px solid #64748b !important;\" onclick=\"markNotificationRead(${n.id})\">Mark as Read</button>`}
           </div>
         </div>
       `).join('');
+      refreshAgentNotificationBadge();
     })
     .catch(() => {
       container.innerHTML = '<p class="text-red-600">Failed to load notifications.</p>';
     });
+}
+
+function loadAgentSurrenderedLots() {
+  const tbody = document.getElementById('lot-status-rows');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-gray-600">Loading surrendered lots...</td></tr>';
+
+  fetch(window.location.pathname + '?fetch=surrendered_lots')
+    .then(response => response.json())
+    .then(records => {
+      if (!records || records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-gray-600">No surrendered lots found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = records.map(record => {
+        const property = `${record.location_name ? record.location_name + ' - ' : ''}Block ${record.block_number || 'N/A'}, Lot ${record.lot_number || 'N/A'}`;
+        const amounts = `Paid: PHP ${Number(record.paid_amount || 0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}${record.refund_amount ? ' / Refund: PHP ' + Number(record.refund_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}) : ''}`;
+        return `
+          <tr>
+            <td class="py-3 px-4 border text-gray-700">${record.event_date || 'N/A'}</td>
+            <td class="py-3 px-4 border text-gray-700">${property}</td>
+            <td class="py-3 px-4 border text-gray-700">${record.previous_owner_name || 'N/A'}<br><span class="text-xs text-gray-500">${record.previous_owner_email || ''}</span></td>
+            <td class="py-3 px-4 border text-gray-700">${amounts}</td>
+            <td class="py-3 px-4 border text-gray-700">${record.remarks || ''}</td>
+          </tr>`;
+      }).join('');
+    })
+    .catch(error => {
+      console.error('Failed to load surrendered lots:', error);
+      tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-red-600">Failed to load surrendered lots.</td></tr>';
+    });
+}
+
+function approveNotification(id) {
+  fetch(window.location.pathname, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: `approve_notif=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data && data.success && data.popup) {
+      showApprovalCallPopup(data.popup);
+    } else if (data && data.success === false && data.message) {
+      alert(data.message);
+    }
+    loadAgentNotifications();
+    refreshAgentNotificationBadge();
+  })
+  .catch(() => {
+    loadAgentNotifications();
+    refreshAgentNotificationBadge();
+  });
 }
 
 function markNotificationRead(id) {
@@ -3883,7 +5330,10 @@ function markNotificationRead(id) {
     body: `mark_read=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
-  .then(() => loadAgentNotifications());
+  .then(() => {
+    loadAgentNotifications();
+    refreshAgentNotificationBadge();
+  });
 }
 
 async function deleteNotification(id) {
@@ -3895,7 +5345,10 @@ async function deleteNotification(id) {
     body: `delete_notif=${id}&csrf_token=<?php echo h($_SESSION['csrf_token']); ?>`
   })
   .then(res => res.json())
-  .then(() => loadAgentNotifications());
+  .then(() => {
+    loadAgentNotifications();
+    refreshAgentNotificationBadge();
+  });
 }
 
 // Messages
@@ -4170,6 +5623,205 @@ function clearAgentLocation() {
   if (lat) lat.value = '';
   if (lng) lng.value = '';
 }
+
+function showApprovalCallPopup(data) {
+  if (!data) return;
+
+  let overlay = document.getElementById('approval-call-popup');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'approval-call-popup';
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.display = 'none';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.background = 'rgba(15, 23, 42, 0.55)';
+    overlay.style.zIndex = '10060';
+    overlay.style.padding = '12px';
+
+    const card = document.createElement('div');
+    card.style.width = '100%';
+    card.style.maxWidth = '460px';
+    card.style.background = '#fff';
+    card.style.borderRadius = '16px';
+    card.style.boxShadow = '0 22px 50px rgba(0,0,0,0.22)';
+    card.style.overflow = 'hidden';
+    card.style.fontFamily = "'Segoe UI', system-ui, sans-serif";
+
+    const header = document.createElement('div');
+    header.style.padding = '16px 18px';
+    header.style.background = 'linear-gradient(135deg, #14532d 0%, #166534 100%)';
+    header.style.color = '#fff';
+    header.innerHTML = '<div style="font-size:17px;font-weight:800;">Approval Complete</div><div style="margin-top:3px;font-size:12px;opacity:0.9;">Call the client to confirm the next step.</div>';
+
+    const body = document.createElement('div');
+    body.style.padding = '16px 18px 18px';
+    body.style.maxHeight = '72vh';
+    body.style.overflowY = 'auto';
+
+    const title = document.createElement('div');
+    title.style.fontSize = '14px';
+    title.style.fontWeight = '700';
+    title.style.color = '#0f172a';
+    title.style.marginBottom = '8px';
+    title.textContent = (data.title || 'Client Approved') + ' - ' + (data.request_type || 'Request');
+
+    const reminder = document.createElement('div');
+    reminder.style.background = '#f0fdf4';
+    reminder.style.border = '1px solid #bbf7d0';
+    reminder.style.borderRadius = '12px';
+    reminder.style.padding = '12px 14px';
+    reminder.style.color = '#166534';
+    reminder.style.fontSize = '13px';
+    reminder.style.lineHeight = '1.5';
+    reminder.textContent = 'The request is approved. Please call the client after this approval to confirm the details.';
+
+    const details = document.createElement('div');
+    details.style.marginTop = '12px';
+    details.style.display = 'grid';
+    details.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+    details.style.gap = '8px';
+
+    const makeDetail = function(label, value) {
+      const row = document.createElement('div');
+      row.style.padding = '10px 12px';
+      row.style.border = '1px solid #e5e7eb';
+      row.style.borderRadius = '10px';
+      row.style.background = '#f8fafc';
+      row.style.minHeight = '66px';
+      row.style.boxSizing = 'border-box';
+
+      const labelEl = document.createElement('div');
+      labelEl.style.fontSize = '10px';
+      labelEl.style.fontWeight = '700';
+      labelEl.style.letterSpacing = '0.04em';
+      labelEl.style.textTransform = 'uppercase';
+      labelEl.style.color = '#64748b';
+      labelEl.textContent = label;
+
+      const valueEl = document.createElement('div');
+      valueEl.style.fontSize = '13px';
+      valueEl.style.fontWeight = '600';
+      valueEl.style.color = '#111827';
+      valueEl.style.marginTop = '3px';
+      valueEl.style.lineHeight = '1.4';
+      valueEl.textContent = value || 'N/A';
+
+      row.appendChild(labelEl);
+      row.appendChild(valueEl);
+      return row;
+    };
+
+    details.appendChild(makeDetail('Client', data.client_name || 'Client'));
+    details.appendChild(makeDetail('Mobile', data.client_phone || 'N/A'));
+    details.appendChild(makeDetail('Email', data.client_email || 'N/A'));
+    if (data.lot_ref) {
+      details.appendChild(makeDetail('Lot', data.lot_ref));
+    }
+
+    if (data.lot_details) {
+      const lot = data.lot_details;
+      const lotParts = [];
+      if (lot.location_name) lotParts.push(lot.location_name);
+      if (lot.block_number && lot.lot_number) {
+        lotParts.push('Block ' + lot.block_number + ', Lot ' + lot.lot_number);
+      } else if (lot.lot_number) {
+        lotParts.push('Lot ' + lot.lot_number);
+      } else if (lot.lot_no) {
+        lotParts.push('Lot ' + lot.lot_no);
+      }
+
+      const lotDetailsCard = makeDetail('Lot Details', lotParts.join(' — ') || 'N/A');
+      lotDetailsCard.style.gridColumn = '1 / -1';
+      details.appendChild(lotDetailsCard);
+
+      if (lot.lot_size) {
+        details.appendChild(makeDetail('Lot Size', String(lot.lot_size) + ' sqm'));
+      }
+
+      if (lot.lot_price) {
+        const priceValue = Number(lot.lot_price);
+        details.appendChild(makeDetail('Lot Price', isFinite(priceValue) ? '₱' + priceValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(lot.lot_price)));
+      }
+    }
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.flexWrap = 'wrap';
+    actions.style.gap = '8px';
+    actions.style.justifyContent = 'flex-end';
+    actions.style.marginTop = '14px';
+
+    const callBtn = document.createElement('a');
+    callBtn.href = data.client_phone ? 'tel:' + String(data.client_phone).replace(/\s+/g, '') : '#';
+    callBtn.textContent = 'Call Client';
+    callBtn.style.display = 'inline-flex';
+    callBtn.style.alignItems = 'center';
+    callBtn.style.justifyContent = 'center';
+    callBtn.style.padding = '9px 14px';
+    callBtn.style.borderRadius = '10px';
+    callBtn.style.background = '#16a34a';
+    callBtn.style.color = '#fff';
+    callBtn.style.fontWeight = '700';
+    callBtn.style.textDecoration = 'none';
+    callBtn.style.boxShadow = '0 6px 16px rgba(22,163,74,0.22)';
+
+    const emailBtn = document.createElement('a');
+    emailBtn.href = data.client_email ? 'mailto:' + data.client_email : '#';
+    emailBtn.textContent = 'Email Client';
+    emailBtn.style.display = 'inline-flex';
+    emailBtn.style.alignItems = 'center';
+    emailBtn.style.justifyContent = 'center';
+    emailBtn.style.padding = '9px 14px';
+    emailBtn.style.borderRadius = '10px';
+    emailBtn.style.background = '#e2e8f0';
+    emailBtn.style.color = '#0f172a';
+    emailBtn.style.fontWeight = '700';
+    emailBtn.style.textDecoration = 'none';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.border = 'none';
+    closeBtn.style.padding = '9px 14px';
+    closeBtn.style.borderRadius = '10px';
+    closeBtn.style.background = '#14532d';
+    closeBtn.style.color = '#fff';
+    closeBtn.style.fontWeight = '700';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.onclick = function() {
+      overlay.style.display = 'none';
+    };
+
+    actions.appendChild(emailBtn);
+    actions.appendChild(callBtn);
+    actions.appendChild(closeBtn);
+
+    body.appendChild(title);
+    body.appendChild(reminder);
+    body.appendChild(details);
+    body.appendChild(actions);
+
+    card.appendChild(header);
+    card.appendChild(body);
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) {
+        overlay.style.display = 'none';
+      }
+    });
+    document.body.appendChild(overlay);
+  }
+
+  overlay.style.display = 'flex';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  if (approvalCallPopup) {
+    showApprovalCallPopup(approvalCallPopup);
+  }
+});
 </script>
 
 <script src="assets/js/alert-modal.js"></script>

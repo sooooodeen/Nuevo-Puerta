@@ -4,6 +4,7 @@ session_start();
 require_once __DIR__ . '/../vendor/phpmailer/src/PHPMailer.php';
 require_once __DIR__ . '/../vendor/phpmailer/src/SMTP.php';
 require_once __DIR__ . '/../vendor/phpmailer/src/Exception.php';
+require_once __DIR__ . '/../includes/email_branding.php';
 
 function columnExists(mysqli $conn, string $table, string $column): bool {
     $safeTable = $conn->real_escape_string($table);
@@ -30,14 +31,19 @@ function sendVerificationEmail(string $recipientEmail, string $recipientName, st
 
         $safeName = htmlspecialchars($recipientName !== '' ? $recipientName : 'Customer', ENT_QUOTES, 'UTF-8');
         $safeLink = htmlspecialchars($verificationLink, ENT_QUOTES, 'UTF-8');
-        $mail->Body = "
-            <p>Hello {$safeName},</p>
-            <p>Thank you for creating your Nuevo Puerta account.</p>
-            <p>Please verify your email by clicking the link below:</p>
-            <p><a href=\"{$safeLink}\">Verify my email</a></p>
-            <p>If you did not create this account, you can ignore this email.</p>
-        ";
-        $mail->AltBody = "Hello {$recipientName},\n\nPlease verify your email by opening this link:\n{$verificationLink}\n\nIf you did not create this account, you can ignore this email.";
+        $mail->Body = buildNovoPuertaEmailHtml(
+            'Verify your email address',
+            '<p>Hello ' . $safeName . ',</p>'
+                . '<p>Thank you for creating your Nuevo Puerta account.</p>'
+                . '<p>Please verify your email by clicking the link below:</p>'
+                . '<p><a href="' . $safeLink . '" style="display:inline-block;background:#14532d;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:700;">Verify my email</a></p>'
+                . '<p>If you did not create this account, you can ignore this email.</p>',
+            ['intro' => 'Account verification is required before you can log in.', 'footer_note' => 'If you did not create this account, you can ignore this email.']
+        );
+        $mail->AltBody = buildNovoPuertaEmailAltBody(
+            "Hello {$recipientName},\n\nPlease verify your account: {$verificationLink}",
+            'If you did not create this account, you can ignore this email.'
+        );
 
         $mail->send();
         return true;

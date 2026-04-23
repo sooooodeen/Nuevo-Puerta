@@ -28,6 +28,7 @@ $servername = "localhost"; $username="root"; $password=""; $dbname="nuevopuerta"
 $conn = new mysqli($servername,$username,$password,$dbname);
 if ($conn->connect_error) { http_response_code(500); echo json_encode(['success'=>false,'message'=>'DB connect error']); exit; }
 $conn->set_charset('utf8mb4');
+require_once __DIR__ . '/includes/email_branding.php';
 
 // optional: ensure the logged-in user owns the viewing
 $user_id = (int)$_SESSION['user_id'];
@@ -92,14 +93,23 @@ if ($ok && $affected > 0) {
                 $mail->addReplyTo('carlomallari01471@gmail.com', 'Nuevo Puerta');
                 $mail->addAddress($client_email, $client_name);
 
-                $mail->isHTML(false);
+                $mail->isHTML(true);
                 $mail->Subject = 'Your Viewing Has Been Cancelled';
-                $body = "Dear $client_name,\n\nWe regret to inform you that your scheduled property viewing has been cancelled.";
+                $bodyHtml = '<p>Dear ' . htmlspecialchars($client_name !== '' ? $client_name : 'Client', ENT_QUOTES, 'UTF-8') . ',</p>'
+                    . '<p>We regret to inform you that your scheduled property viewing has been cancelled.</p>';
                 if ($cancellation_reason) {
-                    $body .= "\n\nReason: $cancellation_reason";
+                    $bodyHtml .= '<p><strong>Reason:</strong> ' . htmlspecialchars($cancellation_reason, ENT_QUOTES, 'UTF-8') . '</p>';
                 }
-                $body .= "\n\nViewing Details:\nDate & Time: $preferred_at\n$location_details\n\nIf you have any questions, please contact us.\n\nThank you.";
-                $mail->Body = $body;
+                $bodyHtml .= '<p><strong>Viewing Details:</strong><br>' . nl2br(htmlspecialchars("Date & Time: {$preferred_at}\n{$location_details}", ENT_QUOTES, 'UTF-8')) . '</p>';
+                $bodyHtml .= '<p>If you have any questions, please contact us.</p>';
+                $mail->Body = buildNovoPuertaEmailHtml(
+                    'Your Viewing Has Been Cancelled',
+                    $bodyHtml,
+                    ['intro' => 'Your scheduled property viewing has been cancelled.', 'footer_note' => 'Please keep this email for your records.']
+                );
+                $mail->AltBody = buildNovoPuertaEmailAltBody(
+                    "Dear {$client_name},\n\nYour scheduled property viewing has been cancelled." . ($cancellation_reason ? "\n\nReason: {$cancellation_reason}" : '') . "\n\nViewing Details:\nDate & Time: {$preferred_at}\n{$location_details}\n\nIf you have any questions, please contact us."
+                );
                 $mail->send();
             } catch (\PHPMailer\PHPMailer\Exception $e) {
                 // Log or handle email errors

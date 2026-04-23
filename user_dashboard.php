@@ -5,6 +5,7 @@ session_start();
 require_once __DIR__ . '/vendor/phpmailer/src/PHPMailer.php';
 require_once __DIR__ . '/vendor/phpmailer/src/SMTP.php';
 require_once __DIR__ . '/vendor/phpmailer/src/Exception.php';
+require_once __DIR__ . '/includes/email_branding.php';
 
 // 1. LOGIN CHECK
 if (!isset($_SESSION['user_id'])) {
@@ -49,31 +50,14 @@ function resolveSystemEmailLogoPath(): ?string {
 }
 
 function buildSystemEmailHtml(string $bodyText, ?string $logoSrc = null): string {
-    $safeBody = nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8'));
-    $year = date('Y');
-    $logoHtml = '';
-
-    if ($logoSrc !== null && $logoSrc !== '') {
-        $safeLogo = htmlspecialchars($logoSrc, ENT_QUOTES, 'UTF-8');
-        $logoHtml = "<div style=\"margin-bottom:16px;\"><div style=\"display:inline-block;background:#1f3b2d;border-radius:14px;padding:10px 12px;\"><img src=\"{$safeLogo}\" alt=\"Nuevo Puerta Logo\" style=\"display:block;max-width:190px;height:auto;\"></div></div>";
-    }
-
-    return '<!DOCTYPE html>'
-        . '<html><body style="margin:0;padding:0;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;background:#f6f8fb;">'
-        . '<tr><td align="center">'
-        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
-        . '<tr><td style="padding:22px 24px 14px 24px;">'
-        . $logoHtml
-        . '<div style="font-size:15px;line-height:1.65;">' . $safeBody . '</div>'
-        . '</td></tr>'
-        . '<tr><td style="padding:14px 24px 20px 24px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">'
-        . '&copy; ' . $year . ' Nuevo Puerta Real Estate. All rights reserved.'
-        . '</td></tr>'
-        . '</table>'
-        . '</td></tr>'
-        . '</table>'
-        . '</body></html>';
+    return buildNovoPuertaEmailHtml(
+        'Nuevo Puerta Update',
+        nl2br(htmlspecialchars($bodyText, ENT_QUOTES, 'UTF-8')),
+        [
+            'intro' => 'This is an automated message from Nuevo Puerta Real Estate.',
+            'footer_note' => 'Please keep this email for your records.',
+        ]
+    );
 }
 
 function sendSystemEmailSimple(string $toEmail, string $toName, string $subject, string $body, ?string &$errorInfo = null): bool {
@@ -215,6 +199,241 @@ function prepOrDie(mysqli $conn, string $sql) {
         die("Database Error: " . $conn->error . "<br>SQL: $sql");
     }
     return $stmt;
+}
+
+function ensureLotStatusHistoryTable(mysqli $conn): bool {
+    $sql = "CREATE TABLE IF NOT EXISTS lot_status_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        lot_id INT NOT NULL,
+        event_type VARCHAR(32) NOT NULL,
+        event_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        previous_owner_id INT NULL,
+        previous_owner_name VARCHAR(255) NULL,
+        previous_owner_email VARCHAR(255) NULL,
+        paid_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        refund_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        company_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        remarks TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_lot_status_history_lot (lot_id),
+        INDEX idx_lot_status_history_event (event_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    return (bool)$conn->query($sql);
+}
+
+function fetchLotPaymentSummaries(mysqli $conn, array $lotIds): array {
+    $summary = [];
+    $lotIds = array_values(array_filter($lotIds, static fn($value) => is_numeric($value) && $value > 0));
+    if (empty($lotIds)) {
+        return $summary;
+    }
+
+    $idCsv = implode(',', array_map('intval', $lotIds));
+
+    if (hasTable($conn, 'lot_payment_transactions')) {
+        $sql = "SELECT lot_id, IFNULL(SUM(amount), 0) AS total_paid, MAX(payment_date) AS last_payment_date
+                FROM lot_payment_transactions
+                WHERE lot_id IN ($idCsv)
+                GROUP BY lot_id";
+        $res = $conn->query($sql);
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $lotId = (int)($row['lot_id'] ?? 0);
+                if ($lotId <= 0) {
+                    continue;
+                }
+                $summary[$lotId]['total_paid'] = ($summary[$lotId]['total_paid'] ?? 0.0) + (float)($row['total_paid'] ?? 0);
+                $lastDate = trim((string)($row['last_payment_date'] ?? ''));
+                if ($lastDate !== '') {
+                    $existing = trim((string)($summary[$lotId]['last_payment_date'] ?? ''));
+                    if ($existing === '' || $lastDate > $existing) {
+                        $summary[$lotId]['last_payment_date'] = $lastDate;
+                    }
+                }
+            }
+        }
+    }
+
+    if (hasTable($conn, 'payments')) {
+        $sql = "SELECT lot_id, IFNULL(SUM(amount_paid), 0) AS total_paid, MAX(payment_date) AS last_payment_date
+                FROM payments
+                WHERE lot_id IN ($idCsv)
+                GROUP BY lot_id";
+        $res = $conn->query($sql);
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $lotId = (int)($row['lot_id'] ?? 0);
+                if ($lotId <= 0) {
+                    continue;
+                }
+                $summary[$lotId]['total_paid'] = ($summary[$lotId]['total_paid'] ?? 0.0) + (float)($row['total_paid'] ?? 0);
+                $lastDate = trim((string)($row['last_payment_date'] ?? ''));
+                if ($lastDate !== '') {
+                    $existing = trim((string)($summary[$lotId]['last_payment_date'] ?? ''));
+                    if ($existing === '' || $lastDate > $existing) {
+                        $summary[$lotId]['last_payment_date'] = $lastDate;
+                    }
+                }
+            }
+        }
+    }
+
+    return $summary;
+}
+
+function recordLotHistoryEvent(mysqli $conn, int $lotId, string $eventType, ?int $previousOwnerId, ?string $previousOwnerName, ?string $previousOwnerEmail, float $paidAmount, float $refundAmount, float $companyAmount, string $remarks): bool {
+    if (!ensureLotStatusHistoryTable($conn)) {
+        return false;
+    }
+
+    $previousOwnerName = $previousOwnerName ?? '';
+    $previousOwnerEmail = $previousOwnerEmail ?? '';
+
+    $stmt = prepOrDie($conn, "INSERT INTO lot_status_history (lot_id, event_type, event_date, previous_owner_id, previous_owner_name, previous_owner_email, paid_amount, refund_amount, company_amount, remarks) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param(
+        'isissddds',
+        $lotId,
+        $eventType,
+        $previousOwnerId,
+        $previousOwnerName,
+        $previousOwnerEmail,
+        $paidAmount,
+        $refundAmount,
+        $companyAmount,
+        $remarks
+    );
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function getLotHistoryRows(mysqli $conn, int $lotId): array {
+    $rows = [];
+    if (!hasTable($conn, 'lot_status_history')) {
+        return $rows;
+    }
+
+    $stmt = prepOrDie($conn, "SELECT event_type, event_date, previous_owner_id, previous_owner_name, previous_owner_email, paid_amount, refund_amount, company_amount, remarks, created_at FROM lot_status_history WHERE lot_id = ? ORDER BY event_date DESC, id DESC");
+    $stmt->bind_param('i', $lotId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+    $stmt->close();
+    return $rows;
+}
+
+function autoForfeitOverdueLots(mysqli $conn): array {
+    $overdue = [];
+    if (!hasTable($conn, 'lots') || !hasColumn($conn, 'lots', 'owner_id')) {
+        return $overdue;
+    }
+
+    $lotSql = "SELECT id, owner_id, lot_price, status, payment_type FROM lots WHERE owner_id IS NOT NULL";
+    $result = $conn->query($lotSql);
+    if (!$result) {
+        return $overdue;
+    }
+
+    $candidates = [];
+    while ($lot = $result->fetch_assoc()) {
+        $lotId = (int)($lot['id'] ?? 0);
+        if ($lotId <= 0) {
+            continue;
+        }
+        $candidates[$lotId] = $lot;
+    }
+    $result->free();
+
+    if (empty($candidates)) {
+        return $overdue;
+    }
+
+    $summaries = fetchLotPaymentSummaries($conn, array_keys($candidates));
+    $threshold = new DateTime('today');
+    $threshold->modify('-90 days');
+
+    foreach ($candidates as $lotId => $lot) {
+        $paidAmount = (float)($summaries[$lotId]['total_paid'] ?? 0.0);
+        $lastPaymentDate = trim((string)($summaries[$lotId]['last_payment_date'] ?? ''));
+        $lotPrice = (float)($lot['lot_price'] ?? 0);
+        $remainingBalance = max(0.0, $lotPrice - $paidAmount);
+
+        if ($paidAmount <= 0 || $remainingBalance <= 0 || $lastPaymentDate === '') {
+            continue;
+        }
+
+        try {
+            $lastDate = new DateTime($lastPaymentDate);
+        } catch (Exception $e) {
+            continue;
+        }
+
+        if ($lastDate > $threshold) {
+            continue;
+        }
+
+        $status = strtolower(trim((string)($lot['status'] ?? '')));
+        if (in_array($status, ['paid', 'sold', 'fully paid'], true)) {
+            continue;
+        }
+
+        $ownerId = (int)($lot['owner_id'] ?? 0);
+        $ownerName = '';
+        $ownerEmail = '';
+        if ($ownerId > 0 && hasTable($conn, 'user_accounts') && hasColumn($conn, 'user_accounts', 'email')) {
+            $stmtUser = prepOrDie($conn, "SELECT first_name, last_name, email FROM user_accounts WHERE id = ? LIMIT 1");
+            $stmtUser->bind_param('i', $ownerId);
+            $stmtUser->execute();
+            $userRow = $stmtUser->get_result()->fetch_assoc();
+            $stmtUser->close();
+            if ($userRow) {
+                $ownerName = trim((string)($userRow['first_name'] ?? '') . ' ' . (string)($userRow['last_name'] ?? '')) ?: '';
+                $ownerEmail = trim((string)($userRow['email'] ?? ''));
+            }
+        }
+
+        $refundAmount = round($paidAmount * 0.2, 2);
+        $companyAmount = round($paidAmount - $refundAmount, 2);
+        if (!ensureLotStatusHistoryTable($conn)) {
+            continue;
+        }
+
+        $conn->begin_transaction();
+        $stmtUpdate = prepOrDie($conn, "UPDATE lots SET owner_id = NULL, status = 'Available' WHERE id = ?");
+        $stmtUpdate->bind_param('i', $lotId);
+        $updated = $stmtUpdate->execute();
+        $stmtUpdate->close();
+
+        $historyOk = recordLotHistoryEvent(
+            $conn,
+            $lotId,
+            'forfeiture',
+            $ownerId,
+            $ownerName,
+            $ownerEmail,
+            $paidAmount,
+            $refundAmount,
+            $companyAmount,
+            'Auto-forfeiture after 3 months of payment discontinuation.'
+        );
+
+        if ($updated && $historyOk && $conn->commit()) {
+            $overdue[] = $lotId;
+        } else {
+            $conn->rollback();
+        }
+    }
+
+    return $overdue;
+}
+
+// Automatically apply forfeiture for overdue lots when the dashboard loads.
+if (isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) {
+    autoForfeitOverdueLots($conn);
 }
 
 // >>> PAYMENTS AJAX HANDLER (Handles Pay Now & History) >>>
@@ -517,95 +736,356 @@ if (isset($_GET['action'])) {
         exit;
     }
 
-    // Fetch payment transactions for user's own lots
-    if ($action === 'lot_payments') {
-        $rows = [];
-        if (hasTable($conn, 'lot_payment_transactions')) {
-            $hasLocationJoin = hasTable($conn, 'lot_locations')
-                && hasColumn($conn, 'lots', 'location_id')
-                && hasColumn($conn, 'lot_locations', 'location_name');
+    if ($action === 'mark_notification_read') {
+        try {
+            $raw = file_get_contents('php://input');
+            $data = json_decode($raw, true);
 
-            $sql = "SELECT t.id, t.lot_id, t.amount, t.payment_date, t.payment_method, t.remarks,
-                           l.block_number, l.lot_number" . ($hasLocationJoin ? ", ll.location_name" : "") . ", l.lot_price,
-                           IFNULL(l.payment_amount, 0) AS amount_paid_so_far,
-                           l.payment_deadline, l.payment_type, l.status
-                    FROM lot_payment_transactions t
-                    INNER JOIN lots l ON l.id = t.lot_id" . ($hasLocationJoin ? "\n                    LEFT JOIN lot_locations ll ON ll.id = l.location_id" : "") . "
-                    WHERE (
-                        l.owner_id = ?
-                        OR EXISTS (
-                            SELECT 1
-                            FROM viewings v
-                            WHERE v.lot_id = l.id AND v.client_email = ?
-                        )
-                    )
-                    ORDER BY t.payment_date ASC, t.id ASC
-                    LIMIT 200";
+            $notifId = (int)($data['id'] ?? 0);
+            $source = trim((string)($data['source'] ?? ''));
+
+            if ($notifId <= 0 || ($source !== 'notifications' && $source !== 'user_notifications')) {
+                echo json_encode(['success' => false, 'message' => 'Invalid notification payload.']);
+                exit;
+            }
+
+            if (!hasTable($conn, $source) || !hasColumn($conn, $source, 'is_read')) {
+                echo json_encode(['success' => false, 'message' => 'Notification source does not support read state.']);
+                exit;
+            }
+
+            $whereSql = 'id = ?';
+            $bindTypes = 'i';
+            $bindVals = [$notifId];
+
+            if ($source === 'user_notifications' && hasColumn($conn, 'user_notifications', 'user_id')) {
+                $whereSql .= ' AND user_id = ?';
+                $bindTypes .= 'i';
+                $bindVals[] = $uid;
+            } elseif ($source === 'notifications') {
+                if (hasColumn($conn, 'notifications', 'recipient_type') && hasColumn($conn, 'notifications', 'recipient_id')) {
+                    $whereSql .= ' AND recipient_type = ? AND recipient_id = ?';
+                    $bindTypes .= 'si';
+                    $recipientType = 'user';
+                    $bindVals[] = $recipientType;
+                    $bindVals[] = $uid;
+                } elseif (hasColumn($conn, 'notifications', 'recipient_id')) {
+                    $whereSql .= ' AND recipient_id = ?';
+                    $bindTypes .= 'i';
+                    $bindVals[] = $uid;
+                } elseif (hasColumn($conn, 'notifications', 'user_id')) {
+                    $whereSql .= ' AND user_id = ?';
+                    $bindTypes .= 'i';
+                    $bindVals[] = $uid;
+                }
+            }
+
+            $sql = "UPDATE {$source} SET is_read = 1 WHERE {$whereSql} LIMIT 1";
             $stmt = prepOrDie($conn, $sql);
-            $stmt->bind_param('is', $uid, $userEmailForAccess);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            if ($res) $rows = $res->fetch_all(MYSQLI_ASSOC);
+            $stmt->bind_param($bindTypes, ...$bindVals);
+            $ok = $stmt->execute();
+            $affected = $stmt->affected_rows;
             $stmt->close();
+
+            if (!$ok) {
+                echo json_encode(['success' => false, 'message' => 'Unable to update notification.']);
+                exit;
+            }
+
+            echo json_encode(['success' => true, 'updated' => max(0, (int)$affected)]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
         }
-        echo json_encode(['success' => true, 'transactions' => $rows]);
         exit;
     }
 
-    if ($action === 'installment_plan') {
+    if ($action === 'lot_history') {
         $lotId = (int)($_GET['lot_id'] ?? 0);
-        if ($lotId <= 0) {
+        if ($lotId <= 0 || !hasTable($conn, 'lots')) {
             echo json_encode(['success' => false, 'message' => 'Invalid lot.']);
             exit;
         }
 
-        $lotSql = "SELECT id, block_number, lot_number, lot_price,
-                     IFNULL(payment_amount, 0) AS payment_amount,
-                     IFNULL(down_payment_amount, 0) AS down_payment_amount,
-                     payment_deadline, payment_term_years, payment_due_day,
-                     payment_type, status
-                 FROM lots
-                          WHERE id = ?
-                              AND (
-                                  owner_id = ?
-                                  OR EXISTS (
-                                    SELECT 1
-                                    FROM viewings v
-                                    WHERE v.lot_id = lots.id AND v.client_email = ?
-                                  )
-                              )
-                 LIMIT 1";
-        $stmt = prepOrDie($conn, $lotSql);
-                $stmt->bind_param('iis', $lotId, $uid, $userEmailForAccess);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $plan = $res ? $res->fetch_assoc() : null;
-        $stmt->close();
+        $allowed = false;
+        if (hasColumn($conn, 'lots', 'owner_id')) {
+            $stmtAllowed = prepOrDie($conn, "SELECT 1 FROM lots WHERE id = ? AND owner_id = ? LIMIT 1");
+            $stmtAllowed->bind_param('ii', $lotId, $uid);
+            $stmtAllowed->execute();
+            $allowed = (bool)$stmtAllowed->get_result()->fetch_assoc();
+            $stmtAllowed->close();
+        }
 
-        if (!$plan) {
-            echo json_encode(['success' => false, 'message' => 'Installment plan not found.']);
+        if (!$allowed && $userEmailForAccess !== '' && hasTable($conn, 'viewings') && hasColumn($conn, 'viewings', 'lot_id') && hasColumn($conn, 'viewings', 'client_email')) {
+            $stmtAllowed = prepOrDie($conn, "SELECT 1 FROM viewings WHERE lot_id = ? AND LOWER(TRIM(client_email)) = LOWER(TRIM(?)) LIMIT 1");
+            $stmtAllowed->bind_param('is', $lotId, $userEmailForAccess);
+            $stmtAllowed->execute();
+            $allowed = (bool)$stmtAllowed->get_result()->fetch_assoc();
+            $stmtAllowed->close();
+        }
+
+        if (!$allowed) {
+            echo json_encode(['success' => false, 'message' => 'Unauthorized access to lot history.']);
             exit;
         }
 
-        $transactions = [];
-        if (hasTable($conn, 'lot_payment_transactions')) {
-            $txSql = "SELECT id, amount, payment_date, payment_method, remarks
-                      FROM lot_payment_transactions
-                      WHERE lot_id = ?
-                      ORDER BY payment_date ASC, id ASC";
-            $stmt = prepOrDie($conn, $txSql);
-            $stmt->bind_param('i', $lotId);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            if ($res) {
-                $transactions = $res->fetch_all(MYSQLI_ASSOC);
+        echo json_encode(['success' => true, 'history' => getLotHistoryRows($conn, $lotId)]);
+        exit;
+    }
+
+    if ($action === 'surrender_preview') {
+        $lotId = (int)($_GET['lot_id'] ?? 0);
+        if ($lotId <= 0 || !hasTable($conn, 'lots') || !hasColumn($conn, 'lots', 'owner_id')) {
+            echo json_encode(['success' => false, 'message' => 'Invalid lot preview request.']);
+            exit;
+        }
+
+        $stmtLot = prepOrDie($conn, "SELECT owner_id FROM lots WHERE id = ? LIMIT 1");
+        $stmtLot->bind_param('i', $lotId);
+        $stmtLot->execute();
+        $lotRow = $stmtLot->get_result()->fetch_assoc();
+        $stmtLot->close();
+
+        if (!$lotRow || (int)($lotRow['owner_id'] ?? 0) !== $uid) {
+            echo json_encode(['success' => false, 'message' => 'Lot not owned by current user.']);
+            exit;
+        }
+
+        $summaries = fetchLotPaymentSummaries($conn, [$lotId]);
+        $paidAmount = round((float)($summaries[$lotId]['total_paid'] ?? 0.0), 2);
+        $refundAmount = round($paidAmount * 0.2, 2);
+        $companyAmount = round($paidAmount - $refundAmount, 2);
+
+        echo json_encode([
+            'success' => true,
+            'paid_amount' => $paidAmount,
+            'refund_amount' => $refundAmount,
+            'company_amount' => $companyAmount
+        ]);
+        exit;
+    }
+
+    if ($action === 'surrender_lot') {
+        $raw = file_get_contents('php://input');
+        $data = json_decode($raw, true);
+        $lotId = (int)($data['lot_id'] ?? 0);
+
+        if ($lotId <= 0 || !hasTable($conn, 'lots') || !hasColumn($conn, 'lots', 'owner_id')) {
+            echo json_encode(['success' => false, 'message' => 'Invalid lot surrender request.']);
+            exit;
+        }
+
+        $stmtLot = prepOrDie($conn, "SELECT owner_id, status, payment_type, lot_price FROM lots WHERE id = ? LIMIT 1");
+        $stmtLot->bind_param('i', $lotId);
+        $stmtLot->execute();
+        $lotRow = $stmtLot->get_result()->fetch_assoc();
+        $stmtLot->close();
+
+        if (!$lotRow || (int)($lotRow['owner_id'] ?? 0) !== $uid) {
+            echo json_encode(['success' => false, 'message' => 'Lot not owned by current user.']);
+            exit;
+        }
+
+        $summaries = fetchLotPaymentSummaries($conn, [$lotId]);
+        $paidAmount = round((float)($summaries[$lotId]['total_paid'] ?? 0.0), 2);
+        $refundAmount = round($paidAmount * 0.2, 2);
+        $companyAmount = round($paidAmount - $refundAmount, 2);
+
+        $surrenderReason = trim((string)($data['reason'] ?? ''));
+        $surrenderRemarks = 'Client surrendered lot.';
+        if ($surrenderReason !== '') {
+            $surrenderRemarks .= ' Reason: ' . $surrenderReason . '.';
+        }
+        $surrenderRemarks .= ' 20% refunded to client, company retains 80%. Lot returned to available inventory.';
+
+        $ownerName = '';
+        $ownerEmail = '';
+        if (hasTable($conn, 'user_accounts')) {
+            $stmtUser = prepOrDie($conn, "SELECT first_name, last_name, email FROM user_accounts WHERE id = ? LIMIT 1");
+            $stmtUser->bind_param('i', $uid);
+            $stmtUser->execute();
+            $userRow = $stmtUser->get_result()->fetch_assoc();
+            $stmtUser->close();
+            if ($userRow) {
+                $ownerName = trim((string)($userRow['first_name'] ?? '') . ' ' . (string)($userRow['last_name'] ?? ''));
+                $ownerEmail = trim((string)($userRow['email'] ?? ''));
             }
-            $stmt->close();
+        }
+
+        if (!ensureLotStatusHistoryTable($conn)) {
+            echo json_encode(['success' => false, 'message' => 'Unable to prepare surrender history.']);
+            exit;
+        }
+
+        $conn->begin_transaction();
+        $stmtUpdate = prepOrDie($conn, "UPDATE lots SET owner_id = NULL, status = 'Available' WHERE id = ?");
+        $stmtUpdate->bind_param('i', $lotId);
+        $updateOk = $stmtUpdate->execute();
+        $stmtUpdate->close();
+
+        $historyOk = recordLotHistoryEvent(
+            $conn,
+            $lotId,
+            'surrender',
+            $uid,
+            $ownerName,
+            $ownerEmail,
+            $paidAmount,
+            $refundAmount,
+            $companyAmount,
+            $surrenderRemarks
+        );
+
+        if ($updateOk && $historyOk && $conn->commit()) {
+            echo json_encode(['success' => true, 'message' => 'Lot surrendered successfully.', 'refund_amount' => $refundAmount, 'company_amount' => $companyAmount]);
+        } else {
+            $conn->rollback();
+            echo json_encode(['success' => false, 'message' => 'Failed to surrender lot.']);
+        }
+        exit;
+    }
+
+    // Fetch payment transactions for user's own lots
+    if ($action === 'lot_payments') {
+        $lotId = (int)($_GET['lot_id'] ?? 0);
+        $transactions = [];
+        $lots = [];
+
+        if ($lotId > 0) {
+            $lotSql = "SELECT id, block_number, lot_number, lot_price, payment_type, status, payment_deadline";
+            if (hasColumn($conn, 'lots', 'location_name')) {
+                $lotSql .= ", location_name";
+            }
+            $lotSql .= " FROM lots WHERE id = ? AND owner_id = ? LIMIT 1";
+
+            $stmt = $conn->prepare($lotSql);
+            if ($stmt) {
+                $stmt->bind_param('ii', $lotId, $uid);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                $lot = $res ? $res->fetch_assoc() : null;
+                $stmt->close();
+            } else {
+                $lot = null;
+            }
+
+            if ($lot) {
+                $lots[] = $lot;
+            }
+        } else {
+            if (hasTable($conn, 'lots')) {
+                $lotsSql = "SELECT id, block_number, lot_number, lot_price, payment_type, status, payment_deadline";
+                if (hasColumn($conn, 'lots', 'location_name')) {
+                    $lotsSql .= ", location_name";
+                }
+                $lotsSql .= " FROM lots WHERE owner_id = ? ORDER BY id DESC";
+
+                $stmt = $conn->prepare($lotsSql);
+                if ($stmt) {
+                    $stmt->bind_param('i', $uid);
+                    $stmt->execute();
+                    $res = $stmt->get_result();
+                    $lots = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+                    $stmt->close();
+                }
+            }
+        }
+
+        if (!empty($lots)) {
+            $paymentCols = "id, amount_paid AS amount, payment_date";
+            if (hasColumn($conn, 'payments', 'payment_method')) {
+                $paymentCols .= ", payment_method";
+            } else {
+                $paymentCols .= ", '' AS payment_method";
+            }
+            if (hasColumn($conn, 'payments', 'remarks')) {
+                $paymentCols .= ", remarks";
+            } else {
+                $paymentCols .= ", '' AS remarks";
+            }
+
+            $paymentsSql = "SELECT {$paymentCols} FROM payments WHERE lot_id = ? ORDER BY payment_date ASC, id ASC";
+            $legacySql = "SELECT id, amount, payment_date, payment_method, remarks FROM lot_payment_transactions WHERE lot_id = ?";
+            $legacyHasUserId = hasColumn($conn, 'lot_payment_transactions', 'user_id');
+            if ($legacyHasUserId) {
+                $legacySql .= " AND user_id = ?";
+            }
+            $legacySql .= " ORDER BY payment_date ASC, id ASC";
+
+            foreach ($lots as $lot) {
+                $lotIdValue = (int)($lot['id'] ?? 0);
+                if ($lotIdValue <= 0) {
+                    continue;
+                }
+
+                $combinedPayments = [];
+
+                if (hasTable($conn, 'payments')) {
+                    $stmt = $conn->prepare($paymentsSql);
+                    if ($stmt) {
+                        $stmt->bind_param('i', $lotIdValue);
+                        $stmt->execute();
+                        $res = $stmt->get_result();
+                        $payments = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+                        $stmt->close();
+                        $combinedPayments = array_merge($combinedPayments, $payments);
+                    }
+                }
+
+                if (hasTable($conn, 'lot_payment_transactions')) {
+                    $stmt = $conn->prepare($legacySql);
+                    if ($stmt) {
+                        if ($legacyHasUserId) {
+                            $stmt->bind_param('ii', $lotIdValue, $uid);
+                        } else {
+                            $stmt->bind_param('i', $lotIdValue);
+                        }
+                        $stmt->execute();
+                        $res = $stmt->get_result();
+                        $legacyPayments = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+                        $stmt->close();
+                        $combinedPayments = array_merge($combinedPayments, $legacyPayments);
+                    }
+                }
+
+                if (empty($combinedPayments)) {
+                    continue;
+                }
+
+                usort($combinedPayments, function($a, $b) {
+                    $aDate = $a['payment_date'] ?? '';
+                    $bDate = $b['payment_date'] ?? '';
+                    if ($aDate === $bDate) {
+                        return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+                    }
+                    return strcmp($aDate, $bDate);
+                });
+
+                $runningTotal = 0;
+                foreach ($combinedPayments as $payment) {
+                    $amount = (float)($payment['amount'] ?? 0);
+                    $runningTotal += $amount;
+                    $transactions[] = [
+                        'id' => (int)($payment['id'] ?? 0),
+                        'lot_id' => $lotIdValue,
+                        'block_number' => $lot['block_number'] ?? '',
+                        'lot_number' => $lot['lot_number'] ?? '',
+                        'location_name' => $lot['location_name'] ?? '',
+                        'lot_price' => (float)($lot['lot_price'] ?? 0),
+                        'payment_type' => $lot['payment_type'] ?? '',
+                        'status' => $lot['status'] ?? '',
+                        'payment_deadline' => $lot['payment_deadline'] ?? '',
+                        'amount_paid_so_far' => $runningTotal,
+                        'amount' => $amount,
+                        'payment_date' => $payment['payment_date'] ?? '',
+                        'payment_method' => $payment['payment_method'] ?? '',
+                        'remarks' => $payment['remarks'] ?? ''
+                    ];
+                }
+            }
         }
 
         echo json_encode([
             'success' => true,
-            'plan' => $plan,
             'transactions' => $transactions
         ]);
         exit;
@@ -1058,9 +1538,11 @@ if (hasTable($conn,'viewings')) {
 
 if (hasTable($conn, 'notifications')) {
     $selectCols = [];
+    if (hasColumn($conn, 'notifications', 'id')) $selectCols[] = 'id';
     if (hasColumn($conn, 'notifications', 'title')) $selectCols[] = 'title';
     if (hasColumn($conn, 'notifications', 'message')) $selectCols[] = 'message';
     if (hasColumn($conn, 'notifications', 'type')) $selectCols[] = 'type';
+    if (hasColumn($conn, 'notifications', 'is_read')) $selectCols[] = 'is_read';
     if (hasColumn($conn, 'notifications', 'created_at')) $selectCols[] = 'created_at';
 
     if (!empty($selectCols)) {
@@ -1091,6 +1573,10 @@ if (hasTable($conn, 'notifications')) {
             $res = $stmt->get_result();
             if ($res) {
                 $systemNotifications = $res->fetch_all(MYSQLI_ASSOC);
+                foreach ($systemNotifications as &$notification) {
+                    $notification['notif_source'] = 'notifications';
+                }
+                unset($notification);
             }
             $stmt->close();
         }
@@ -1099,6 +1585,7 @@ if (hasTable($conn, 'notifications')) {
 
 if (empty($systemNotifications) && hasTable($conn, 'user_notifications')) {
     $selectCols = [];
+    if (hasColumn($conn, 'user_notifications', 'id')) $selectCols[] = 'id';
     if (hasColumn($conn, 'user_notifications', 'title')) $selectCols[] = 'title';
     if (hasColumn($conn, 'user_notifications', 'message')) $selectCols[] = 'message';
     if (hasColumn($conn, 'user_notifications', 'type')) $selectCols[] = 'type';
@@ -1114,6 +1601,10 @@ if (empty($systemNotifications) && hasTable($conn, 'user_notifications')) {
         $res = $stmt->get_result();
         if ($res) {
             $systemNotifications = $res->fetch_all(MYSQLI_ASSOC);
+            foreach ($systemNotifications as &$notification) {
+                $notification['notif_source'] = 'user_notifications';
+            }
+            unset($notification);
         }
         $stmt->close();
     }
@@ -2518,6 +3009,10 @@ tbody tr:hover { background:#f9fbfd; }
                                 <?php if ($hasLotContract): ?>
                                 <button class="btn btn-primary" onclick='openLotContractModal(<?php echo (int)$lotId; ?>, <?php echo json_encode((string)$lotLabel, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>View Contract</button>
                                 <?php endif; ?>
+                                <button class="btn btn-secondary" onclick='openLotHistoryModal(<?php echo (int)$lotId; ?>, <?php echo json_encode((string)$lotLabel, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>View History</button>
+                                <?php if ($remainingBalance > 0 && !in_array($effectiveStatus, ['available', 'paid', 'sold'], true)): ?>
+                                <button class="btn btn-danger" onclick='openSurrenderModal(<?php echo (int)$lotId; ?>, <?php echo json_encode((string)$lotLabel, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>Surrender Lot</button>
+                                <?php endif; ?>
 
                                 <?php
                                     $tvLotId = (int)($lot['id'] ?? 0);
@@ -2737,6 +3232,11 @@ tbody tr:hover { background:#f9fbfd; }
                 <ul class="notification-list">
                     <?php if(!empty($systemNotifications)): ?>
                         <?php foreach($systemNotifications as $n): ?>
+                        <?php
+                            $isRead = array_key_exists('is_read', $n) ? ((int)($n['is_read'] ?? 0) === 1) : false;
+                            $notifId = (int)($n['id'] ?? 0);
+                            $notifSource = (string)($n['notif_source'] ?? '');
+                        ?>
                         <li class="notif-item">
                             <div class="notif-icon"><i class="fa fa-bell"></i></div>
                             <div class="notif-content">
@@ -2744,6 +3244,17 @@ tbody tr:hover { background:#f9fbfd; }
                                 <span><?php echo h($n['message'] ?? ''); ?></span>
                                 <?php if (!empty($n['created_at'])): ?>
                                     <small style="display:block; color:var(--muted); margin-top:4px;"><?php echo h(date('F d, Y h:i A', strtotime($n['created_at']))); ?></small>
+                                <?php endif; ?>
+                                <?php if ($notifId > 0 && $notifSource !== ''): ?>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary notif-view-btn"
+                                        style="margin-top:8px; padding:6px 10px; font-size:12px;"
+                                        onclick="viewNotificationMessage(this, <?php echo $notifId; ?>, '<?php echo h($notifSource); ?>')"
+                                        <?php echo $isRead ? 'disabled' : ''; ?>
+                                    >
+                                        <?php echo $isRead ? 'Viewed' : 'View Message'; ?>
+                                    </button>
                                 <?php endif; ?>
                             </div>
                         </li>
@@ -2940,6 +3451,51 @@ tbody tr:hover { background:#f9fbfd; }
         </div>
     </div>
 
+    <div id="lotHistoryModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Lot History</h3>
+                <button class="modal-close-btn" onclick="closeLotHistoryModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="lot-history-header" style="font-size:15px; font-weight:700; color:var(--green); margin-bottom:12px;"></div>
+                <div id="lot-history-loading" style="padding:14px 0; color:#64748b;">Loading history...</div>
+                <div id="lot-history-empty" style="display:none; padding:14px 0; color:#64748b;">No history records found.</div>
+                <div id="lot-history-content" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLotHistoryModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="surrenderModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Surrender Lot</h3>
+                <button class="modal-close-btn" onclick="closeSurrenderModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="surrender-modal-lot-label" style="font-size:16px; font-weight:700; color:var(--green); margin-bottom:14px;"></div>
+                <p style="margin-bottom:16px; color:var(--muted);">You are about to surrender this lot. Ownership will be returned to inventory, 20% of the amount paid will be refunded to you, and the lot will become available for a new buyer.</p>
+                <div style="background:#f8fafc; border:1px solid #c7d2fe; border-radius:12px; padding:16px; margin-bottom:16px;">
+                    <div style="font-size:12px; color:#475569; margin-bottom:8px;">Estimated Refund</div>
+                    <div id="surrender-modal-refund-amount" style="font-size:22px; font-weight:700; color:#0f172a;">₱0.00</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:8px;">Company retains 80% of the amount paid. This action is final.</div>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label for="surrender-reason" style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:8px;">Reason for surrender</label>
+                    <textarea id="surrender-reason" rows="4" style="width:100%; border:1px solid #cbd5e1; border-radius:10px; padding:12px; font-size:14px; color:#111827; resize:vertical;" placeholder="Explain why you need to surrender this lot."></textarea>
+                </div>
+                <div id="surrender-modal-warning" style="color:#b91c1c; font-size:13px; font-weight:600;">This action cannot be undone. Proceed only if you want to return the lot to inventory.</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSurrenderModal()">Cancel</button>
+                <button id="confirm-surrender-btn" class="btn btn-danger" onclick="confirmSurrender()">Confirm Surrender</button>
+            </div>
+        </div>
+    </div>
+
     <!-- New Viewing Request Modal -->
     <div id="newViewingModal" class="modal-overlay" style="display:none;">
         <div class="modal-content" style="max-width:520px;">
@@ -3003,11 +3559,6 @@ let activeLotContractDocs = [];
 function switchTab(id, link) {
     // Prevent default anchor link behavior (which causes scrolling)
     event.preventDefault();
-
-    if (id === 'notifications') {
-        const badge = document.getElementById('user-notifications-badge');
-        if (badge) badge.style.display = 'none';
-    }
     
     // Hide all sections
     document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
@@ -3018,6 +3569,45 @@ function switchTab(id, link) {
     document.getElementById(id).classList.add('active');
     // Activate clicked link
     link.classList.add('active');
+}
+
+function viewNotificationMessage(button, notifId, source) {
+    const id = Number(notifId || 0);
+    const src = String(source || '').trim();
+    if (!button || !id || !src) return;
+
+    fetch('?action=mark_notification_read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, source: src })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data || !data.success) {
+            return;
+        }
+
+        button.textContent = 'Viewed';
+        button.disabled = true;
+
+        const badge = document.getElementById('user-notifications-badge');
+        if (badge) {
+            const current = String(badge.textContent || '').trim();
+            let value = current.endsWith('+') ? 99 : parseInt(current, 10);
+            if (!Number.isFinite(value)) value = 0;
+            value = Math.max(0, value - 1);
+
+            if (value <= 0) {
+                badge.style.display = 'none';
+            } else {
+                badge.textContent = value > 99 ? '99+' : String(value);
+                badge.style.display = 'inline-flex';
+            }
+        }
+    })
+    .catch(() => {
+        // Keep existing UI state if request fails.
+    });
 }
 
 function sendAgentMessage() {
@@ -3586,6 +4176,156 @@ function closeInstallmentDetailsModal() {
     }
 }
 
+let surrenderLotContext = { lotId: 0 };
+
+function openLotHistoryModal(lotId, lotLabel = 'Property') {
+    const modal = document.getElementById('lotHistoryModal');
+    const header = document.getElementById('lot-history-header');
+    const loading = document.getElementById('lot-history-loading');
+    const empty = document.getElementById('lot-history-empty');
+    const content = document.getElementById('lot-history-content');
+
+    if (!modal || !header || !loading || !empty || !content) {
+        return;
+    }
+
+    header.textContent = lotLabel;
+    loading.style.display = 'block';
+    empty.style.display = 'none';
+    content.style.display = 'none';
+    content.innerHTML = '';
+    modal.classList.add('active');
+
+    fetch(`user_dashboard.php?action=lot_history&lot_id=${Number(lotId)}&_ts=${Date.now()}`, { cache: 'no-store' })
+        .then(r => r.text())
+        .then(text => {
+            const data = parseJsonFromResponseText(text);
+            loading.style.display = 'none';
+            if (!data || !data.success || !Array.isArray(data.history)) {
+                empty.textContent = 'Unable to load lot history.';
+                empty.style.display = 'block';
+                return;
+            }
+
+            if (data.history.length === 0) {
+                empty.textContent = 'No history records found for this lot.';
+                empty.style.display = 'block';
+                return;
+            }
+
+            content.style.display = 'block';
+            content.innerHTML = data.history.map(entry => {
+                const paidAmount = formatPeso(entry.paid_amount || 0);
+                const refundAmount = formatPeso(entry.refund_amount || 0);
+                const companyAmount = formatPeso(entry.company_amount || 0);
+                const eventDate = entry.event_date ? entry.event_date : entry.created_at;
+                return `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px; background:#ffffff;">
+                        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:10px;">
+                            <div>
+                                <div style="font-size:14px; font-weight:700; color:#111827; text-transform:capitalize;">${escHtml(entry.event_type || 'Event')}</div>
+                                <div style="font-size:12px; color:#64748b; margin-top:4px;">${escHtml(String(eventDate || 'Unknown date'))}</div>
+                            </div>
+                            <div style="font-size:12px; color:#475569; text-align:right;">
+                                <div>Paid: ${escHtml(paidAmount)}</div>
+                                <div>Refund: ${escHtml(refundAmount)}</div>
+                                <div>Company: ${escHtml(companyAmount)}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:13px; color:#334155; margin-bottom:8px;">${escHtml(entry.remarks || '')}</div>
+                        <div style="font-size:12px; color:#475569;">Previous owner: ${escHtml(entry.previous_owner_name || 'N/A')}</div>
+                    </div>
+                `;
+            }).join('');
+        })
+        .catch(() => {
+            loading.style.display = 'none';
+            empty.textContent = 'Unable to load lot history.';
+            empty.style.display = 'block';
+        });
+}
+
+function closeLotHistoryModal() {
+    const modal = document.getElementById('lotHistoryModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+function openSurrenderModal(lotId, lotLabel = 'Property') {
+    const modal = document.getElementById('surrenderModal');
+    const labelEl = document.getElementById('surrender-modal-lot-label');
+    const refundEl = document.getElementById('surrender-modal-refund-amount');
+    const reasonEl = document.getElementById('surrender-reason');
+    if (!modal || !labelEl || !refundEl || !reasonEl) {
+        return;
+    }
+    surrenderLotContext.lotId = Number(lotId) || 0;
+    labelEl.textContent = lotLabel;
+    refundEl.textContent = '₱0.00';
+    reasonEl.value = '';
+
+    if (surrenderLotContext.lotId > 0) {
+        fetch(`user_dashboard.php?action=surrender_preview&lot_id=${surrenderLotContext.lotId}&_ts=${Date.now()}`, { cache: 'no-store' })
+            .then(r => r.text())
+            .then(text => {
+                const data = parseJsonFromResponseText(text);
+                if (!data || !data.success) {
+                    refundEl.textContent = '₱0.00';
+                    return;
+                }
+                refundEl.textContent = formatPeso(Number(data.refund_amount || 0));
+            })
+            .catch(() => {
+                refundEl.textContent = '₱0.00';
+            });
+    }
+
+    modal.classList.add('active');
+}
+
+function closeSurrenderModal() {
+    const modal = document.getElementById('surrenderModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+function confirmSurrender() {
+    const button = document.getElementById('confirm-surrender-btn');
+    const reasonEl = document.getElementById('surrender-reason');
+    if (!button || !reasonEl || !surrenderLotContext.lotId) {
+        return;
+    }
+    button.disabled = true;
+    button.textContent = 'Processing...';
+
+    const surrenderReason = reasonEl.value.trim();
+
+    fetch('user_dashboard.php?action=surrender_lot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lot_id: surrenderLotContext.lotId, reason: surrenderReason })
+    })
+        .then(r => r.text())
+        .then(text => {
+            const data = parseJsonFromResponseText(text);
+            button.disabled = false;
+            button.textContent = 'Confirm Surrender';
+            if (!data || !data.success) {
+                alert(data?.message || 'Unable to surrender the lot.');
+                return;
+            }
+            closeSurrenderModal();
+            window.location.reload();
+        })
+        .catch(() => {
+            button.disabled = false;
+            button.textContent = 'Confirm Surrender';
+            alert('Unable to surrender the lot.');
+        });
+}
+
 function openLotContractModal(lotId, lotLabel = 'Property') {
     const modal = document.getElementById('lotContractModal');
     const titleEl = document.getElementById('lot-contract-title');
@@ -4013,6 +4753,8 @@ document.addEventListener('keydown', function(e) {
         closeInstallmentDetailsModal();
         closeMessageModal();
         closeLotContractModal();
+        closeLotHistoryModal();
+        closeSurrenderModal();
     }
 });
 
@@ -4021,6 +4763,8 @@ document.addEventListener('click', function(e) {
     const installmentModal = document.getElementById('installmentDetailsModal');
     const modal = document.getElementById('messageModal');
     const lotContractModal = document.getElementById('lotContractModal');
+    const lotHistoryModal = document.getElementById('lotHistoryModal');
+    const surrenderModal = document.getElementById('surrenderModal');
     if (e.target === installmentModal) {
         closeInstallmentDetailsModal();
     }
@@ -4029,6 +4773,12 @@ document.addEventListener('click', function(e) {
     }
     if (e.target === lotContractModal) {
         closeLotContractModal();
+    }
+    if (e.target === lotHistoryModal) {
+        closeLotHistoryModal();
+    }
+    if (e.target === surrenderModal) {
+        closeSurrenderModal();
     }
 });
 
