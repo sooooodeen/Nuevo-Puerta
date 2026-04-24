@@ -145,18 +145,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $account_number = 'USR-' . uniqid();
             }
 
-            $stmt = $conn->prepare("SELECT id FROM user_accounts WHERE username = ? OR email = ? LIMIT 1");
-            $stmt->bind_param('ss', $username, $email);
+            // Check username
+            $stmt = $conn->prepare("SELECT id FROM user_accounts WHERE username = ? LIMIT 1");
+            $stmt->bind_param('s', $username);
             $stmt->execute();
             $res = $stmt->get_result();
             if ($res && $res->num_rows > 0) {
-                $errors[] = 'Username or email already taken.';
-            } else {
+                $errors[] = 'Username already taken.';
+            }
+            $stmt->close();
+            $stmt = null;
+
+            // Check email
+            $stmt = $conn->prepare("SELECT id FROM user_accounts WHERE email = ? LIMIT 1");
+            $stmt->bind_param('s', $email);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            if ($res && $res->num_rows > 0) {
+                $errors[] = 'Email already taken.';
+            }
+            $stmt->close();
+            $stmt = null;
+
+            if (empty($errors)) {
                 $hash = password_hash($password, PASSWORD_DEFAULT);
                 $verificationToken = bin2hex(random_bytes(32));
                 $ins = $conn->prepare("INSERT INTO user_accounts (account_number, first_name, middle_name, last_name, username, email, password, mobile_number, address, email_verified, email_verified_at, email_verification_token, email_verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NOW())");
                 $ins->bind_param('ssssssssss', $account_number, $first_name, $middle_name, $last_name, $username, $email, $hash, $mobile, $address, $verificationToken);
-                
+
                 if ($ins->execute()) {
                     $user_id = $conn->insert_id;
 
@@ -178,11 +194,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $ins->close();
                         if (isset($stmt) && $stmt instanceof mysqli_stmt) {
                             $stmt->close();
+                            $stmt = null;
                         }
                         $errors[] = 'Unable to send verification email right now. Please try registering again in a few minutes.';
                     } else {
                         $ins->close();
-                        if (isset($stmt) && $stmt instanceof mysqli_stmt) { $stmt->close(); }
+                        if (isset($stmt) && $stmt instanceof mysqli_stmt) {
+                            $stmt->close();
+                            $stmt = null;
+                        }
                         $_SESSION['pending_verification_email'] = $email;
                         $_SESSION['pending_verification_name'] = trim($first_name . ' ' . $last_name);
 

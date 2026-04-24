@@ -2765,11 +2765,96 @@ tbody tr:hover { background:#f9fbfd; }
                         <span>Balance Due</span>
                     </div>
                 </div>
-                <div class="stat-card stat-card-next-payment" style="cursor:pointer;" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">
+                <div class="stat-card stat-card-next-payment" style="cursor:pointer; position:relative;" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">
                     <div class="stat-icon" style="background:#dcfce7; color:#166534;"><i class="fa fa-wallet"></i></div>
-                    <div class="stat-info">
+                    <div class="stat-info" style="width:100%">
                         <h3><?php echo h($nextPaymentCardAmount); ?></h3>
                         <span>Next Payment <?php echo !empty($nextPaymentCardDate) ? '(Due: ' . h($nextPaymentCardDate) . ')' : ''; ?></span>
+                        <?php if (!empty($downPaymentDeadlines) && count($downPaymentDeadlines) > 1): ?>
+                        <div style="margin-top:10px; position:relative;">
+                            <button type="button" id="showAllLotsBtn" class="show-all-lots-btn">Show all lots <span class="dropdown-arrow">▼</span></button>
+                            <div class="next-payments-dropdown" id="nextPaymentsDropdown">
+                                <?php foreach($downPaymentDeadlines as $d): ?>
+                                    <div class="next-payment-lot-row">
+                                        <strong><?php echo h($d['lot_label']); ?></strong><br>
+                                        <span>Due: <?php echo h($d['date']); ?></span><br>
+                                        <span>Amount: ₱<?php echo number_format((float)$d['amount'], 2); ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <script>
+                        (function(){
+                            var btn = document.getElementById('showAllLotsBtn');
+                            var dropdown = document.getElementById('nextPaymentsDropdown');
+                            if(btn && dropdown) {
+                                btn.addEventListener('click', function(e){
+                                    e.stopPropagation();
+                                    var isOpen = dropdown.style.display === 'block';
+                                    dropdown.style.display = isOpen ? 'none' : 'block';
+                                    btn.querySelector('.dropdown-arrow').textContent = isOpen ? '▼' : '▲';
+                                });
+                                document.addEventListener('click', function(e){
+                                    if(dropdown.style.display === 'block' && !btn.contains(e.target) && !dropdown.contains(e.target)) {
+                                        dropdown.style.display = 'none';
+                                        btn.querySelector('.dropdown-arrow').textContent = '▼';
+                                    }
+                                });
+                            }
+                        })();
+                        </script>
+                        <style>
+                        .show-all-lots-btn {
+                            background: #f1f5f9;
+                            border: 1px solid #cbd5e1;
+                            color: #166534;
+                            font-size: 13.5px;
+                            font-weight: 600;
+                            border-radius: 7px;
+                            padding: 6px 18px 6px 14px;
+                            cursor: pointer;
+                            transition: background 0.18s, border 0.18s;
+                            outline: none;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 6px;
+                            box-shadow: 0 1px 4px rgba(22,101,52,0.04);
+                        }
+                        .show-all-lots-btn:hover, .show-all-lots-btn:focus {
+                            background: #e0f2fe;
+                            border-color: #38bdf8;
+                        }
+                        .show-all-lots-btn .dropdown-arrow {
+                            font-size: 15px;
+                            transition: transform 0.2s;
+                        }
+                        .next-payments-dropdown {
+                            display: none;
+                            position: absolute;
+                            z-index: 10;
+                            left: 0;
+                            top: 110%;
+                            background: #fff;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 10px;
+                            box-shadow: 0 2px 12px rgba(0,0,0,0.10);
+                            min-width: 230px;
+                            max-width: 340px;
+                            max-height: 260px;
+                            overflow-y: auto;
+                            padding: 0;
+                        }
+                        .next-payment-lot-row {
+                            padding: 10px 16px 8px 16px;
+                            border-bottom: 1px solid #f3f4f6;
+                            font-size: 13.5px;
+                            white-space: normal;
+                        }
+                        .next-payment-lot-row:last-child {
+                            border-bottom: none;
+                        }
+                        </style>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
