@@ -2279,6 +2279,163 @@
     }
 
     // =====================================================
+    // SEND PAYMENT REMINDER (AJAX: POST action=send_payment_reminder)
+    // =====================================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['action']) && $_POST['action'] === 'send_payment_reminder') {
+      header('Content-Type: application/json');
+
+      $lot_id = intval($_POST['lot_id'] ?? 0);
+      if (!$lot_id) {
+        echo json_encode(['success' => false, 'error' => 'Invalid lot ID']);
+        exit;
+      }
+
+      $lotQuery = "SELECT id, owner_id, lot_price, payment_due_day, payment_type, payment_amount, payment_deadline, payment_term_years, down_payment_amount FROM lots WHERE id = $lot_id LIMIT 1";
+      $lotResult = mysqli_query($conn, $lotQuery);
+      $lot = $lotResult ? mysqli_fetch_assoc($lotResult) : null;
+      if (!$lot) {
+        echo json_encode(['success' => false, 'error' => 'Lot not found']);
+        exit;
+      }
+
+      $sumQuery = "SELECT IFNULL(SUM(amount),0) AS total_paid FROM lot_payment_transactions WHERE lot_id = $lot_id";
+      $sumResult = mysqli_query($conn, $sumQuery);
+      $sumRow = $sumResult ? mysqli_fetch_assoc($sumResult) : ['total_paid' => 0];
+      $totalPaid = (float)($sumRow['total_paid'] ?? 0);
+      $lotPrice = (float)($lot['lot_price'] ?? 0);
+      $downPaymentAmount = (float)($lot['down_payment_amount'] ?? 0);
+      $balanceDue = max(0, $lotPrice - $totalPaid);
+
+      // Calculate upcoming due date
+      $dueDate = null;
+      $dueAmount = 0;
+      $paymentType = trim((string)($lot['payment_type'] ?? ''));
+      $dueDay = (int)($lot['payment_due_day'] ?? 0);
+      $deadline = trim((string)($lot['payment_deadline'] ?? ''));
+      $termYears = (int)($lot['payment_term_years'] ?? 0);
+      $monthlyAmount = (float)($lot['payment_amount'] ?? 0);
+
+      if ($dueDay > 0 && ($paymentType === 'Down Payment' || $paymentType === 'Installment')) {
+        // For installments, calculate next due date
+        $anchorDate = null;
+        if ($deadline !== '') {
+          $anchorDate = date_create_from_format('Y-m-d', $deadline);
+        }
+        if (!$anchorDate) {
+          $anchorDate = new DateTime();
+        }
+
+        $monthlyPaidTotal = max(0, $totalPaid - $downPaymentAmount);
+        $paidMonthsCount = $monthlyAmount > 0 ? floor($monthlyPaidTotal / $monthlyAmount) : 0;
+
+        $nextMonthIndex = $paidMonthsCount + 1;
+        $dueDate = clone $anchorDate;
+        $dueDate->modify("+$nextMonthIndex months");
+        $lastDayOfDueMonth = (int)$dueDate->format('t');
+        $dueDate->setDate((int)$dueDate->format('Y'), (int)$dueDate->format('n'), min($dueDay, $lastDayOfDueMonth));
+
+        $dueAmount = $monthlyAmount;
+      } elseif ($deadline !== '') {
+        $dueDate = date_create_from_format('Y-m-d', $deadline);
+        $dueAmount = $balanceDue;
+      }
+
+      if (!$dueDate) {
+        echo json_encode(['success' => false, 'error' => 'No upcoming due date found']);
+        exit;
+      }
+
+      $recipientSql = "
+        SELECT
+          l.owner_id,
+          l.block_number,
+          l.lot_number,
+          ll.location_name,
+          COALESCE(
+            NULLIF(TRIM(CONCAT(IFNULL(u.first_name, ''), ' ', IFNULL(u.last_name, ''))), ''),
+            NULLIF(TRIM(rv.reserved_client_name), ''),
+            NULLIF(TRIM(rv_any.client_name), '')
+          ) AS recipient_name,
+          COALESCE(
+            NULLIF(TRIM(u.email), ''),
+            NULLIF(TRIM(rv.reserved_client_email), ''),
+            NULLIF(TRIM(rv_any.client_email), '')
+          ) AS recipient_email
+        FROM lots l
+        LEFT JOIN (
+          SELECT
+            v.lot_id,
+            TRIM(CONCAT(IFNULL(v.client_first_name, ''), ' ', IFNULL(v.client_middle_name, ''), ' ', IFNULL(v.client_last_name, ''))) AS reserved_client_name,
+            v.client_email AS reserved_client_email
+          FROM viewings v
+          INNER JOIN (
+            SELECT lot_id, MAX(id) AS latest_viewing_id
+            FROM viewings
+            WHERE status IN ('scheduled', 'approved')
+            GROUP BY lot_id
+          ) latest_v ON latest_v.latest_viewing_id = v.id
+        ) rv ON rv.lot_id = l.id
+        LEFT JOIN (
+          SELECT
+            v2.lot_id,
+            TRIM(CONCAT(IFNULL(v2.client_first_name, ''), ' ', IFNULL(v2.client_middle_name, ''), ' ', IFNULL(v2.client_last_name, ''))) AS client_name,
+            v2.client_email AS client_email
+          FROM viewings v2
+          INNER JOIN (
+            SELECT lot_id, MAX(id) AS latest_viewing_id
+            FROM viewings
+            GROUP BY lot_id
+          ) latest_any ON latest_any.latest_viewing_id = v2.id
+        ) rv_any ON rv_any.lot_id = l.id
+        LEFT JOIN lot_locations ll ON ll.id = l.location_id
+        LEFT JOIN user_accounts u ON u.id = l.owner_id
+        WHERE l.id = $lot_id
+        LIMIT 1";
+      $recipientRes = mysqli_query($conn, $recipientSql);
+      $recipient = $recipientRes ? mysqli_fetch_assoc($recipientRes) : null;
+
+      $emailSent = false;
+      $emailError = '';
+
+      if ($recipient) {
+        $locationName = trim((string)($recipient['location_name'] ?? ''));
+        $lotLabel = 'Block ' . (string)($recipient['block_number'] ?? 'N/A') . ', Lot ' . (string)($recipient['lot_number'] ?? 'N/A');
+        if ($locationName !== '') {
+          $lotLabel .= ' (' . $locationName . ')';
+        }
+
+        $formattedAmountDue = number_format($dueAmount, 2);
+        $formattedTotalPaid = number_format($totalPaid, 2);
+        $formattedBalance = number_format($balanceDue, 2);
+        $dueDateDisplay = $dueDate->format('F j, Y');
+
+        $recipientEmail = trim((string)($recipient['recipient_email'] ?? ''));
+        if ($recipientEmail !== '') {
+          $recipientName = trim((string)($recipient['recipient_name'] ?? ''));
+          $mailSubject = 'Nuevo Puerta Payment Reminder';
+          $mailBody = "Hello " . ($recipientName !== '' ? $recipientName : 'Client') . ",\n\n"
+            . "This is a reminder for your upcoming payment.\n"
+            . "Lot: {$lotLabel}\n"
+            . "Amount Due: PHP {$formattedAmountDue}\n"
+            . "Due Date: {$dueDateDisplay}\n"
+            . "Total Paid: PHP {$formattedTotalPaid}\n"
+            . "Remaining Balance: PHP {$formattedBalance}\n\n"
+            . "Thank you,\nNuevo Puerta";
+
+          $emailSent = sendSystemEmail($recipientEmail, $recipientName, $mailSubject, $mailBody, $emailError);
+        }
+      }
+
+      echo json_encode([
+        'success' => $emailSent,
+        'email_sent' => $emailSent,
+        'email_error' => $emailSent ? null : ($emailError !== '' ? $emailError : 'No recipient email found')
+      ]);
+      exit;
+    }
+
+    // =====================================================
     // MARK TURNOVER COMPLETE (AJAX: POST action=mark_turnover_complete)
     // =====================================================
     if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
@@ -6654,11 +6811,40 @@
       }
 
       .payments-table td {
-        padding: 13px 14px;
+        padding: 14px 16px;
         font-size: 13px;
         color: #2f3b33;
         border-bottom: 1px solid #edf2ee;
         vertical-align: middle;
+      }
+
+      .payments-table thead th {
+        border-bottom: 2px solid #d9e4db;
+        background: #f7faf6;
+        color: #3a4b40;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        padding: 16px 16px;
+      }
+
+      .payments-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        background: #ffffff;
+        border: 1px solid #e6ede6;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 15px 40px rgba(25, 81, 39, 0.08);
+      }
+
+      .payments-table tbody tr:hover {
+        background: #f5fbf5;
+      }
+
+      .payments-table tbody tr:last-child td {
+        border-bottom: none;
       }
 
       .payments-table th:nth-child(1),
@@ -6669,13 +6855,13 @@
 
       .payments-table th:nth-child(2),
       .payments-table td:nth-child(2) {
-        width: 86px;
+        width: 90px;
         text-align: center;
       }
 
       .payments-table th:nth-child(3),
       .payments-table td:nth-child(3) {
-        width: 250px;
+        width: 240px;
       }
 
       .payments-table th:nth-child(4),
@@ -6685,7 +6871,7 @@
 
       .payments-table th:nth-child(5),
       .payments-table td:nth-child(5) {
-        width: 120px;
+        width: 130px;
       }
 
       .payments-table th:nth-child(6),
@@ -6694,12 +6880,17 @@
       .payments-table td:nth-child(7),
       .payments-table th:nth-child(8),
       .payments-table td:nth-child(8) {
-        width: 112px;
+        width: 120px;
       }
 
       .payments-table th:nth-child(9),
       .payments-table td:nth-child(9) {
-        width: 360px;
+        width: 170px;
+      }
+
+      .payments-table th:nth-child(10),
+      .payments-table td:nth-child(10) {
+        width: 320px;
       }
 
       /* Override generic accounts-table last-cell flex styling for payment table consistency */
@@ -6922,6 +7113,24 @@
         color: #f8f9fa;
         cursor: not-allowed;
         opacity: 1;
+      }
+
+      .payment-action-btn.payment-action-btn-red {
+        background: #dc3545;
+        color: #fff;
+        min-width: 90px;
+        padding: 7px 0;
+      }
+      .payment-action-btn.payment-action-btn-red:hover:not(:disabled) {
+        background: #c82333;
+      }
+      .payment-action-btn.payment-action-btn-red:active:not(:disabled) {
+        background: #bd2130;
+      }
+
+      .payments-table .col-reminder {
+        padding: 8px 4px;
+        vertical-align: middle;
       }
 
       .payment-actions .btn-small {
@@ -9058,6 +9267,7 @@
                 <th style="text-align:center;">Total Paid</th>
                 <th style="text-align:center;">Balance Due</th>
                 <th style="text-align:center;">Lot Price</th>
+                <th style="text-align:center;">Reminder</th>
                 <th style="text-align:center;">Actions</th>
               </tr>
             </thead>
@@ -10601,13 +10811,13 @@
     const paymentSearchInput = document.getElementById('paymentSearchInput');
     const paymentSearchValue = (paymentSearchInput?.value || '').trim().toLowerCase();
 
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:#6c757d;">Loading payments...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:30px; color:#6c757d;">Loading payments...</td></tr>';
 
     fetch(window.location.pathname + '?fetch=all_payments', { method: 'GET' })
       .then(response => response.json())
       .then(data => {
         if (!data || !data.payments || data.payments.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #6c757d;">No payments found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: #6c757d;">No payments found.</td></tr>';
           return;
         }
 
@@ -10625,7 +10835,7 @@
         });
 
         if (!filteredPayments.length) {
-          tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #6c757d;">No matching payment records found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: #6c757d;">No matching payment records found.</td></tr>';
           return;
         }
 
@@ -10649,6 +10859,9 @@
             <td class="amount-paid">₱${parseFloat(payment.total_paid || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
             <td class="amount-balance ${hasBalance ? 'amount-balance-due' : 'amount-balance-clear'}">₱${parseFloat(payment.balance_due || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
             <td class="amount-price">₱${payment.lot_price ? parseFloat(payment.lot_price).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00'}</td>
+            <td class="col-reminder" style="text-align:center; padding: 8px;">
+              <button type="button" class="payment-action-btn payment-action-btn-red${(autoStage === 'Not Applicable') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Not Applicable') ? 'disabled' : ''} title="Send Reminder" onclick="${(autoStage !== 'Not Applicable') ? `sendPaymentReminder(${payment.lot_id})` : ''}">Send Reminder</button>
+            </td>
             <td class="col-actions" style="text-align:center;">
               <div class="payment-actions payment-actions-image-ref">
                 <button type="button" class="payment-action-btn${(autoStage === 'Not Applicable') ? ' payment-action-disabled' : ''}" ${(autoStage === 'Not Applicable') ? 'disabled' : ''} title="Set Installment" onclick="${(autoStage !== 'Not Applicable') ? `openInstallmentPlanModal(${payment.lot_id}, ${Number(payment.lot_price || 0)}, ${installmentAmount || 0}, ${downPaymentAmount || 0}, ${installmentYears || 0}, ${dueDayValue || 0}, '${hasDeadline ? escapeText(payment.payment_deadline) : ''}', true)` : ''}">Set Installment</button>
@@ -10662,7 +10875,7 @@
         }).join('');
       })
       .catch(error => {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: #dc3545;">Failed to load payments.</td></tr>';
         console.error('Error loading payments:', error);
       });
   }
@@ -11272,6 +11485,35 @@
       .catch(err => {
         console.error(err);
         showPaymentNotice('Failed to record payment.', 'Payment Failed');
+      });
+  }
+
+  function sendPaymentReminder(lotId) {
+    if (!lotId || isNaN(lotId)) {
+      alert('Invalid lot ID for sending reminder.');
+      return;
+    }
+
+    if (!confirm('Send a payment reminder email to the owner for the upcoming due date?')) {
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('action', 'send_payment_reminder');
+    fd.append('lot_id', String(lotId));
+
+    fetch(window.location.pathname, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (!res.success) {
+          alert('Failed to send reminder: ' + (res.error || 'Unknown error'));
+          return;
+        }
+        alert('Payment reminder sent successfully.');
+      })
+      .catch(err => {
+        console.error(err);
+        alert('Failed to send payment reminder.');
       });
   }
 
