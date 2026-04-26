@@ -1,0 +1,14 @@
+
+{
+    "timestamp": "2026-04-12 08:31:33",
+    "viewing": {
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+    },
+    "payment": {
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+    }
+}

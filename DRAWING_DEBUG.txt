@@ -1,0 +1,54 @@
+=== DRAWING FUNCTIONALITY TROUBLESHOOTING ===
+
+I've added debug logging to help identify the drawing issue.
+
+STEPS TO TROUBLESHOOT:
+
+1. CLEAR YOUR BROWSER CACHE FIRST:
+   - Press Ctrl + Shift + R (or Ctrl + F5)
+   - Or: F12 > Right-click refresh > "Empty Cache and Hard Reload"
+
+2. OPEN DEVELOPER CONSOLE:
+   - Press F12
+   - Go to the "Console" tab
+
+3. TRY TO DRAW:
+   - Go to Manage Lots
+   - Click "Set Pin" on any lot
+   - Click "Start Drawing Polygon" button
+   - Try to click on the blueprint to draw
+
+4. CHECK CONSOLE MESSAGES:
+   You should see messages like:
+   - "Opening pin modal for lot..."
+   - "Blueprint data received..."
+   - "Blueprint image loaded successfully"
+   - "Canvas setup complete. Size: XXX x XXX"
+   - "Canvas event listeners attached"
+   - "Starting drawing mode"
+   - "Canvas clicked!" (when you click to draw)
+
+WHAT TO LOOK FOR:
+
+✓ If you see "Canvas clicked!" = Drawing events ARE working
+✗ If you DON'T see "Canvas clicked!" = There's a canvas overlay issue
+
+✓ If canvas size shows "0 x 0" = Image not loaded properly
+✓ If you see errors in red = Send me those error messages
+
+COMMON ISSUES:
+
+1. Canvas not visible:
+   - Check if "Start Drawing Polygon" button changes to "Stop Drawing"
+   - Canvas should appear over the blueprint image
+
+2. Canvas not clickable:
+   - The canvas needs to overlay the image exactly
+   - Size must match the blueprint image
+
+3. Blueprint not loading:
+   - Check if the blueprint image appears in the modal
+   - If no image, the location might not have a blueprint uploaded
+
+AFTER TESTING:
+Tell me what console messages you see, and I can fix the specific issue!

@@ -1,0 +1,175 @@
+[33mcommit 22e0084880bcf9e56de79931830ff46a695f9022[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Merge: c086097 fd3cb48
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Fri Mar 6 23:52:53 2026 +0800
+
+    Merge branch 'main-2'
+
+[33mcommit c086097053a2f569be4c2560608e402fa9b6565b[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Merge: 9fbe4a3 02868c4
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Fri Mar 6 23:47:42 2026 +0800
+
+    Merge branch 'main' of https://github.com/sooooodeen/Nuevo-Puerta
+
+[33mcommit 9fbe4a34760fc45bab360c8ba537ff3e88467cdc[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Fri Mar 6 23:37:04 2026 +0800
+
+    recommendations update
+
+[33mcommit fd3cb48ece4d49878827aead480f22466856d0d9[m[33m ([m[1;31morigin/main-2[m[33m, [m[1;32mmain-2[m[33m)[m
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Fri Mar 6 23:33:33 2026 +0800
+
+    Updates from Recommendations
+
+[33mcommit 02868c4d1e6b58eed53ba8a7d13b6cfc1d7cf882[m
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Fri Mar 6 17:01:21 2026 +0800
+
+    admin feature updates
+
+[33mcommit e82f972ca041b57a11aa771b3c4280d160a2fc1f[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Wed Feb 25 21:39:46 2026 +0800
+
+    Admindashboard.php UI Fix
+
+[33mcommit 1d09de1e7fd5d446daa9b0c24101b5e385d24704[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Wed Feb 25 21:00:58 2026 +0800
+
+    update files
+
+[33mcommit 1ecfe88a7cad4f851aa5b1a8a0d73163ec639c51[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Thu Feb 5 14:15:49 2026 +0800
+
+    agent_dashboard.php ui fix
+
+[33mcommit c8aa1b7c7ee2a7cd1d6a35b817b82d94de003d6e[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Thu Feb 5 14:15:14 2026 +0800
+
+    userdashboard.php ui fix
+
+[33mcommit ac3c0bf295ebea984d336d2ababd8d10f2af2c86[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Thu Feb 5 13:55:20 2026 +0800
+
+    User_Dashboard.php UI FIX
+
+[33mcommit 81ddd69aa418e4e94ccc9e5a26d1ad4838d4a9fe[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Thu Feb 5 13:54:31 2026 +0800
+
+    Agent_Dashboard UI FIX
+
+[33mcommit 22459425622e21e677772fde31f925fe80b5272f[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Thu Feb 5 13:53:34 2026 +0800
+
+    Admindashboard.php UI FIX
+
+[33mcommit f717452d3ac3859712076e1aeb31088a320d1c7a[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Sat Jan 31 20:33:41 2026 +0800
+
+    Admindashboard UI Fix
+
+[33mcommit d3bcfecc9c555f17d9265e903b1df3c50167e537[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Sun Jan 18 22:12:51 2026 +0800
+
+    User_dashboard.php
+
+[33mcommit 6f0d095f220ed4ad14e383b2674801d9479eb633[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Sun Jan 18 20:16:55 2026 +0800
+
+    Agent_dashboard.php UI FIX
+
+[33mcommit fac71a947768a9771b8b0ede08352ad4644bc888[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Sun Jan 18 20:14:18 2026 +0800
+
+    Admindashboard.php UI FIX
+
+[33mcommit 5e54b35b1a20986d84b5d5c44769132aebe5bfb3[m
+Author: EldreyGulpan <eldreygulpan17@gmail.com>
+Date:   Mon Dec 22 23:18:32 2025 +0800
+
+    Admindashboard.php UI FIX
+
+[33mcommit f1e8671ef2533de0eb3b970fbe0edcab15c82d40[m
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Mon Dec 22 22:47:05 2025 +0800
+
+    user login fix
+
+[33mcommit 62a3d1b5ebca84812794954ff97fc4fa0b400701[m
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Wed Dec 17 02:28:48 2025 +0800
+
+    login fix
+
+[33mcommit f2578616415bb91044229d49d9d5a20474c5ebd2[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Sat Dec 13 21:19:11 2025 +0800
+
+    Continued the implementation of the feedbacks
+
+[33mcommit 5049dd5dbb216e55b816cab0c7f4a5a38449589b[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Sat Dec 13 01:57:53 2025 +0800
+
+    Applied the feedback for time slots
+
+[33mcommit 0870120cf25fbe52e569e1bb199c68bfcb9dbe14[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Fri Dec 12 02:14:25 2025 +0800
+
+    updated some feedbaacks
+
+[33mcommit e7b7933448bc2e2351e7cd9858bce3df9410664a[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Wed Dec 10 16:28:28 2025 +0800
+
+    Fix some loic in the dashboard
+
+[33mcommit fa230ebaa20983cf1ff030c045dae07c7299f4a7[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Tue Dec 9 13:42:47 2025 +0800
+
+    fix the map
+
+[33mcommit 09b7b91b862d0eaee2dfaca27803d31b8fce0f8e[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Tue Dec 9 00:48:36 2025 +0800
+
+    Fix some logic
+
+[33mcommit 8774d18540c4496727920b03539ad37895cbabb7[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Mon Dec 8 03:44:10 2025 +0800
+
+    Still fix the manage accounts
+
+[33mcommit abfa99f1da50e006f3045dd03e200dd63ff2d393[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Sun Dec 7 14:44:55 2025 +0800
+
+    Fix the account creation
+
+[33mcommit 58aaec413acf822199e18948c46b1b5ad8953abe[m
+Author: CARLO-MALLARI <carlomallari862@gmail.com>
+Date:   Sun Dec 7 01:33:26 2025 +0800
+
+    updated the admin, agent and user dashboard/side
+
+[33mcommit e9168049c22fc07a90413c5f0b68f55d89754ace[m
+Author: Sodeeeen <sodeen102100@gmail.com>
+Date:   Sat Dec 6 17:23:11 2025 +0800
+
+    Initial project setup and file transfer

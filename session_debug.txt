@@ -1,0 +1,7 @@
+Array
+(
+    [agent_id] => 4
+    [user] => CarloAgent
+    [role] => agent
+    [first_name] => Carlo
+)
