@@ -10831,7 +10831,12 @@
       return [];
     }
 
-    const monthlyPaidTotal = Math.max(0, safeTotalPaid - safeDownPayment);
+    let adjustedTotalPaid = safeTotalPaid;
+    if (safeDownPayment > 0 && safeTotalPaid < safeDownPayment) {
+      adjustedTotalPaid = safeTotalPaid + safeDownPayment;
+    }
+
+    const monthlyPaidTotal = Math.max(0, adjustedTotalPaid - safeDownPayment);
     const paidMonthsCount = Math.min(totalMonths, Math.floor((monthlyPaidTotal + 0.0001) / safeMonthly));
     const anchor = buildInstallmentAnchorDate(paymentDeadline, lastPaymentDate, dueDay);
 

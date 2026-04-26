@@ -3874,6 +3874,35 @@ function resolveDateInput(value) {
 function resolveInstallmentAnchorDate(plan, transactions, fallbackDeadline = '') {
     const fromPlan = resolveDateInput(plan?.payment_deadline || fallbackDeadline || '');
     if (fromPlan) {
+        const monthlyAmount = Number(plan?.payment_amount || 0);
+        const downPayment = Number(plan?.down_payment_amount || 0);
+
+        if (monthlyAmount > 0 && Array.isArray(transactions) && transactions.length) {
+            const transactionDates = transactions
+                .map(tx => ({
+                    amount: Number(tx?.amount || 0),
+                    parsedDate: resolveDateInput(tx?.payment_date || '')
+                }))
+                .filter(tx => tx.parsedDate instanceof Date && !Number.isNaN(tx.parsedDate.getTime()) && tx.amount > 0)
+                .sort((a, b) => a.parsedDate - b.parsedDate);
+
+            if (transactionDates.length) {
+                const totalPaid = transactionDates.reduce((sum, tx) => sum + tx.amount, 0);
+                const installmentPaid = Math.max(0, totalPaid - downPayment);
+                const paidMonthsCount = Math.max(0, Math.floor((installmentPaid + 0.0001) / monthlyAmount));
+                const earliestPayment = transactionDates[0].parsedDate;
+
+                const monthDiff = (fromPlan.getFullYear() - earliestPayment.getFullYear()) * 12
+                    + (fromPlan.getMonth() - earliestPayment.getMonth());
+
+                if (paidMonthsCount > 0 && monthDiff >= paidMonthsCount && monthDiff > 1) {
+                    const adjusted = new Date(fromPlan);
+                    adjusted.setMonth(adjusted.getMonth() - paidMonthsCount);
+                    return adjusted;
+                }
+            }
+        }
+
         return fromPlan;
     }
 
