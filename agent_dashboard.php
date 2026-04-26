@@ -3083,11 +3083,6 @@ input[type="submit"]:hover,
               <path d="M12 22a2 2 0 002-2H10a2 2 0 002 2zm6-6V9a6 6 0 10-12 0v7L4 18v1h16v-1l-2-2z"/>
             </svg>
             Notifications
-            <?php if ($agentUnreadNotifications > 0): ?>
-              <span style="position: absolute; top: 8px; right: 8px; background-color: #ef4444; color: white; font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 50%; min-width: 20px; text-align: center;">
-                <?php echo $agentUnreadNotifications > 99 ? '99+' : (int)$agentUnreadNotifications; ?>
-              </span>
-            <?php endif; ?>
           </a>
         </li>
         <li>

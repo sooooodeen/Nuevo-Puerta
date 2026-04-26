@@ -1341,6 +1341,10 @@
         while ($row = mysqli_fetch_assoc($txResult)) {
           $transactions[] = $row;
         }
+      } else {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Database query failed: ' . mysqli_error($conn)]);
+        exit;
       }
 
       // Safety sort: ensure oldest records are always returned first.
@@ -1375,12 +1379,21 @@
           $stmt = $conn->prepare($historyQuery);
           if ($stmt) {
               $stmt->bind_param('i', $lot_id);
-              $stmt->execute();
-              $res = $stmt->get_result();
-              while ($row = $res->fetch_assoc()) {
-                  $rows[] = $row;
+              if ($stmt->execute()) {
+                  $res = $stmt->get_result();
+                  while ($row = $res->fetch_assoc()) {
+                      $rows[] = $row;
+                  }
+              } else {
+                  header('Content-Type: application/json');
+                  echo json_encode(['success' => false, 'error' => 'Database query failed: ' . $stmt->error]);
+                  exit;
               }
               $stmt->close();
+          } else {
+              header('Content-Type: application/json');
+              echo json_encode(['success' => false, 'error' => 'Database prepare failed: ' . $conn->error]);
+              exit;
           }
       }
 
@@ -2436,10 +2449,27 @@
             exit;
         }
         
+        // Check if the lot has an owner
+        $checkQuery = "SELECT owner_id FROM lots WHERE id = $lot_id";
+        $checkResult = mysqli_query($conn, $checkQuery);
+        if (!$checkResult) {
+            echo json_encode(['success' => false, 'error' => 'Database error: ' . mysqli_error($conn)]);
+            exit;
+        }
+        $lot = mysqli_fetch_assoc($checkResult);
+        if (!$lot || $lot['owner_id'] === null) {
+            echo json_encode(['success' => false, 'error' => 'Lot has no owner to remove']);
+            exit;
+        }
+        
         $updateQuery = "UPDATE lots SET owner_id = NULL, status = 'Available' WHERE id = $lot_id";
         $success = mysqli_query($conn, $updateQuery);
         
-        echo json_encode(['success' => (bool)$success]);
+        if (!$success) {
+            echo json_encode(['success' => false, 'error' => 'Database error: ' . mysqli_error($conn)]);
+        } else {
+            echo json_encode(['success' => true]);
+        }
         exit;
     }
 
@@ -10907,7 +10937,15 @@
 
     const total = selected.reduce((sum, opt) => sum + Number(opt.amount || 0), 0);
     amountInput.value = total > 0 ? total.toFixed(2) : '';
-    dateInput.value = new Date().toISOString().slice(0, 10);
+    const firstSelectedMonth = selected[0] || null;
+    if (firstSelectedMonth && firstSelectedMonth.dueDate instanceof Date) {
+      const year = firstSelectedMonth.dueDate.getFullYear();
+      const month = String(firstSelectedMonth.dueDate.getMonth() + 1).padStart(2, '0');
+      const day = String(firstSelectedMonth.dueDate.getDate()).padStart(2, '0');
+      dateInput.value = `${year}-${month}-${day}`;
+    } else {
+      dateInput.value = new Date().toISOString().slice(0, 10);
+    }
     methodInput.value = 'Cash';
 
     const monthNames = selected.map(opt => opt.dueDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }));
@@ -11237,6 +11275,12 @@
   }
 
   function showPaymentHistory(lotId) {
+    console.log('showPaymentHistory called with lotId:', lotId);
+    if (!lotId || isNaN(lotId)) {
+      alert('Invalid lot ID for payment history.');
+      return;
+    }
+
     const content = document.getElementById('payment-history-content');
     if (!content) {
       alert('Payment history view is not available.');
@@ -11246,17 +11290,25 @@
     content.innerHTML = '<div style="padding:16px; color:#6c757d; text-align:center;">Loading payment history...</div>';
     showModalById('paymentHistoryModal');
 
-    Promise.all([
+    Promise.allSettled([
       fetch(`${window.location.pathname}?fetch=payment_transactions&lot_id=${lotId}&_=${Date.now()}`)
-        .then(r => r.json()),
+        .then(r => r.json())
+        .catch(err => ({ success: false, error: 'Network or parse error: ' + err.message })),
       fetch(`${window.location.pathname}?fetch=lot_history&lot_id=${lotId}&_=${Date.now()}`)
         .then(r => r.json())
+        .catch(err => ({ success: true, history: [], error: 'History fetch failed: ' + err.message }))
     ])
-      .then(([paymentsData, historyData]) => {
-        if (!paymentsData.success) {
-          content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history.</div>';
+      .then(([paymentsResult, historyResult]) => {
+        console.log('Payments result:', paymentsResult);
+        console.log('History result:', historyResult);
+        if (paymentsResult.status !== 'fulfilled' || !paymentsResult.value.success) {
+          const errorMsg = paymentsResult.value?.error || 'Failed to load payment data';
+          content.innerHTML = `<div style="padding:16px; color:#dc3545; text-align:center;">${errorMsg}</div>`;
           return;
         }
+
+        const paymentsData = paymentsResult.value;
+        const historyData = (historyResult.status === 'fulfilled' ? historyResult.value : { success: true, history: [] });
 
         const getDateKey = (value) => {
           const raw = String(value || '').trim();
@@ -11347,8 +11399,8 @@
         content.innerHTML = paymentSection + historySection;
       })
       .catch(err => {
-        console.error(err);
-        content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history.</div>';
+        console.error('Unexpected error:', err);
+        content.innerHTML = '<div style="padding:16px; color:#dc3545; text-align:center;">Failed to load payment history due to unexpected error.</div>';
       });
   }
 
@@ -11500,7 +11552,7 @@
             </td>
             <td style="padding: 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px; color: #333;">
               <button class="btn-small" onclick="viewOwnerDetails(${owner.user_id || 0}, '${String(owner.owner_name || '').replace(/'/g, "\\'")}', '${String(owner.email || '').replace(/'/g, "\\'")}', '${String(owner.mobile_number || '').replace(/'/g, "\\'")}')">View Details</button>
-              <button class="btn-small btn-danger" onclick="removeLotOwner(${owner.lot_id})" style="background:#dc3545; color:#fff; border:1px solid #dc3545;">Remove Owner</button>
+              ${owner.user_id > 0 ? `<button class="btn-small btn-danger" onclick="removeLotOwner(${owner.lot_id})" style="background:#dc3545; color:#fff; border:1px solid #dc3545;">Remove Owner</button>` : ''}
             </td>
           </tr>
         `;
@@ -11584,7 +11636,7 @@
   }
 
   async function removeLotOwner(lotId) {
-    const proceed = await showConfirmModal('Remove the owner from this lot?');
+    const proceed = confirm('Remove the owner from this lot?');
     if (!proceed) return;
 
     const formData = new FormData();

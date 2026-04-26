@@ -477,6 +477,70 @@ if (isset($_GET['action'])) {
         echo json_encode(['success'=>true,'payments'=>$rows]); exit;
     }
 
+    if ($action === 'installment_plan') {
+        $lot_id = (int)($_GET['lot_id'] ?? 0);
+        if ($lot_id <= 0 || !hasTable($conn, 'lots')) {
+            echo json_encode(['success'=>false,'message'=>'Invalid lot selected']); exit;
+        }
+
+        $authorized = false;
+        $lotSql = "SELECT l.id, l.lot_price, l.payment_amount, l.down_payment_amount, l.payment_term_years, l.payment_due_day, l.payment_deadline, l.owner_id FROM lots l WHERE l.id = ? LIMIT 1";
+        $stmt = prepOrDie($conn, $lotSql);
+        $stmt->bind_param('i', $lot_id);
+        $stmt->execute();
+        $lotRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$lotRow) {
+            echo json_encode(['success'=>false,'message'=>'Lot not found']); exit;
+        }
+
+        if ((int)($lotRow['owner_id'] ?? 0) === $uid) {
+            $authorized = true;
+        } elseif ($userEmailForAccess !== '') {
+            $checkViewing = prepOrDie($conn, "SELECT 1 FROM viewings WHERE lot_id = ? AND client_email = ? LIMIT 1");
+            $checkViewing->bind_param('is', $lot_id, $userEmailForAccess);
+            $checkViewing->execute();
+            $viewingRes = $checkViewing->get_result();
+            $authorized = $viewingRes && $viewingRes->num_rows > 0;
+            $checkViewing->close();
+        }
+
+        if (!$authorized) {
+            echo json_encode(['success'=>false,'message'=>'Unauthorized access to lot installment plan']); exit;
+        }
+
+        $plan = [
+            'lot_price' => (float)($lotRow['lot_price'] ?? 0),
+            'payment_amount' => (float)($lotRow['payment_amount'] ?? 0),
+            'down_payment_amount' => (float)($lotRow['down_payment_amount'] ?? 0),
+            'payment_term_years' => (int)($lotRow['payment_term_years'] ?? 0),
+            'payment_due_day' => (int)($lotRow['payment_due_day'] ?? 0),
+            'payment_deadline' => trim((string)($lotRow['payment_deadline'] ?? ''))
+        ];
+
+        $transactions = [];
+        if (hasTable($conn, 'lot_payment_transactions')) {
+            $txStmt = prepOrDie($conn, "SELECT id, amount, payment_date, payment_method, remarks FROM lot_payment_transactions WHERE lot_id = ? ORDER BY payment_date ASC, id ASC");
+            $txStmt->bind_param('i', $lot_id);
+            $txStmt->execute();
+            $txRes = $txStmt->get_result();
+            while ($txRow = $txRes->fetch_assoc()) {
+                $transactions[] = [
+                    'id' => (int)($txRow['id'] ?? 0),
+                    'amount' => (float)($txRow['amount'] ?? 0),
+                    'payment_date' => trim((string)($txRow['payment_date'] ?? '')),
+                    'payment_method' => trim((string)($txRow['payment_method'] ?? '')),
+                    'remarks' => trim((string)($txRow['remarks'] ?? ''))
+                ];
+            }
+            $txStmt->close();
+        }
+
+        echo json_encode(['success'=>true, 'plan' => $plan, 'transactions' => $transactions]);
+        exit;
+    }
+
     // Process Payment
     if ($action === 'pay') {
         $raw = file_get_contents('php://input');
@@ -2421,6 +2485,8 @@ tbody tr:hover { background:#f9fbfd; }
 .modal-close-btn { background:none; border:none; font-size:24px; color:var(--muted); cursor:pointer; width:32px; height:32px; display:flex; align-items:center; justify-content:center; border-radius:6px; transition:0.2s; }
 .modal-close-btn:hover { background:#f5f5f5; color:var(--text); }
 .modal-body { padding:24px; overflow-y:auto; }
+.next-payment-list { display:grid; gap:12px; }
+.next-payment-list-item { background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px; padding:14px 16px; }
 .modal-body .form-group { margin-bottom:18px; }
 .modal-footer { padding:20px 24px; border-top:1px solid #f0f0f0; display:flex; gap:12px; justify-content:flex-end; }
 .modal-footer .btn { margin:0; }
@@ -2771,7 +2837,7 @@ tbody tr:hover { background:#f9fbfd; }
                         <span>Balance Due</span>
                     </div>
                 </div>
-                <div class="stat-card stat-card-next-payment" style="cursor:pointer; position:relative;" onclick="switchTab('payments',document.querySelector('.nav-link[href=\'#payments\']')); loadLotPayments();">
+                <div class="stat-card stat-card-next-payment" style="cursor:pointer; position:relative;" onclick="openNextPaymentsDueModal(event)">
                     <div class="stat-icon" style="background:#dcfce7; color:#166534;"><i class="fa fa-wallet"></i></div>
                     <div class="stat-info" style="width:100%">
                         <h3><?php echo h($nextPaymentCardAmount); ?></h3>
@@ -3588,6 +3654,36 @@ tbody tr:hover { background:#f9fbfd; }
     </div>
 
     <!-- New Viewing Request Modal -->
+    <div id="nextPaymentsDueModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Upcoming Payment Due Dates</h3>
+                <button class="modal-close-btn" onclick="closeNextPaymentsDueModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin:0 0 14px; color:#475569;">Review all lots with upcoming due dates in one place.</p>
+                <div class="next-payment-list">
+                    <?php if (!empty($downPaymentDeadlines)): ?>
+                        <?php foreach ($downPaymentDeadlines as $dueItem): ?>
+                            <div class="next-payment-list-item">
+                                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+                                    <strong style="font-size:15px; color:#111827;"><?php echo h($dueItem['lot_label']); ?></strong>
+                                    <span style="font-size:13px; color:#475569;">Due: <?php echo h($dueItem['date']); ?></span>
+                                </div>
+                                <div style="margin-top:8px; font-size:14px; color:#0f172a;">Amount: ₱<?php echo number_format((float)$dueItem['amount'], 2); ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div style="padding:18px; border-radius:12px; background:#f8fafc; color:#475569; font-size:14px;">No upcoming payment due dates were found.</div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNextPaymentsDueModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="newViewingModal" class="modal-overlay" style="display:none;">
         <div class="modal-content" style="max-width:520px;">
             <div class="modal-header">
@@ -4136,6 +4232,21 @@ function renderInstallmentSchedule(plan, transactions, fallbackDeadline = '') {
 
     list.innerHTML = scheduleItems.join('');
     list.style.display = scheduleItems.length ? 'grid' : 'none';
+}
+
+function openNextPaymentsDueModal(event) {
+    if (event && event.target && event.target.closest('#showAllLotsBtn')) {
+        return;
+    }
+    const modal = document.getElementById('nextPaymentsDueModal');
+    if (!modal) return;
+    modal.classList.add('active');
+}
+
+function closeNextPaymentsDueModal() {
+    const modal = document.getElementById('nextPaymentsDueModal');
+    if (!modal) return;
+    modal.classList.remove('active');
 }
 
 function openInstallmentDetailsModal(button) {
